@@ -1,0 +1,123 @@
+= Upgrading and Rolling Back Kubernetes
+
+Following an upgrade to the latest version of Rancher, downstream Kubernetes clusters can be upgraded to use the latest supported version of Kubernetes.
+
+Rancher calls RKE (Rancher Kubernetes Engine) as a library when provisioning and editing RKE clusters. For more information on configuring the upgrade strategy for RKE clusters, refer to the https://rancher.com/docs/rke/latest/en/[RKE documentation].
+
+== Tested Kubernetes Versions
+
+Before a new version of Rancher is released, it's tested with the latest minor versions of Kubernetes to ensure compatibility. For details on which versions of Kubernetes were tested on each Rancher version, refer to the https://rancher.com/support-maintenance-terms/all-supported-versions/rancher-v2.6.0/[support maintenance terms.]
+
+== How Upgrades Work
+
+RKE v1.1.0 changed the way that clusters are upgraded.
+
+In this section of the https://rancher.com/docs/rke/latest/en/upgrades/how-upgrades-work[RKE documentation,] you'll learn what happens when you edit or upgrade your RKE Kubernetes cluster.
+
+== Recommended Best Practice for Upgrades
+
+When upgrading the Kubernetes version of a cluster, we recommend that you:
+
+. Take a snapshot.
+. Initiate a Kubernetes upgrade.
+. If the upgrade fails, revert the cluster to the pre-upgrade Kubernetes version. This is achieved by selecting the *Restore etcd and Kubernetes version* option. This will return your cluster to the pre-upgrade kubernetes version before restoring the etcd snapshot.
+
+The restore operation will work on a cluster that is not in a healthy or active state.
+
+== Upgrading the Kubernetes Version
+
+[NOTE]
+.Prerequisites:
+====
+
+* The options below are available for xref:../../cluster-deployment/launch-kubernetes-with-rancher.adoc[Rancher-launched Kubernetes clusters] and link:../../cluster-deployment/register-existing-clusters.adoc#additional-features-for-registered-rke2-and-k3s-clusters[Registered K3s Kubernetes clusters].
+* The following options also apply to imported RKE2 clusters that you have registered. If you import a cluster from an external cloud platform but don't register it, you won't be able to upgrade the Kubernetes version from Rancher.
+* Before upgrading Kubernetes, xref:../../rancher-admin/back-up-restore-and-disaster-recovery/back-up-restore-and-disaster-recovery.adoc[back up your cluster.]
+====
+
+
+. In the upper left corner, click *☰ > Cluster Management*.
+. On the *Clusters* page, go to the cluster you want to upgrade and click *⋮ > Edit Config*.
+. From the *Kubernetes Version* drop-down, choose the version of Kubernetes that you want to use for the cluster.
+. Click *Save*.
+
+*Result:* Kubernetes begins upgrading for the cluster.
+
+== Rolling Back
+
+A cluster can be restored to a backup in which the previous Kubernetes version was used. For more information, refer to the following sections:
+
+* link:backups.adoc#how-snapshots-work[Backing up a cluster]
+* link:restore.adoc#restoring-a-cluster-from-a-snapshot[Restoring a cluster from backup]
+
+== Configuring the Upgrade Strategy
+
+As of RKE v1.1.0, additional upgrade options became available to give you more granular control over the upgrade process. These options can be used to maintain availability of your applications during a cluster upgrade if certain https://rancher.com/docs/rke/latest/en/upgrades/maintaining-availability[conditions and requirements] are met.
+
+The upgrade strategy can be configured in the Rancher UI, or by editing the `cluster.yml`. More advanced options are available by editing the `cluster.yml`.
+
+=== Configuring the Maximum Unavailable Worker Nodes in the Rancher UI
+
+From the Rancher UI, the maximum number of unavailable worker nodes can be configured. During a cluster upgrade, worker nodes will be upgraded in batches of this size.
+
+By default, the maximum number of unavailable worker is defined as 10 percent of all worker nodes. This number can be configured as a percentage or as an integer. When defined as a percentage, the batch size is rounded down to the nearest node, with a minimum of one node.
+
+To change the default number or percentage of worker nodes,
+
+. In the upper left corner, click *☰ > Cluster Management*.
+. On the *Clusters* page, go to the cluster you want to upgrade and click *⋮ > Edit Config*.
+. In the *Upgrade Strategy* tab, enter the *Worker Concurrency* as a fixed number or percentage. To get this number, you can take the number of nodes in your cluster and subtract the max unavailable nodes.
+. Click *Save*.
+
+*Result:* The cluster is updated to use the new upgrade strategy.
+
+=== Enabling Draining Nodes During Upgrades from the Rancher UI
+
+By default, RKE https://kubernetes.io/docs/concepts/architecture/nodes/#manual-node-administration[cordons] each node before upgrading it. https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/[Draining] is disabled during upgrades by default. If draining is enabled in the cluster configuration, RKE will both cordon and drain the node before it is upgraded.
+
+To enable draining each node during a cluster upgrade,
+
+. In the upper left corner, click *☰ > Cluster Management*.
+. On the *Clusters* page, go to the cluster you want to enable node draining and click *⋮ > Edit Config*.
+. Click *⋮ > Edit*.
+. In the *Upgrade Strategy* tab, go to the *Drain nodes* field and click *Yes*. Node draining is configured separately for control plane and worker nodes.
+. Configure the options for how pods are deleted. For more information about each option, refer to link:../manage-clusters/nodes-and-node-pools.adoc#aggressive-and-safe-draining-options[this section.]
+. Optionally, configure a grace period. The grace period is the timeout given to each pod for cleaning things up, so they will have chance to exit gracefully. Pods might need to finish any outstanding requests, roll back transactions or save state to some external storage. If this value is negative, the default value specified in the pod will be used.
+. Optionally, configure a timeout, which is the amount of time the drain should continue to wait before giving up.
+. Click *Save*.
+
+*Result:* The cluster is updated to use the new upgrade strategy.
+
+[NOTE]
+====
+
+There is a https://github.com/rancher/rancher/issues/25478[known issue] in which the Rancher UI doesn't show state of etcd and controlplane as drained, even though they are being drained.
+====
+
+
+=== Maintaining Availability for Applications During Upgrades
+
+In https://rancher.com/docs/rke/latest/en/upgrades/maintaining-availability/[this section of the RKE documentation,] you'll learn the requirements to prevent downtime for your applications when upgrading the cluster.
+
+=== Configuring the Upgrade Strategy in the cluster.yml
+
+More advanced upgrade strategy configuration options are available by editing the `cluster.yml`.
+
+For details, refer to https://rancher.com/docs/rke/latest/en/upgrades/configuring-strategy[Configuring the Upgrade Strategy] in the RKE documentation. The section also includes an example `cluster.yml` for configuring the upgrade strategy.
+
+== Troubleshooting
+
+If a node doesn't come up after an upgrade, the `rke up` command errors out.
+
+No upgrade will proceed if the number of unavailable nodes exceeds the configured maximum.
+
+If an upgrade stops, you may need to fix an unavailable node or remove it from the cluster before the upgrade can continue.
+
+A failed node could be in many different states:
+
+* Powered off
+* Unavailable
+* User drains a node while upgrade is in process, so there are no kubelets on the node
+* The upgrade itself failed
+
+If the max unavailable number of nodes is reached during an upgrade, Rancher user clusters will be stuck in updating state and not move forward with upgrading any other control plane nodes. It will continue to evaluate the set of unavailable nodes in case one of the nodes becomes available. If the node cannot be fixed, you must remove the node in order to continue the upgrade.

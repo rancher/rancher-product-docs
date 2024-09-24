@@ -1,0 +1,197 @@
+= Rancher Extensions
+:experimental:
+
+Extensions allow users, developers, partners, and customers to extend and enhance the Rancher UI. In addition, users can make changes and create enhancements to their UI functionality independent of Rancher releases. Extensions will enable users to build on top of Rancher to better tailor it to their respective environments. Note that users will also have the ability to update to new versions as well as roll back to a previous version.
+
+Extensions are Helm charts that can only be installed once into a cluster; therefore, these charts have been simplified and separated from the general Helm charts listed under *Apps*.
+
+Examples of built-in Rancher extensions are Fleet, Explorer, and Harvester. Examples of other extensions that use the Extensions API that can be manually added are Kubewarden and Elemental.
+
+== Prerequisites
+
+____
+You must log in as an admin in order to view and interact with the extensions management page.
+____
+
+== Installing Extensions
+
+. Click *☰ > Extensions* under *Configuration*.
+. If not already installed in *Apps*, you must enable the extension operator by clicking the *Enable* button.
+ ** Click *OK* to add the Rancher extension repository if your installation is not air-gapped. Otherwise, uncheck the box to do so and click *OK*.
+
++
+image::/img/add-rancher-extension-repo.png[Rancher extension repository]
+. On the *Extensions* page, click on the *Available* tab to select which extensions you want to install.
+. If no extensions are showing as available, you may manually add repos as follows:
++
+4.1. On the upper right of screen, click on *⋮ > Manage Repositories > Create*.
++
+4.2. Add the desired repo name, making sure to also specify the Git Repo URL and the Git Branch.
++
+4.3. Click *Create* in the lower right again to complete.
++
+image::/img/manage-repos.png[Manage repositories]
+
+. Under the *Available* tab, click *Install* on the desired extension and version as in the example below. You can also update your extension from this screen, as the button to *Update* will appear on the extension if one is available.
++
+image::/img/install-kubewarden.png[Install Kubewarden]
+
+. Click the *Reload* page button that will appear after your extension successfully installs. Note that a logged-in user who has just installed an extension will not see a change to the UI *unless* they reload the page.
++
+image::/img/reload-button.png[Reload button]
+
+== Updating and Upgrading Extensions
+
+. Click *☰ > Extensions* under *Configuration*.
+. Select the *Updates* tab.
+. Click *Update*.
+
+If there is a new version of the extension, there will also be an *Update* button visible on the associated card for the extension in the *Available* tab.
+
+== Deleting Extensions
+
+. Click *☰*, then click on the name of your local cluster.
+. From the sidebar, select menu:Apps[Installed Apps].
+. Find the name of the chart you want to delete and select the checkbox next to it.
+. Click *Delete*.
+
+== Deleting Extension Repositories
+
+. Click *☰ > Extensions* under *Configuration*.
+. On the top right, click *⋮ > Manage Repositories*.
+. Find the name of the extension repository you want to delete. Select the checkbox next to the repository name, then click *Delete*.
+
+== Deleting Extension Repository Container Images
+
+. Click *☰*, then select *Extensions*, under *Configuration*.
+. On the top right, click *⋮ > Manage Extension Catalogs*.
+. Find the name of the container image you want to delete, then click *⋮ > Uninstall*.
+
+== Uninstalling Extensions
+
+There are two ways to uninstall or disable an extension:
+
+. Under the *Installed* tab, click the *Uninstall* button on the extension you wish to remove.
++
+image::/img/uninstall-extension.png[Uninstall extensions]
+
+. On the extensions management page, click *⋮ > Disable Extension Support*. This will disable all installed extensions.
++
+image::/img/disable-extension-support.png[Disable extensions]
+
+[CAUTION]
+====
+
+You must reload the page after disabling extensions or display issues may occur.
+====
+
+
+== Developing Extensions
+
+To learn how to develop your own extensions, refer to the official https://rancher.github.io/dashboard/extensions/extensions-getting-started[Getting Started] guide.
+
+== Working with Extensions in an Air-gapped Environment
+
+If you intend to work with extensions in an air-gapped environment, you must perform some extra steps before you can complete certain tasks.
+
+=== Accessing Rancher UI Extensions in an Air-Gapped Environment
+
+Rancher provides some extensions, such as Kubewarden and Elemental, through the `ui-plugin-catalog` container image at https://hub.docker.com/r/rancher/ui-plugin-catalog/tags. If you're trying to install these extensions in an air-gapped environment, you must make the `ui-plugin-catalog` image accessible.
+
+. Mirror the `ui-plugin-catalog` image to a private registry:
+
+[,bash]
+----
+  export REGISTRY_ENDPOINT=<my-private-registry-endpoint> # e.g. "my-private-registry.com"
+  docker pull rancher/ui-plugin-catalog:<tag>
+  docker tag rancher/ui-plugin-catalog:<tag> $REGISTRY_ENDPOINT/rancher/ui-plugin-catalog:<tag>
+  docker push $REGISTRY_ENDPOINT/rancher/ui-plugin-catalog:<tag>
+2. Use the mirrored image to create a Kubernetes [deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/):
+  ```yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: ui-plugin-catalog
+    namespace: cattle-ui-plugin-system
+    labels:
+      catalog.cattle.io/ui-extensions-catalog-image: ui-plugin-catalog
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        catalog.cattle.io/ui-extensions-catalog-image: ui-plugin-catalog
+    template:
+      metadata:
+        namespace: cattle-ui-plugin-system
+        labels:
+          catalog.cattle.io/ui-extensions-catalog-image: ui-plugin-catalog
+      spec:
+        containers:
+        - name: server
+          image: <my-private-registry-endpoint>/rancher/ui-plugin-catalog:<tag>
+          imagePullPolicy: Always
+        imagePullSecrets:
+          - name: <my-registry-credentials>
+----
+
+. Expose the deployment by creating a https://kubernetes.io/docs/concepts/services-networking/service/#type-clusterip[ClusterIP service]:
+  ```yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+ name: ui-plugin-catalog-svc
+ namespace: cattle-ui-plugin-system
+  spec:
+ ports:
+ ** name: catalog-svc-port
+port: 8080
+protocol: TCP
+targetPort: 8080
+ selector:
+   catalog.cattle.io/ui-extensions-catalog-image: ui-plugin-catalog
+ type: ClusterIP
+  ```
+. Create a xref:../cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc[ClusterRepo] that targets the ClusterIP service:
++
+[,yaml]
+----
+  apiVersion: catalog.cattle.io/v1
+  kind: ClusterRepo
+  metadata:
+ name: ui-plugin-catalog-repo
+  spec:
+ url: http://ui-plugin-catalog-svc.cattle-ui-plugin-system:8080
+----
+
+After you successfully set up these resources, you can install the extensions from the `ui-plugin-charts` manifest into your air-gapped environment.
+
+=== Importing and Installing Extensions in an Air-gapped Environment
+
+. Find the address of the container image repository that you want to import as an extension. You should import and use the latest tagged version of the image to ensure you receive the latest features and security updates.
+ ** *(Optional)* If the container image is private: xref:../security/secrets-hub.adoc[Create] a registry secret within the `cattle-ui-plugin-system` namespace. Enter the domain of the image address in the *Registry Domain Name* field.
+. Click *☰*, then select *Extensions*, under *Configuration*.
+. On the top right, click *⋮ > Manage Extension Catalogs*.
+. Select the *Import Extension Catalog* button.
+. Enter the image address in the *Catalog Image Reference* field.
+ ** *(Optional)* If the container image is private, select the secret you just created from the *Pull Secrets* drop-down menu.
+. Click *Load*. The extension will now be *Pending*.
+. Return to the *Extensions* page.
+. Select the *Available* tab, and click *Reload* to make sure that the list of extensions is up to date.
+. Find the extension you just added, and click *Install*.
+
+=== Updating and Upgrading an Extensions Repository in an Air-gapped Environment
+
+Extensions repositories that aren't air-gapped are automatically updated. If the repository is air-gapped, you must update it manually.
+
+First, mirror the latest changes to your private registry by following the same steps for initially <<importing-and-installing-extensions-in-an-air-gapped-environment,importing and installing an extension repository>>.
+
+After you mirror the latest changes, follow these steps:
+
+. Click *☰ > Local*.
+. From the sidebar, select menu:Workloads[Deployments].
+. From the namespaces dropdown menu, select *cattle-ui-plugin-system*.
+. Find the *cattle-ui-plugin-system* namespace.
+. Select the `ui-plugin-catalog` deployment.
+. Click *⋮ > Edit config*.
+. Update the *Container Image* field within the deployment's container with the latest image.
+. Click *Save*.
