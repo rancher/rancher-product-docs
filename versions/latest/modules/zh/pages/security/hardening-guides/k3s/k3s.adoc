@@ -51,11 +51,26 @@ CIS Benchmark 的第一部分（1.1）主要关注于 Pod manifest 的权限和�
 ======
 Tab v1.25 及更新版本::
 +
-自 CIS benchmark 1.7 开始，不再需要`protect-kernel-defaults`。 
+--
+自 CIS benchmark 1.7 开始，不再需要``protect-kernel-defaults``。
+--
 
 Tab v1.24 及更早版本::
 +
-这是一个 kubelet 标志，如果所需的内核参数未设置或设置为与 kubelet 的默认值不同的值，将导致 kubelet 退出。 可以在 Rancher 的集群配置中设置 `protect-kernel-defaults` 标志。 ```yaml spec: rkeConfig: machineSelectorConfig: - config: protect-kernel-defaults: true ```
+--
+这是一个 kubelet 标志，如果所需的内核参数未设置或设置为与 kubelet 的默认值不同的值，将导致 kubelet 退出。
+
+可以在 Rancher 的集群配置中设置 `protect-kernel-defaults` 标志。
+
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          protect-kernel-defaults: true
+----
+--
 ======
 
 === 设置内核参数
@@ -86,11 +101,373 @@ CIS Benchmark 的运行时要求主要围绕 Pod 安全（通过 PSP 或 PSA）�
 ======
 Tab v1.25 及更新版本::
 +
-K3s v1.25 及更新版本支持 [Pod 安全准入(PSA)](https://kubernetes.io/docs/concepts/security/pod-security-admission/)，用于控制 Pod 安全性。 你可以在 Rancher 中通过集群配置，设置 `defaultPodSecurityAdmissionConfigurationTemplateName` 字段来指定 PSA 配置： ```yaml spec: defaultPodSecurityAdmissionConfigurationTemplateName: rancher-restricted ``` Rancher 提供了 `rancher-restricted` 模板，用于强制执行高度限制性的 Kubernetes 上游 [`Restricted`](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted) 配置文件，其中包含了 Pod 加固的最佳实践。 
+--
+K3s v1.25 及更新版本支持 https://kubernetes.io/docs/concepts/security/pod-security-admission/[Pod 安全准入(PSA)]，用于控制 Pod 安全性。
+
+你可以在 Rancher 中通过集群配置，设置 `defaultPodSecurityAdmissionConfigurationTemplateName` 字段来指定 PSA 配置：
+
+[,yaml]
+----
+spec:
+  defaultPodSecurityAdmissionConfigurationTemplateName: rancher-restricted
+----
+
+Rancher 提供了 `rancher-restricted` 模板，用于强制执行高度限制性的 Kubernetes 上游 https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted[`Restricted`] 配置文件，其中包含了 Pod 加固的最佳实践。
+--
 
 Tab v1.24 及更早版本::
 +
-K3s v1.24 及更早版本支持 [Pod 安全策略 (PSP)](https://github.com/kubernetes/website/blob/release-1.24/content/en/docs/concepts/security/pod-security-policy.md) 以控制 Pod 安全性。 你可以在 Rancher 中通过集群配置，传递以下标志来启用 PSPs： ```yaml spec: rkeConfig: machineGlobalConfig: kube-apiserver-arg: - enable-admission-plugins=NodeRestriction,PodSecurityPolicy,ServiceAccount ``` 这会保留 `NodeRestriction` 插件并启用 `PodSecurityPolicy`。 启用 PSPs 后，你可以应用策略来满足 CIS Benchmark 第 5.2 节中描述的必要控制。 :::note 这些是 CIS Benchmark 中的手动检查。CIS 扫描结果将标记为 `warning`，因为需要集群操作员进行手动检查。 ::: 以下是合规的 PSP 示例： ```yaml --- apiVersion: policy/v1beta1 kind: PodSecurityPolicy metadata: name: restricted-psp spec: privileged: false # CIS - 5.2.1 allowPrivilegeEscalation: false # CIS - 5.2.5 requiredDropCapabilities: # CIS - 5.2.7/8/9 - ALL volumes: - 'configMap' - 'emptyDir' - 'projected' - 'secret' - 'downwardAPI' - 'csi' - 'persistentVolumeClaim' - 'ephemeral' hostNetwork: false # CIS - 5.2.4 hostIPC: false # CIS - 5.2.3 hostPID: false # CIS - 5.2.2 runAsUser: rule: 'MustRunAsNonRoot' # CIS - 5.2.6 seLinux: rule: 'RunAsAny' supplementalGroups: rule: 'MustRunAs' ranges: - min: 1 max: 65535 fsGroup: rule: 'MustRunAs' ranges: - min: 1 max: 65535 readOnlyRootFilesystem: false ``` 要使示例 PSP 生效，我们需要创建一个 `ClusterRole` 和 一个`ClusterRoleBinding`。我们还需要为需要额外权限的系统级 Pod 提供"`系统无限制策略`"，以及允许必要的 sysctls 来实现 ServiceLB 完整功能的额外策略。 ```yaml --- apiVersion: policy/v1beta1 kind: PodSecurityPolicy metadata: name: restricted-psp spec: privileged: false allowPrivilegeEscalation: false requiredDropCapabilities: - ALL volumes: - 'configMap' - 'emptyDir' - 'projected' - 'secret' - 'downwardAPI' - 'csi' - 'persistentVolumeClaim' - 'ephemeral' hostNetwork: false hostIPC: false hostPID: false runAsUser: rule: 'MustRunAsNonRoot' seLinux: rule: 'RunAsAny' supplementalGroups: rule: 'MustRunAs' ranges: - min: 1 max: 65535 fsGroup: rule: 'MustRunAs' ranges: - min: 1 max: 65535 readOnlyRootFilesystem: false --- apiVersion: policy/v1beta1 kind: PodSecurityPolicy metadata: name: system-unrestricted-psp annotations: seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*' spec: allowPrivilegeEscalation: true allowedCapabilities: - '*' fsGroup: rule: RunAsAny hostIPC: true hostNetwork: true hostPID: true hostPorts: - max: 65535 min: 0 privileged: true runAsUser: rule: RunAsAny seLinux: rule: RunAsAny supplementalGroups: rule: RunAsAny volumes: - '*' --- apiVersion: policy/v1beta1 kind: PodSecurityPolicy metadata: name: svclb-psp annotations: seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*' spec: allowPrivilegeEscalation: false allowedCapabilities: - NET_ADMIN allowedUnsafeSysctls: - net.ipv4.ip_forward - net.ipv6.conf.all.forwarding fsGroup: rule: RunAsAny hostPorts: - max: 65535 min: 0 runAsUser: rule: RunAsAny seLinux: rule: RunAsAny supplementalGroups: rule: RunAsAny --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRole metadata: name: psp:restricted-psp rules: - apiGroups: - policy resources: - podsecuritypolicies verbs: - use resourceNames: - restricted-psp --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRole metadata: name: psp:system-unrestricted-psp rules: - apiGroups: - policy resources: - podsecuritypolicies resourceNames: - system-unrestricted-psp verbs: - use --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRole metadata: name: psp:svclb-psp rules: - apiGroups: - policy resources: - podsecuritypolicies resourceNames: - svclb-psp verbs: - use --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRole metadata: name: psp:svc-local-path-provisioner-psp rules: - apiGroups: - policy resources: - podsecuritypolicies resourceNames: - system-unrestricted-psp verbs: - use --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRole metadata: name: psp:svc-coredns-psp rules: - apiGroups: - policy resources: - podsecuritypolicies resourceNames: - system-unrestricted-psp verbs: - use --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRole metadata: name: psp:svc-cis-operator-psp rules: - apiGroups: - policy resources: - podsecuritypolicies resourceNames: - system-unrestricted-psp verbs: - use --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRoleBinding metadata: name: default:restricted-psp roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: psp:restricted-psp subjects: - kind: Group name: system:authenticated apiGroup: rbac.authorization.k8s.io --- apiVersion: rbac.authorization.k8s.io/v1 kind: ClusterRoleBinding metadata: name: system-unrestricted-node-psp-rolebinding roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: psp:system-unrestricted-psp subjects: - apiGroup: rbac.authorization.k8s.io kind: Group name: system:nodes --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: system-unrestricted-svc-acct-psp-rolebinding namespace: kube-system roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: psp:system-unrestricted-psp subjects: - apiGroup: rbac.authorization.k8s.io kind: Group name: system:serviceaccounts --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: svclb-psp-rolebinding namespace: kube-system roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: psp:svclb-psp subjects: - kind: ServiceAccount name: svclb --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: svc-local-path-provisioner-psp-rolebinding namespace: kube-system roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: psp:svc-local-path-provisioner-psp subjects: - kind: ServiceAccount name: local-path-provisioner-service-account --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: svc-coredns-psp-rolebinding namespace: kube-system roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: psp:svc-coredns-psp subjects: - kind: ServiceAccount name: coredns --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: svc-cis-operator-psp-rolebinding namespace: cis-operator-system roleRef: apiGroup: rbac.authorization.k8s.io kind: ClusterRole name: psp:svc-cis-operator-psp subjects: - kind: ServiceAccount name: cis-operator-serviceaccount ``` 上述策略可以放置在 `/var/lib/rancher/k3s/server/manifests` 目录下名为 `policy.yaml` 的文件中。在启动 K3s 之前，必须创建策略文件和其目录结构。建议限制访问权限以避免泄露潜在的敏感信息。 ```shell sudo mkdir -p -m 700 /var/lib/rancher/k3s/server/manifests ``` :::note CNI、DNS 和 Ingress 等关键 Kubernetes 组件在 `kube-system` 命名空间中作为 Pod 运行。因此，这个命名空间的限制政策较少，从而使这些组件能够正常运行。 :::
+--
+K3s v1.24 及更早版本支持 https://github.com/kubernetes/website/blob/release-1.24/content/en/docs/concepts/security/pod-security-policy.md[Pod 安全策略 (PSP)] 以控制 Pod 安全性。
+
+你可以在 Rancher 中通过集群配置，传递以下标志来启用 PSPs：
+
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - enable-admission-plugins=NodeRestriction,PodSecurityPolicy,ServiceAccount
+----
+
+这会保留 `NodeRestriction` 插件并启用 `PodSecurityPolicy`。
+
+启用 PSPs 后，你可以应用策略来满足 CIS Benchmark 第 5.2 节中描述的必要控制。
+
+[NOTE]
+====
+这些是 CIS Benchmark 中的手动检查。CIS 扫描结果将标记为 `warning`，因为需要集群操作员进行手动检查。
+====
+
+
+以下是合规的 PSP 示例：
+
+[,yaml]
+----
+---
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: restricted-psp
+spec:
+  privileged: false                # CIS - 5.2.1
+  allowPrivilegeEscalation: false  # CIS - 5.2.5
+  requiredDropCapabilities:        # CIS - 5.2.7/8/9
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'csi'
+    - 'persistentVolumeClaim'
+    - 'ephemeral'
+  hostNetwork: false               # CIS - 5.2.4
+  hostIPC: false                   # CIS - 5.2.3
+  hostPID: false                   # CIS - 5.2.2
+  runAsUser:
+    rule: 'MustRunAsNonRoot'       # CIS - 5.2.6
+  seLinux:
+    rule: 'RunAsAny'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: false
+----
+
+要使示例 PSP 生效，我们需要创建一个 `ClusterRole` 和 一个``ClusterRoleBinding``。我们还需要为需要额外权限的系统级 Pod 提供"`系统无限制策略`"，以及允许必要的 sysctls 来实现 ServiceLB 完整功能的额外策略。
+
+[,yaml]
+----
+---
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: restricted-psp
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'csi'
+    - 'persistentVolumeClaim'
+    - 'ephemeral'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: false
+---
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: system-unrestricted-psp
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
+spec:
+  allowPrivilegeEscalation: true
+  allowedCapabilities:
+  - '*'
+  fsGroup:
+    rule: RunAsAny
+  hostIPC: true
+  hostNetwork: true
+  hostPID: true
+  hostPorts:
+  - max: 65535
+    min: 0
+  privileged: true
+  runAsUser:
+    rule: RunAsAny
+  seLinux:
+    rule: RunAsAny
+  supplementalGroups:
+    rule: RunAsAny
+  volumes:
+  - '*'
+---
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: svclb-psp
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
+spec:
+  allowPrivilegeEscalation: false
+  allowedCapabilities:
+  - NET_ADMIN
+  allowedUnsafeSysctls:
+  - net.ipv4.ip_forward
+  - net.ipv6.conf.all.forwarding
+  fsGroup:
+    rule: RunAsAny
+  hostPorts:
+  - max: 65535
+    min: 0
+  runAsUser:
+    rule: RunAsAny
+  seLinux:
+    rule: RunAsAny
+  supplementalGroups:
+    rule: RunAsAny
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: psp:restricted-psp
+rules:
+- apiGroups:
+  - policy
+  resources:
+  - podsecuritypolicies
+  verbs:
+  - use
+  resourceNames:
+  - restricted-psp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: psp:system-unrestricted-psp
+rules:
+- apiGroups:
+  - policy
+  resources:
+  - podsecuritypolicies
+  resourceNames:
+  - system-unrestricted-psp
+  verbs:
+  - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: psp:svclb-psp
+rules:
+- apiGroups:
+  - policy
+  resources:
+  - podsecuritypolicies
+  resourceNames:
+  - svclb-psp
+  verbs:
+  - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: psp:svc-local-path-provisioner-psp
+rules:
+- apiGroups:
+  - policy
+  resources:
+  - podsecuritypolicies
+  resourceNames:
+  - system-unrestricted-psp
+  verbs:
+  - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: psp:svc-coredns-psp
+rules:
+- apiGroups:
+  - policy
+  resources:
+  - podsecuritypolicies
+  resourceNames:
+  - system-unrestricted-psp
+  verbs:
+  - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: psp:svc-cis-operator-psp
+rules:
+- apiGroups:
+  - policy
+  resources:
+  - podsecuritypolicies
+  resourceNames:
+  - system-unrestricted-psp
+  verbs:
+  - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: default:restricted-psp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: psp:restricted-psp
+subjects:
+- kind: Group
+  name: system:authenticated
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system-unrestricted-node-psp-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: psp:system-unrestricted-psp
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:nodes
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: system-unrestricted-svc-acct-psp-rolebinding
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: psp:system-unrestricted-psp
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: system:serviceaccounts
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: svclb-psp-rolebinding
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: psp:svclb-psp
+subjects:
+- kind: ServiceAccount
+  name: svclb
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: svc-local-path-provisioner-psp-rolebinding
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: psp:svc-local-path-provisioner-psp
+subjects:
+- kind: ServiceAccount
+  name: local-path-provisioner-service-account
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: svc-coredns-psp-rolebinding
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: psp:svc-coredns-psp
+subjects:
+- kind: ServiceAccount
+  name: coredns
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: svc-cis-operator-psp-rolebinding
+  namespace: cis-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: psp:svc-cis-operator-psp
+subjects:
+- kind: ServiceAccount
+  name: cis-operator-serviceaccount
+----
+
+上述策略可以放置在 `/var/lib/rancher/k3s/server/manifests` 目录下名为 `policy.yaml` 的文件中。在启动 K3s 之前，必须创建策略文件和其目录结构。建议限制访问权限以避免泄露潜在的敏感信息。
+
+[,shell]
+----
+sudo mkdir -p -m 700 /var/lib/rancher/k3s/server/manifests
+----
+
+[NOTE]
+====
+CNI、DNS 和 Ingress 等关键 Kubernetes 组件在 `kube-system` 命名空间中作为 Pod 运行。因此，这个命名空间的限制政策较少，从而使这些组件能够正常运行。
+====
+--
 ======
 
 === 网络策略
@@ -335,11 +712,71 @@ Rancher 使用以下参考模板配置，基于本指南中的每个 CIS 控件�
 ======
 Tab v1.25 及更新的版本::
 +
-```yaml apiVersion: provisioning.cattle.io/v1 kind: Cluster metadata: name: # 定义集群名称 spec: defaultPodSecurityAdmissionConfigurationTemplateName: rancher-restricted enableNetworkPolicy: true kubernetesVersion: # 定义 K3s 版本 rkeConfig: machineGlobalConfig: kube-apiserver-arg: - enable-admission-plugins=NodeRestriction,ServiceAccount # CIS 1.2.15, 1.2.13 - audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml # CIS 3.2.1 - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log # CIS 1.2.18 - audit-log-maxage=30 # CIS 1.2.19 - audit-log-maxbackup=10 # CIS 1.2.20 - audit-log-maxsize=100 # CIS 1.2.21 - request-timeout=300s # CIS 1.2.22 - service-account-lookup=true # CIS 1.2.24 kube-controller-manager-arg: - terminated-pod-gc-threshold=10 # CIS 1.3.1 secrets-encryption: true machineSelectorConfig: - config: kubelet-arg: - make-iptables-util-chains=true # CIS 4.2.7 ``` 
+--
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: # 定义集群名称
+spec:
+  defaultPodSecurityAdmissionConfigurationTemplateName: rancher-restricted
+  enableNetworkPolicy: true
+  kubernetesVersion: # 定义 K3s 版本
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - enable-admission-plugins=NodeRestriction,ServiceAccount     # CIS 1.2.15, 1.2.13
+        - audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml    # CIS 3.2.1
+        - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log   # CIS 1.2.18
+        - audit-log-maxage=30                                         # CIS 1.2.19
+        - audit-log-maxbackup=10                                      # CIS 1.2.20
+        - audit-log-maxsize=100                                       # CIS 1.2.21
+        - request-timeout=300s                                        # CIS 1.2.22
+        - service-account-lookup=true                                 # CIS 1.2.24
+      kube-controller-manager-arg:
+        - terminated-pod-gc-threshold=10                              # CIS 1.3.1
+      secrets-encryption: true
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - make-iptables-util-chains=true                          # CIS 4.2.7
+----
+--
 
 Tab v1.24 及更早的版本::
 +
-```yaml apiVersion: provisioning.cattle.io/v1 kind: Cluster metadata: name: # 定义集群名称 spec: enableNetworkPolicy: true kubernetesVersion: # 定义 K3s 版本 rkeConfig: machineGlobalConfig: kube-apiserver-arg: - enable-admission-plugins=NodeRestriction,PodSecurityPolicy,ServiceAccount # CIS 1.2.15, 5.2, 1.2.13 - audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml # CIS 3.2.1 - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log # CIS 1.2.18 - audit-log-maxage=30 # CIS 1.2.19 - audit-log-maxbackup=10 # CIS 1.2.20 - audit-log-maxsize=100 # CIS 1.2.21 - request-timeout=300s # CIS 1.2.22 - service-account-lookup=true # CIS 1.2.24 kube-controller-manager-arg: - terminated-pod-gc-threshold=10 # CIS 1.3.1 secrets-encryption: true machineSelectorConfig: - config: kubelet-arg: - make-iptables-util-chains=true # CIS 4.2.7 protect-kernel-defaults: true # CIS 4.2.6 ```
+--
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: # 定义集群名称
+spec:
+  enableNetworkPolicy: true
+  kubernetesVersion:  # 定义 K3s 版本
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - enable-admission-plugins=NodeRestriction,PodSecurityPolicy,ServiceAccount    # CIS 1.2.15, 5.2, 1.2.13
+        - audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml    # CIS 3.2.1
+        - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log   # CIS 1.2.18
+        - audit-log-maxage=30                                         # CIS 1.2.19
+        - audit-log-maxbackup=10                                      # CIS 1.2.20
+        - audit-log-maxsize=100                                       # CIS 1.2.21
+        - request-timeout=300s                                        # CIS 1.2.22
+        - service-account-lookup=true                                 # CIS 1.2.24
+      kube-controller-manager-arg:
+        - terminated-pod-gc-threshold=10                              # CIS 1.3.1
+      secrets-encryption: true
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - make-iptables-util-chains=true                          # CIS 4.2.7
+          protect-kernel-defaults: true                               # CIS 4.2.6
+----
+--
 ======
 
 == 结论
