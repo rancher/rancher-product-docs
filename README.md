@@ -1,20 +1,24 @@
 # Rancher Product Docs
 
-Welcome to the Rancher Product docs. We are currently a work in progress. 
+Welcome to the Rancher Product docs.
 
-🚧🛠️👷🛠️🚧
-
-We are using this repo to migrate the current [Rancher docs](https://ranchermanager.docs.rancher.com/) site to run on the [Antora](https://antora.org/) framework. 
-
-## Contribute to Rancher Docs
-
-If you're looking to update the currently published iteration of the Rancher docs site, please visit [https://github.com/rancher/rancher-docs](https://github.com/rancher/rancher-docs).
+This repo is used to migrate content from the [Rancher docs](https://ranchermanager.docs.rancher.com/) site to publish it on the [SUSE Documentation site](https://documentation.suse.com/). It runs on the [Antora](https://antora.org/) framework.
 
 See the [Rancher software](https://github.com/rancher/rancher) repo if you have questions or requests for the Rancher platform.
 
-License
-=======
-Copyright (c) 2014-2024 [Rancher Labs, Inc.](https://rancher.com)
+## Contribute to Rancher Docs
+
+If you are looking to update the currently published iteration of the Rancher docs site, please visit [https://github.com/rancher/rancher-docs](https://github.com/rancher/rancher-docs).
+
+To start contributing, first install the Antora environment by running `make environment`.
+
+Run `make local` to build the site into `build/site`. Open `build/site/index.html` to view.
+
+Versioned documentation, including translations, is found under `versions/<version>/modules/<locale>/`.
+
+## License
+
+Copyright (c) 2014-2025 [SUSE, LLC.](https://www.suse.com/)
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
