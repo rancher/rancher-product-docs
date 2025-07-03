@@ -11,6 +11,7 @@ This issue is to track tasks that need to be done every release regardless of wh
 >
 > Apply updates be to the version and language appropriate files as needed.
 
+- [ ] Create a new branch for the release. Release-specific updates should use this branch as its base
 - [ ] Update the release notes page tables
   - [Published page](https://documentation.suse.com/cloudnative/rancher-manager/latest/en/release-notes.html)
   - [Source](./blob/main/versions/latest/modules/en/pages/release-notes.adoc)
@@ -26,3 +27,5 @@ This issue is to track tasks that need to be done every release regardless of wh
 - [ ] Update the deprecated features table
   - [Published page](https://documentation.suse.com/cloudnative/rancher-manager/latest/en/faq/deprecated-features.html#_where_can_i_find_out_which_features_have_been_deprecated_in_rancher)
   - [Source](./blob/main/versions/latest/modules/en/pages/faq/deprecated-features.adoc)
+- [ ] Update the swagger-<VERSION>.json file
+- [ ] Create a PR merging the release branch back into the main branch
