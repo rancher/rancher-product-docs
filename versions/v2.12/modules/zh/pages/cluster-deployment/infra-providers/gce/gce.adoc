@@ -1,0 +1,94 @@
+= Creating a Google Compute Engine cluster
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+
+In this section, you'll learn how to use Rancher to provision an https://docs.rke2.io/[RKE2] Kubernetes cluster on the Google Cloud Platform (GCP) using Google Compute Engine (GCE) through Rancher.
+
+First, you will enable the GCE node driver in the Rancher UI. Then, you follow the steps to create a GCP service account with the necessary permissions, and generate a JSON key file. This key file will be used to create a cloud credential in Rancher. 
+
+Then, you will create a GCE cluster in Rancher, and when configuring the cluster, you will define machine pools for it. Each machine pool will have a Kubernetes role of etcd, controlplane, or worker. Rancher will install RKE2 onto the new nodes, and it will set up each node with the Kubernetes role defined by the machine pool.
+
+. <<_enable_the_gce_node_driver>>
+. <<_create_a_cloud_credential>>
+. <<_create_a_cluster_using_the_cloud_credential>>
+. <<_gce_best_practices>>
+
+== Prerequisites
+
+.   A valid Google Cloud Platform account and project.
+.   A GCP Service Account JSON key file. The service account associated with this key must have the following IAM roles:
+.. **Compute Admin**
+.. **Service Account User**
+.. **Viewer**
+. A VPC Network to provision VMs within. 
+
+Refer to the https://cloud.google.com/iam/docs/service-account-overview[GCP documentation] on creating and managing service account keys for more details.
+
+== Enable the GCE node driver
+
+The GCE node driver is not enabled by default in Rancher. You must enable it before you can provision GCE clusters, or work with GCE specific CRDs.
+
+. Click **☰ > Cluster Management**.
+. On the left hand side, click **Drivers**.
+. Open the **Node Drivers** tab.
+. Find the **Google GCE** driver and select **⋮ > Activate**.
+
+== Create a cloud credential
+
+. Click **☰ > Cluster Management**.
+. Click **Cloud Credentials**.
+. Click **Create**.
+. Click **Google**.
+. Enter your GCP Service Account JSON key file.
+. Click **Create**.
+
+**Result:** You have created the cloud credentials that will be used to provision nodes in your cluster. You can reuse these credentials in other clusters. Depending on the permissions granted to the service account, this credential may also be used for GKE clusters.
+
+== Create a cluster using the cloud credential
+
+. Click **☰ > Cluster Management**.
+. On the **Clusters** page, click **Create**.
+. Click **Google GCE**.
+. Select a **Cloud Credential** and provide the GCP project to create the VM in.
+. Enter a **Cluster Name**.
+. Create a machine pool for each Kubernetes role. Refer to the [best practices](use-new-nodes-in-an-infra-provider.md#node-roles) for recommendations on role assignments and counts.
+.. For each machine pool, define the machine configuration. Refer to the xref:cluster-deployment/infra-providers/gce/machine-configuration.adoc[Google GCE machine configuration reference] for information on configuration options.
+. Use the **Cluster Configuration** to choose the version of Kubernetes that will be installed, what network provider will be used and if you want to enable project network isolation. For help configuring the cluster, refer to the xref:cluster-deployment/configuration/rke2.adoc[RKE2 cluster configuration reference].
+. Use **Member Roles** to configure user authorization for the cluster. Click **Add Member** to add users that can access the cluster. Use the **Role** drop-down to set permissions for each user.
+. Click **Create**.
+
+**Result:**
+
+Your cluster is created and assigned a state of **Provisioning**. Rancher is standing up your cluster.
+
+You can access your cluster after its state is updated to **Active**.
+
+**Active** clusters are assigned two Projects:
+
+* `Default`, containing the `default` namespace
+* `System`, containing the `cattle-system`, `ingress-nginx`, `kube-public`, and `kube-system` namespaces
+
+== GCE Best Practices
+
+=== External Firewall Rules, Open Ports, and ACE
+
+If the cluster being provisioned will utilize the xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc#_authenticating_directly_with_a_downstream_cluster[Authorized Cluster Endpoint (ACE) feature], controlplane nodes must expose port `6443`. This port is not exposed in the default machine pool configuration to prevent it from being exposed across all cluster nodes, and to reduce the number of firewall rules created by Rancher.
+
+In order for ACE to work as expected, you must specify this port in the Rancher UI when configuring the controlplane machine pool by enabling the `Expose external ports` checkbox, under the `Show Advanced` section of the machine pool configuration UI. Alternatively, you may manually create a custom firewall rule in GCP and provide the related network tag in the controlplane machine-pool configuration.
+
+=== Internal Firewall Rules
+
+Rancher will automatically create a firewall rule and network tag to facilitate communication between cluster nodes internally within the specified VPC network. This rule will contain the minimum number of ports required to create an RKE2/K3s cluster.
+
+If you need to extend the number of ports exposed internally between cluster nodes, a new firewall rule should be manually created, and the associated network tag assigned to the relevant machine pools. If desired, the automatic creation of the internal firewall rule can be disabled for each given machine pool when creating or updating the cluster.
+
+=== Cross Network Deployments
+
+While it is possible to deploy different machine pools into different VPC networks, the internal firewall rule created by Rancher does not support this configuration by default. To create machine pools in different networks, additional firewall rules to facilitate communication between nodes in different networks must be manually created.
+
+== Optional Next Steps
+
+After creating your cluster, you can access it through the Rancher UI. As a best practice, we recommend setting up these alternate ways of accessing your cluster:
+
+* **Access your cluster with the kubectl CLI:** Follow xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc#_accessing_clusters_with_kubectl_from_your_workstation[these steps] to access clusters with kubectl on your workstation. In this case, you will be authenticated through the Rancher server’s authentication proxy, then Rancher will connect you to the downstream cluster. This method lets you manage the cluster without the Rancher UI.
+* **Access your cluster with the kubectl CLI, using the authorized cluster endpoint:** Follow xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc#_authenticating_directly_with_a_downstream_cluster[these steps] to access your cluster with kubectl directly, without authenticating through Rancher. We recommend setting up this alternative method to access your cluster so that in case you can’t connect to Rancher, you can still access the cluster.
