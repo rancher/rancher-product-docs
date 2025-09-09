@@ -28,5 +28,6 @@ This issue is to track tasks that need to be done every release regardless of wh
   - [Published page](https://documentation.suse.com/cloudnative/rancher-manager/latest/en/faq/deprecated-features.html#_where_can_i_find_out_which_features_have_been_deprecated_in_rancher)
   - [Source](./blob/main/versions/latest/modules/en/pages/faq/deprecated-features.adoc)
 - [ ] Update the `swagger-<VERSION>.json` file in `versions/<VERSION>/modules/en/attachments/`.
-- [ ] Create a PR merging the release branch back into the `main` branch.
-- [ ] Verify that the merged documentation is successfully built in the [`gh-pages`](https://github.com/rancher/product-docs-playbook/tree/gh-pages) branch of the [product-docs-playbook](https://github.com/rancher/product-docs-playbook) repo and then synced and published on [documentation.suse.com](https://documentation.suse.com/cloudnative/rancher-manager/)
+- [ ] Verify that documentation successfully builds in the release branch and then create a PR merging the release branch back into the `main` branch.
+- [ ] If needed, submit a publish request for the staged content built in the [`gh-pages`](https://github.com/rancher/product-docs-playbook/tree/gh-pages) branch of the [product-docs-playbook](https://github.com/rancher/product-docs-playbook) repo.
+- [ ] Verify that documentation is successfully published on [documentation.suse.com](https://documentation.suse.com/cloudnative/rancher-manager/)
