@@ -1,11 +1,11 @@
 = Restoring a Cluster from Backup
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+:revdate: 2025-10-01
 :page-revdate: {revdate}
 
 Etcd backup and recovery for xref:cluster-deployment/launch-kubernetes-with-rancher.adoc[Rancher launched Kubernetes clusters] can be easily performed. Snapshots of the etcd database are taken and saved either locally onto the etcd nodes or to a S3 compatible target. The advantages of configuring S3 is that if all etcd nodes are lost, your snapshot is saved remotely and can be used to restore the cluster.
 
-Rancher recommends enabling the xref:cluster-admin/backups-and-restore/backups.adoc#_configuring_recurring_snapshots[ability to set up recurring snapshots of etcd], but xref:cluster-admin/backups-and-restore/backups.adoc#_one_time_snapshots[one-time snapshots] can easily be taken as well. Rancher allows restore from <<_restoring_a_cluster_from_a_snapshot,saved snapshots>> or if you don't have any snapshots, you can still <<_recovering_etcd_without_a_snapshot_rke,restore etcd>>.
+Rancher recommends enabling the xref:cluster-admin/backups-and-restore/backups.adoc#_configuring_recurring_snapshots[ability to set up recurring snapshots of etcd], but xref:cluster-admin/backups-and-restore/backups.adoc#_one_time_snapshots[one-time snapshots] can easily be taken as well. Rancher allows restore from <<_restoring_a_cluster_from_a_snapshot,saved snapshots>>.
 
 Clusters can also be restored to a prior Kubernetes version and cluster configuration.
 
@@ -49,24 +49,7 @@ To restore snapshots from S3, the cluster needs to be configured to xref:cluster
 
 In a disaster recovery scenario, the control plane and etcd nodes managed by Rancher in a downstream cluster may no longer be available or functioning. The cluster can be rebuilt by adding control plane and etcd nodes again, followed by restoring from an available snapshot.
 
-[tabs,sync-group-id=k8s-distro]
-======
-RKE::
-+
---
-Follow the procedure described in the https://www.suse.com/support/kb/doc/?id=000020695[SUSE Knowledgebase].
---
-
-RKE2/K3s::
-+
---
 If you have a complete cluster failure, you must remove all etcd nodes/machines from your cluster before you can add a "new" etcd node for restore.
-
-[NOTE]
-====
-Due to a https://github.com/rancher/rancher/issues/41080[known issue], this procedure requires Rancher v2.7.5 or newer.
-====
-
 
 [NOTE]
 ====
@@ -81,9 +64,9 @@ If you are using xref:./backups.adoc#_local_backup_target[local snapshots], it i
  ** If the node was previously in a cluster, xref:cluster-admin/manage-clusters/clean-cluster-nodes.adoc#_cleaning_up_nodes[clean the node] first.
  ** For custom clusters, go to the *Registration* tab and check the box for `etcd, controlplane, and worker`. Then copy and run the registration command on your node.
  ** For node driver clusters, a new node is provisioned automatically.
-
 +
 At this point, Rancher will indicate that restoration from etcd snapshot is required.
++
 . Restore from an etcd snapshot.
 +
 [NOTE]
@@ -99,7 +82,6 @@ As the etcd node is a clean node, you may need to manually create the `/var/lib/
  ** For local snapshots, restore using the UI is *not* available.
   ... In the upper right corner, click *⋮ > Edit YAML*.
   ... The example YAML below can be added under your `rkeConfig` to configure the etcd restore:
-
 +
 [,yaml]
 ----
@@ -109,36 +91,5 @@ As the etcd node is a clean node, you may need to manually create the `/var/lib/
       name: <string> # This field is required. Refers to the filename of the associated etcdsnapshot object.
   ...
 ----
-
++
 . After restoration is successful, you can scale your etcd nodes back up to the desired redundancy.
---
-====== 
-
-[#_recovering_etcd_without_a_snapshot_rke]
-== Recovering etcd without a Snapshot (RKE)
-
-If the group of etcd nodes loses quorum, the Kubernetes cluster will report a failure because no operations, e.g. deploying workloads, can be executed in the Kubernetes cluster. The cluster should have three etcd nodes to prevent a loss of quorum. If you want to recover your set of etcd nodes, follow these instructions:
-
-. Keep only one etcd node in the cluster by removing all other etcd nodes.
-. On the single remaining etcd node, run the following command:
-+
-[,bash]
-----
- docker run --rm -v /var/run/docker.sock:/var/run/docker.sock assaflavie/runlike etcd
-----
-+
-This command outputs the running command for etcd, save this command to use later.
-
-. Stop the running `etcd` container and rename it to `etcd-old`.
-+
-[,bash]
-----
- docker stop etcd
- docker rename etcd etcd-old
-----
-
-. Take the saved command from Step 2 and revise it:
- ** If you originally had more than 1 etcd node, then you need to change `--initial-cluster` to only contain the node that remains.
- ** Add `--force-new-cluster` to the end of the command.
-. Run the revised command.
-. After the single nodes is up and running, Rancher recommends adding additional etcd nodes to your cluster. If you have a xref:cluster-deployment/custom-clusters/custom-clusters.adoc[custom cluster] and you want to reuse an old node, you are required to xref:cluster-admin/manage-clusters/clean-cluster-nodes.adoc#_cleaning_up_nodes[clean up the nodes] before attempting to add them back into a cluster.
