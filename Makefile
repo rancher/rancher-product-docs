@@ -20,6 +20,16 @@ mcm-local:
 		playbook-mcm-local.yml \
 		2>&1 | tee tmp/mcm-local-build.log 2>&1
 
+mcm-local-latest:
+	mkdir -p tmp
+	ln -sf antora-yml/antora-mcm.yml ./versions/latest/antora.yml
+	npx antora --version
+	npx antora --stacktrace --log-format=pretty --log-level=info \
+		playbook-mcm-local.yml \
+		2>&1 | tee tmp/mcm-local-build.log 2>&1
+	rm -rf build/site/rancher-mcm/latest/zh/
+	ln -sf antora-yml/antora-product.yml ./versions/latest/antora.yml
+
 mcm-remote:
 	mkdir -p tmp
 	npm ci
@@ -27,6 +37,17 @@ mcm-remote:
 	npx antora --stacktrace --log-format=pretty --log-level=info \
 		playbook-mcm-remote.yml \
 		2>&1 | tee tmp/mcm-remote-build.log 2>&1
+
+mcm-remote-latest:
+	mkdir -p tmp
+	ln -sf antora-yml/antora-mcm.yml ./versions/latest/antora.yml
+	npm ci
+	npx antora --version
+	npx antora --stacktrace --log-format=pretty --log-level=info \
+		playbook-mcm-remote.yml \
+		2>&1 | tee tmp/mcm-remote-build.log 2>&1
+	rm -rf build/site/rancher-mcm/latest/zh/
+	ln -sf antora-yml/antora-product.yml ./versions/latest/antora.yml
 
 clean:
 	rm -rf build
