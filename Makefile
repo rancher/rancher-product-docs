@@ -15,7 +15,6 @@ remote:
 
 srfa-local:
 	mkdir -p tmp
-	ln -sf antora-yml/antora-srfa.yml ./versions/v2.12/antora.yml
 	npx antora --version
 	trap 'echo "Cleaning up .adoc files..."; git restore ./versions/v2.12/modules/en/pages' EXIT; \
 	\
@@ -26,12 +25,9 @@ srfa-local:
 	npx antora --stacktrace --log-format=pretty --log-level=info \
 		playbook-srfa-local.yml \
 		2>&1 | tee tmp/srfa-local-build.log 2>&1
-	rm -rf build/site-srfa/rancher-srfa/v2.12/zh/
-	ln -sf antora-yml/antora-product.yml ./versions/v2.12/antora.yml
 
 srfa-remote:
 	mkdir -p tmp
-	ln -sf antora-yml/antora-srfa.yml ./versions/v2.12/antora.yml
 	npm ci
 	npx antora --version
 	trap 'echo "Cleaning up .adoc files..."; git restore ./versions/v2.12/modules/en/pages' EXIT; \
@@ -43,8 +39,6 @@ srfa-remote:
 	npx antora --stacktrace --log-format=pretty --log-level=info \
 		playbook-srfa-remote.yml \
 		2>&1 | tee tmp/srfa-remote-build.log 2>&1
-	rm -rf build/site-srfa/rancher-srfa/v2.12/zh/
-	ln -sf antora-yml/antora-product.yml ./versions/v2.12/antora.yml
 
 clean:
 	rm -rf build
@@ -54,6 +48,3 @@ environment:
 
 preview:
 	npx http-server build/site -c-1
-
-preview-srfa:
-	npx http-server build/site-srfa -c-1
