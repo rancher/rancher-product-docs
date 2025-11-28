@@ -1,0 +1,98 @@
+= Creating an Azure Cluster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+
+In this section, you'll learn how to deploy an https://documentation.suse.com/cloudnative/rke2/[RKE2] or https://documentation.suse.com/cloudnative/k3s/[K3s] Kubernetes cluster in Azure through Rancher.
+
+First, you set up your Azure cloud credentials in Rancher.
+
+Then you create an Azure cluster in Rancher, and when configuring the new cluster, you define machine pools for it. Each machine pool has a Kubernetes role of etcd, controlplane, or worker. Rancher installs Kubernetes on the new nodes, and it sets up each node with the Kubernetes role defined by the machine pool.
+
+[CAUTION]
+====
+
+When the Rancher RKE2/K3s cluster is running in Azure and has an Azure load balancer in front, the outbound flow fails. The workaround for this problem is as follows:
+
+* Terminate the SSL/TLS on the internal load balancer
+* Use the L7 load balancer
+
+For more information, refer to the documentation on https://docs.microsoft.com/en-us/azure/load-balancer/components#_limitations[Azure load balancer limitations].
+====
+
+
+For more information on configuring the Kubernetes cluster that Rancher installs on the Azure nodes, refer to the xref:cluster-deployment/configuration/rke2.adoc[RKE2] and xref:cluster-deployment/configuration/k3s.adoc[K3s] cluster configuration references.
+
+
+For more information on configuring Azure machines, refer to the xref:cluster-deployment/infra-providers/azure/machine-configuration.adoc[Azure machine configuration reference].
+
+* <<_preparation_in_azure,Preparation in Azure>>
+* <<_creating_an_azure_cluster,Creating an Azure Cluster>>
+
+== Preparation in Azure
+
+Before a cluster can be deployed, we must configure our Azure subscription to allow the manipulation of its resources by a third party, such as Rancher.
+
+To do this, we will first create a new Azure *service principal (SP)* in Azure *Active Directory (AD)*, which, in Azure, is an application user who has permission to manage Azure resources.
+
+The following is a template `az cli` script that you have to run for creating an service principal, where you have to enter your SP name, role, and scope:
+
+----
+az ad sp create-for-rbac \
+  --name="<Rancher ServicePrincipal name>" \
+  --role="Contributor" \
+  --scopes="/subscriptions/<subscription Id>"
+----
+
+The creation of this service principal returns the **application ID**, also called the **client ID**, and the **client secret**. This information is used when you create your cloud credentials.
+
+== Creating an Azure Cluster
+
+=== Create your cloud credentials
+
+If you already have a set of cloud credentials to use, skip this section.
+
+. Click *☰ > Cluster Management*.
+. Click *Cloud Credentials*.
+. Click *Create*.
+. Click *Azure*.
+. Enter your Azure credentials.
+. Click *Create*.
+
+*Result:* You have created the cloud credentials that are used to provision nodes in your cluster.
+
+=== Create your cluster
+
+Use Rancher to create a Kubernetes cluster in Azure.
+
+. Click *☰ > Cluster Management*.
+. On the *Clusters* page, click *Create*.
+. Toggle the switch to *RKE2/K3s*.
+. Click *Azure*.
+. Select a *Cloud Credential*, if more than one exists. Otherwise, it's preselected.
+. Enter a *Cluster Name*.
+. Create a machine pool for each Kubernetes role. Refer to the xref:cluster-deployment/infra-providers/infra-providers.adoc#_node_roles[best practices] for recommendations on role assignments and counts.
+ .. For each machine pool, define the machine configuration. Refer to the xref:cluster-deployment/infra-providers/azure/machine-configuration.adoc[Azure machine configuration reference] for information on configuration options.
+. Use the *Cluster Configuration* to choose the version of Kubernetes to install, what network provider to use and if you want to enable project network isolation.  For help configuring the cluster, refer to the xref:cluster-deployment/configuration/rke2.adoc[RKE2] and xref:cluster-deployment/configuration/k3s.adoc[K3s] cluster configuration references.
+. Use *Member Roles* to configure user authorization for the cluster. Click *Add Member* to add users that can access the cluster. Use the *Role* drop-down to set permissions for each user.
+. Click *Create*.
+
+*Result:*
+
+Your cluster is created and assigned a state of *Provisioning*. Rancher is standing up your cluster.
+
+You can access your cluster after its state is updated to *Active*.
+
+*Active* clusters are assigned two Projects:
+
+* `Default`, containing the `default` namespace
+* `System`, containing the `cattle-system`, `ingress-nginx`, `kube-public`, and `kube-system` namespaces
+
+=== Optional Next Steps
+
+After creating your cluster, you can access it through the Rancher UI. As a best practice, we recommend setting up these alternate ways of accessing your cluster:
+
+* *Access your cluster with the kubectl CLI:* Follow xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc#_accessing_clusters_with_kubectl_from_your_workstation[these steps] to access clusters with kubectl on your workstation. In this case, you will be authenticated through the Rancher server's authentication proxy, then Rancher will connect you to the downstream cluster. This method lets you manage the cluster without the Rancher UI.
+* *Access your cluster with the kubectl CLI, using the authorized cluster endpoint:* Follow xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc#_authenticating_directly_with_a_downstream_cluster[these steps] to access your cluster with kubectl directly, without authenticating through Rancher. We recommend setting up this alternative method to access your cluster so that in case you can't connect to Rancher, you can still access the cluster.
