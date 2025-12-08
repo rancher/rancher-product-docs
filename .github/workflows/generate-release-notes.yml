@@ -1,0 +1,73 @@
+name: Generate and Store Release Notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release version (e.g., v2.13)'
+        required: true
+        default: 'v2.13'
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed to push to branch
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby for Asciidoctor
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.1' # Or any recent version
+          bundler-cache: true
+
+      - name: Install Asciidoctor
+        run: gem install asciidoctor
+
+      - name: Install latest Pandoc
+        uses: r-lib/actions/setup-pandoc@v2
+        with:
+          pandoc-version: 'latest'
+
+      - name: Create release notes build directory
+        run: mkdir release-notes-build
+
+      - name: Convert AsciiDoc to DocBook
+        run: |
+          VERSION=${{ inputs.version }}
+          INPUT_FILE="versions/${VERSION}/modules/en/pages/release-notes/${VERSION}.adoc"
+          OUTPUT_FILE="release-notes-build/${VERSION}.xml"
+
+          if [ ! -f "$INPUT_FILE" ]; then
+            echo "Error: Input file $INPUT_FILE not found."
+            exit 1
+          fi
+
+          asciidoctor -v -b docbook5 -o "$OUTPUT_FILE" "$INPUT_FILE"
+
+      - name: Convert DocBook to GitHub-Flavored Markdown
+        run: |
+          VERSION=${{ inputs.version }}
+          XML_FILE="release-notes-build/${VERSION}.xml"
+          MARKDOWN_FILE="release-notes-build/${VERSION}.md"
+
+          pandoc -v
+          pandoc --from docbook \
+                 --to gfm \
+                 --output "$MARKDOWN_FILE" \
+                 "$XML_FILE"
+
+      - name: Deploy to release-notes-build branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./release-notes-build
+          publish_branch: release-notes-build
+          force_orphan: true
+          commit_message: "Generate Release Notes for ${{ inputs.version }}"
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          enable_jekyll: true # Do not create .nojekyll file
