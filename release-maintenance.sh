@@ -183,7 +183,7 @@ update_release_notes() {
     local support_matrix_url="https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/${url_version_part}/"
     local support_matrix_cell="| ${support_matrix_url}[View]"
     # Replace the "| N/A" line for the support matrix with the generated URL.
-    past_block=$(echo "${current_block}" | sed "s#^| N/A\$#${support_matrix_cell}#")
+    past_block=$(echo "${current_block}" | sed "0,/^| N\/A\$/s#^| N/A\$#${support_matrix_cell}#")
   else
     # Fallback if the old version couldn't be parsed.
     past_block="${current_block}"
