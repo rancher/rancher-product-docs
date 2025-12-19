@@ -1,0 +1,80 @@
+name: Generate and Store Release Notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release version (e.g., v2.13)'
+        required: true
+        default: 'v2.13'
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed to push to branch
+    env:
+      VERSION: ${{ inputs.version }}
+      INPUT_FILE: versions/${{ inputs.version }}/modules/en/pages/release-notes/${{ inputs.version }}.adoc
+      XML_FILE: release-notes-build/${{ inputs.version }}.xml
+      MARKDOWN_FILE: release-notes-build/${{ inputs.version }}.md
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby for Asciidoctor
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4' # Or any recent version
+          bundler-cache: true
+
+      - name: Install Asciidoctor
+        run: gem install asciidoctor
+
+      - name: Install latest Pandoc via direct download
+        run: |
+          PANDOC_VERSION=$(curl -s "https://api.github.com/repos/jgm/pandoc/releases/latest" | grep -oP '"tag_name": "\K[^"]*')
+          DEB_URL="https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb"
+          curl -sL -o pandoc.deb "${DEB_URL}"
+          sudo dpkg -i pandoc.deb
+
+      - name: Create release notes build directory
+        run: mkdir release-notes-build
+
+      - name: Convert AsciiDoc to DocBook
+        run: |
+          if [ ! -f "$INPUT_FILE" ]; then
+            echo "Error: Input file $INPUT_FILE not found."
+            exit 1
+          fi
+
+          asciidoctor -v -a build-type=community -b docbook5 -o "$XML_FILE" "$INPUT_FILE"
+
+      - name: Convert DocBook to GitHub-Flavored Markdown
+        run: |
+          pandoc -v
+          pandoc --from docbook \
+                 --to gfm \
+                 --output "$MARKDOWN_FILE" \
+                 "$XML_FILE"
+
+      - name: Add title to release notes
+        run: |
+          TITLE_LINE=$(head -n 1 "$INPUT_FILE" | sed 's/^=/#/')
+          sed -i "1i${TITLE_LINE}\n" "$MARKDOWN_FILE"
+
+      - name: Deploy to release-notes-build branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd release-notes-build
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
+          git checkout --orphan release-notes-build
+          git add .
+          git commit -m "Generate Release Notes for ${{ inputs.version }}"
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          git push -f origin release-notes-build
