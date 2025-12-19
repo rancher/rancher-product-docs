@@ -31,3 +31,15 @@ This issue is to track tasks that need to be done every release regardless of wh
 - [ ] Verify that documentation successfully builds in the release branch and then create a PR merging the release branch back into the `main` branch.
 - [ ] If needed, submit a publish request for the staged content built in the [`gh-pages`](https://github.com/rancher/product-docs-playbook/tree/gh-pages) branch of the [product-docs-playbook](https://github.com/rancher/product-docs-playbook) repo.
 - [ ] Verify that documentation is successfully published on [documentation.suse.com](https://documentation.suse.com/cloudnative/rancher-manager/)
+
+## Minor releases
+
+The following apply to new minor releases only. E.g. v2.13 is introduced for the first time.
+
+- [ ] Under `versions/`, create a new subfolder for the new minor version.
+  - Copy the latest existing version.
+  - In the new subfolder's `antora.yml` or `antora-yml/*` file(s), update the `version` field.
+  - In the repository's playbook file(s):
+      - Add the new version to the `content.sources.start_paths` field.
+      - Update the component version of the `site.start_page` field.
+- [ ] In the [product-docs-playbook](https://github.com/rancher/product-docs-playbook) repository's playbook file(s), add the new version to the `content.sources.start_paths` field.
