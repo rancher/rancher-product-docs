@@ -1,6 +1,6 @@
 = 项目
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+:revdate: 2026-01-08
 :page-revdate: {revdate}
 
 == 创建项目
@@ -23,11 +23,15 @@ spec:
 EOF
 ----
 
-使用 `metadata.generateName` 来确保一个唯一的项目 ID，但是需要注意 `kubectl apply` 不能与 `metadata.generateName` 一起使用，因此必须使用 `kubectl create` 来替代。
+When creating a new project, you have two primary options for setting the name:
+
+* *Automatic Generation:* Use `metadata.generateName` to ensure a unique project ID. However, note that you must use `kubectl create` (instead of `kubectl apply`) with this option, as `kubectl apply` does not support it.
+* *Manual Naming:* You can explicitly set the project ID using `metadata.name`. If a project with that exact name already exists, the name request is denied.
+The display name seen in the UI is set by `spec.displayName`. If `spec.displayName` is not provided, the field `metadata.name` is used instead.
 
 将 `metadata.namespace` 和 `spec.clusterName` 设置为项目所属的集群 ID。
 
-如果你通过集群成员账户创建项目，则必须包含注释 `field.cattle.io/creatorId`，并将注释值设置为集群成员账号的用户 ID。
+If you create a project through a cluster member account and want that account to be able to access the project, you must include the annotation `field.cattle.io/creatorId`, and set it to the cluster member account's user ID.
 
 [,bash]
 ----
@@ -46,7 +50,7 @@ spec:
 EOF
 ----
 
-设置 `field.cattle.io/creatorId` 字段允许集群成员账户通过 `get` 命令查看项目资源，并可以在 Rancher UI 中查看项目。集群所有者和管理员账号不需要设置此注释。
+Setting the `field.cattle.io/creatorId` field creates a `ProjectRoleTemplateBinding` that grants the specified user the ability to see project resources with the `get` command and view the project in the Rancher UI. Cluster owner and admin accounts don't need to set this annotation to perform these tasks.
 
 Setting the `field.cattle.io/creator-principal-name` annotation to the user's principal preserves it in a projectroletemplatebinding automatically created for the project owner.
 
@@ -99,9 +103,13 @@ spec:
 EOF
 ----
 
+=== Backing Namespace
+
+After creating the project, the field `status.backingNamespace` gets populated. This represents the namespace in the management cluster that is created to manage project related resources. Examples of resources stored in the backing namespace are xref:security/secrets-hub.adoc#_creating_secrets_in_projects[project scoped secrets] and xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc#_project_roles[project role template bindings].
+
 == Adding a Member to a Project
 
-Look up the project ID to specify the `metadata.namespace` field and `projectName` field values.
+Look up the project's <<_backing_namespace,backing namespace>> to specify the `metadata.namespace` field value and look up the project's ID to specify the `projectName` field value.
 
 [,bash]
 ----
@@ -124,7 +132,7 @@ apiVersion: management.cattle.io/v3
 kind: ProjectRoleTemplateBinding
 metadata:
   generateName: prtb-
-  namespace: p-vwxyz
+  namespace: c-m-abcde-p-vwxyz
 projectName: c-m-abcde:p-vwxyz
 roleTemplateName: project-member
 userPrincipalName: keycloak_user://user
@@ -151,18 +159,18 @@ Create a projectroletemplatebinding for each role you want to assign to the proj
 
 == Listing Project Members
 
-Look up the project ID:
+Look up the project backing namespace:
 
 [,bash]
 ----
 kubectl --namespace c-m-abcde get projects
 ----
 
-to list projectroletemplatebindings in the project's namespace:
+To list projectroletemplatebindings in the project's backing namespace:
 
 [,bash]
 ----
-kubectl --namespace p-vwxyz get projectroletemplatebindings
+kubectl --namespace c-m-abcde-p-vwxyz get projectroletemplatebindings
 ----
 
 == Deleting a Member From a Project
@@ -173,14 +181,14 @@ Delete the projectroletemplatebinding from the project's namespace:
 
 [,bash]
 ----
-kubectl --namespace p-vwxyz delete projectroletemplatebindings prtb-qx874 prtb-7zw7s
+kubectl --namespace c-m-abcde-p-vwxyz delete projectroletemplatebindings prtb-qx874 prtb-7zw7s
 ----
 
 == 在项目中创建命名空间
 
 项目资源保存在管理集群中，即使该项目使用于托管集群也是如此。项目下的命名空间保存在托管集群中。
 
-在管理集群上查找你正在管理的集群的项目 ID，因为它是使用 `metadata.generateName` 生成的：
+On the management cluster, look up the project ID for the cluster you are administrating if generated using `metadata.generateName`:
 
 [,bash]
 ----
@@ -220,3 +228,5 @@ kubectl --namespace c-m-abcde delete project p-vwxyz
 ----
 
 请注意此命令不会删除以前属于该项目的命名空间和资源。
+
+It does delete all project role template bindings for the projects, so recreating the project will not restore members added to the project, and you have to add users as members again.
