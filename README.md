@@ -14,7 +14,7 @@ See the [Rancher software](https://github.com/rancher/rancher) repo if you have 
 
 License
 =======
-Copyright (c) 2014-2024 [Rancher Labs, Inc.](https://rancher.com)
+Copyright (c) 2014-2026 [SUSE, LLC.](https://www.suse.com/)
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
