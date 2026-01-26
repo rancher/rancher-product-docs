@@ -194,7 +194,7 @@ update_release_notes() {
   local new_current_block
   new_current_block=$(cat <<EOF
 | ${version}
-| xref:release-notes/${version}.adoc[View] / https://github.com/rancher/rancher/releases/tag/${version}[GitHub Release]
+| xref:release-notes/${version}.adoc[View]
 | N/A
 | ${new_prime_mark}
 | ${new_community_mark}
