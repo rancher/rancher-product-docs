@@ -344,8 +344,10 @@ main() {
   update_matrix "$adapter_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$adapter_row"
 
   # Update rancher-webhook.adoc
+  local webhook_version_clean="${WEBHOOK_VERSION##*up}"
+  webhook_version_clean="${webhook_version_clean%%-rc*}"
   local webhook_row
-  webhook_row="| ${VERSION}"$'\n'"| v${WEBHOOK_VERSION##*up}"$'\n'"| ${webhook_prime_mark}"$'\n'"| ${webhook_community_mark}"$'\n'
+  webhook_row="| ${VERSION}"$'\n'"| v${webhook_version_clean}"$'\n'"| ${webhook_prime_mark}"$'\n'"| ${webhook_community_mark}"$'\n'
   # The marker is different here, it's a comment
   update_matrix "$webhook_file_en" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$webhook_row"
   update_matrix "$webhook_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$webhook_row"
