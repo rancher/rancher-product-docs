@@ -2,7 +2,7 @@ product-local:
 	mkdir -p tmp
 	npx antora --version
 	npx antora --stacktrace --log-format=pretty --log-level=info \
-		playbook-product-local.yml \
+		playbook-local.yml \
 		2>&1 | tee tmp/product-local-build.log 2>&1
 
 community-local:
