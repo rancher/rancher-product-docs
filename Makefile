@@ -1,17 +1,32 @@
-local:
+product-local:
 	mkdir -p tmp
 	npx antora --version
 	npx antora --stacktrace --log-format=pretty --log-level=info \
-		playbook-local.yml \
-		2>&1 | tee tmp/local-build.log 2>&1
+		playbook-product-local.yml \
+		2>&1 | tee tmp/product-local-build.log 2>&1
 
-remote:
+community-local:
+	mkdir -p tmp
+	npx antora --version
+	npx antora --stacktrace --log-format=pretty --log-level=info \
+		playbook-community-local.yml \
+		2>&1 | tee tmp/community-local-build.log 2>&1
+
+product-remote:
 	mkdir -p tmp
 	npm ci
 	npx antora --version
 	npx antora --stacktrace --log-format=pretty --log-level=info \
-		playbook-remote.yml \
-		2>&1 | tee tmp/remote-build.log 2>&1
+		playbook-product-remote.yml \
+		2>&1 | tee tmp/product-remote-build.log 2>&1
+
+community-remote:
+	mkdir -p tmp
+	npm ci
+	npx antora --version
+	npx antora --stacktrace --log-format=pretty --log-level=info \
+		playbook-community-remote.yml \
+		2>&1 | tee tmp/community-remote-build.log 2>&1
 
 srfa-local:
 	mkdir -p tmp
@@ -34,5 +49,8 @@ clean:
 environment:
 	npm ci
 
-preview:
-	npx http-server build/site -c-1
+preview-community-local:
+	npx http-server build/site-community-local -c-1 -p 8080
+
+preview-product-local:
+	npx http-server build/site-product-local -c-1 -p 8081
