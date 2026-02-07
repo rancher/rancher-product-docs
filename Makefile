@@ -2,7 +2,7 @@ product-local:
 	mkdir -p tmp
 	npx antora --version
 	npx antora --stacktrace --log-format=pretty --log-level=info \
-		playbook-local.yml \
+		playbook-product-local.yml \
 		2>&1 | tee tmp/product-local-build.log 2>&1
 
 community-local:
@@ -49,5 +49,8 @@ clean:
 environment:
 	npm ci
 
-preview:
-	npx http-server build/site -c-1
+preview-community-local:
+	npx http-server build/site-community-local -c-1 -p 8080
+
+preview-product-local:
+	npx http-server build/site-product-local -c-1 -p 8081
