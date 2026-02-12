@@ -1,3 +1,4 @@
+// This is a helper script that adds scroll-sync with the right-side TOC menu headers relative to your location in the body content.
 window.addEventListener('DOMContentLoaded', () => {
   const observer = new IntersectionObserver(entries => {
     entries.forEach(entry => {
