@@ -6,9 +6,6 @@
 # It supports two modes:
 #   1. Interactive: Prompts the user for all necessary information.
 #   2. Non-interactive: Takes all information as command-line arguments.
-#
-# It also includes a dry-run mode to show what commands would be executed
-# without making any actual changes to the files.
 
 set -o errexit
 set -o nounset
@@ -22,12 +19,13 @@ DOCS_REPO_PATH=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pw
 
 # --- Global Variables ---
 INTERACTIVE=false
-DRY_RUN=false
 VERSION=""
 TAG_VERSION=""
 RELEASE_DATE=""
 ADAPTER_VERSION=""
 WEBHOOK_VERSION=""
+TURTLES_VERSION=""
+FLEET_VERSION=""
 NEW_CURRENT_PRIME_AVAIL="y"
 NEW_CURRENT_COMMUNITY_AVAIL="y"
 
@@ -47,10 +45,10 @@ Modes of Operation:
 
   Non-interactive:
     Provide a git tag to derive the version and fetch component versions automatically.
-    $ ./$(basename "$0") -t v2.13.2 -d "Dec 09, 2025"
+    $ ./$(basename "$0") -t v2.13.2-alpha3 -d "Dec 09, 2025"
 
     Or, provide the version and component versions manually:
-    $ ./$(basename "$0") -v v2.13.2 -d "Dec 09, 2025" -a v107.0.1+up8.0.0 -w v0.9.2
+    $ ./$(basename "$0") -v v2.13.2 -d "Dec 09, 2025" -a v107.0.1+up8.0.0 -w v0.9.2 -T 108.0.4+up0.25.4-rc.1 -F 108.0.2+up0.14.2
 
 Options:
   -v <version>          The new Rancher version (e.g., v2.13.2). (Required if -t is not used)
@@ -59,10 +57,11 @@ Options:
                         If used, the version is derived from the tag, and -a and -w are fetched from GitHub.
   -a <adapter_version>  The corresponding CSP adapter version. (Required if -t is not used)
   -w <webhook_version>  The corresponding webhook version. (Required if -t is not used)
+  -T <turtles_version>  The corresponding Turtles version. (Required if -t is not used)
+  -F <fleet_version>    The corresponding Fleet version. (Required if -t is not used)
 
   --prime [y/n]         Is this version available in Prime? (Default: y)
   --community [y/n]     Is this version available in Community? (Default: y)
-  -n, --dry-run         Show what changes would be made without modifying files.
   -h, --help            Display this help message and exit.
 EOF
   exit 1
@@ -81,6 +80,8 @@ get_inputs_interactive() {
     read -rp "Enter the new Rancher version (e.g., v2.13.2): " VERSION
     read -rp "Enter the CSP adapter version: " ADAPTER_VERSION
     read -rp "Enter the webhook version: " WEBHOOK_VERSION
+    read -rp "Enter the Turtles version: " TURTLES_VERSION
+    read -rp "Enter the Fleet version: " FLEET_VERSION
   fi
 
   read -rp "Is this version available in Prime? [Y/n]: " NEW_CURRENT_PRIME_AVAIL
@@ -99,9 +100,10 @@ parse_args() {
       -d) RELEASE_DATE="$2"; shift 2 ;;
       -a) ADAPTER_VERSION="$2"; shift 2 ;;
       -w) WEBHOOK_VERSION="$2"; shift 2 ;;
+      -T) TURTLES_VERSION="$2"; shift 2 ;;
+      -F) FLEET_VERSION="$2"; shift 2 ;;
       --prime) NEW_CURRENT_PRIME_AVAIL="$2"; shift 2 ;;
       --community) NEW_CURRENT_COMMUNITY_AVAIL="$2"; shift 2 ;;
-      -n|--dry-run) DRY_RUN=true; shift 1 ;;
       -h|--help) usage ;;
       *) echo "Unknown option: $1"; usage ;;
     esac
@@ -119,6 +121,8 @@ validate_inputs() {
   if [[ -z "$TAG_VERSION" ]]; then
     if [[ -z "$ADAPTER_VERSION" ]]; then echo "Error: Adapter version is required when not using -t."; valid=false; fi
     if [[ -z "$WEBHOOK_VERSION" ]]; then echo "Error: Webhook version is required when not using -t."; valid=false; fi
+    if [[ -z "$TURTLES_VERSION" ]]; then echo "Error: Turtles version is required when not using -t."; valid=false; fi
+    if [[ -z "$FLEET_VERSION" ]]; then echo "Error: Fleet version is required when not using -t."; valid=false; fi
   fi
 
   if ! "$valid"; then
@@ -127,18 +131,9 @@ validate_inputs() {
   fi
 }
 
-# Execute a command or print it for a dry run.
+# Execute a command.
 run_cmd() {
-  if "$DRY_RUN"; then
-    echo "DRY-RUN: Would execute..."
-    # Pretty-print the ex command for readability
-    echo "ex -s \"$1\" <<-EOF"
-    echo -e "$2" | sed 's/^/  /'
-    echo "EOF"
-    echo
-  else
-    ex -s "$1" <<< "$2"
-  fi
+  ex -s "$1" <<< "$2"
 }
 
 # Update the revdate in a given file.
@@ -236,6 +231,21 @@ EOF
   run_cmd "$file" "$ex_cmd"
 }
 
+# Update an attribute in antora.yml.
+update_antora_attr() {
+  local file="$1"
+  local attr="$2"
+  local value="$3"
+  echo "-> Updating $attr in $file"
+  local ex_cmd
+  ex_cmd=$(cat <<EOF
+%s/^\(\s*\)${attr}: .*/\1${attr}: ${value}/
+x
+EOF
+)
+  run_cmd "$file" "$ex_cmd"
+}
+
 # --- Main Logic ---
 main() {
   if [[ $# -eq 0 ]]; then
@@ -270,8 +280,10 @@ main() {
     fi
 
     # Parse YAML content using grep and awk. This is simple and avoids extra dependencies.
-    WEBHOOK_VERSION=$(echo "$build_yaml_content" | grep '^webhookVersion:' | awk '{print $2}')
-    ADAPTER_VERSION=$(echo "$build_yaml_content" | grep '^cspAdapterMinVersion:' | awk '{print $2}')
+    WEBHOOK_VERSION=$(echo "$build_yaml_content" | awk '/^webhookVersion:/ {print $2}')
+    ADAPTER_VERSION=$(echo "$build_yaml_content" | awk '/^cspAdapterMinVersion:/ {print $2}')
+    TURTLES_VERSION=$(echo "$build_yaml_content" | awk '/^turtlesVersion:/ {print $2}')
+    FLEET_VERSION=$(echo "$build_yaml_content" | awk '/^fleetVersion:/ {print $2}')
 
     if [[ -z "$WEBHOOK_VERSION" ]] || [[ -z "$ADAPTER_VERSION" ]]; then
         echo "Error: Could not parse webhookVersion or cspAdapterMinVersion from build.yaml" >&2
@@ -279,6 +291,12 @@ main() {
     fi
     echo "  - Found Webhook Version: ${WEBHOOK_VERSION}"
     echo "  - Found Adapter Version: ${ADAPTER_VERSION}"
+    if [[ -n "$TURTLES_VERSION" ]]; then
+      echo "  - Found Turtles Version: ${TURTLES_VERSION}"
+    fi
+    if [[ -n "$FLEET_VERSION" ]]; then
+      echo "  - Found Fleet Version: ${FLEET_VERSION}"
+    fi
   fi
 
   # Prepare variables
@@ -288,6 +306,64 @@ main() {
   local minor_version_no_v
   minor_version_no_v=$(echo "$version_no_v" | cut -d. -f1,2)
   local minor_version_with_v="v${minor_version_no_v}"
+
+  # Calculate final turtles version
+  local final_turtles_version=""
+  if [[ -n "$TURTLES_VERSION" ]]; then
+    local turtles_clean="${TURTLES_VERSION#*+up}"
+    turtles_clean=$(echo "$turtles_clean" | cut -d. -f1,2)
+    final_turtles_version="v${turtles_clean}"
+  fi
+
+  # Calculate final fleet version
+  local final_fleet_version=""
+  if [[ -n "$FLEET_VERSION" ]]; then
+    local fleet_clean="${FLEET_VERSION#*+up}"
+    fleet_clean=$(echo "$fleet_clean" | cut -d. -f1,2)
+    final_fleet_version="v${fleet_clean}"
+  fi
+
+  # Validate versions against playbook
+  echo "-> Validating component versions against product-docs-playbook..."
+  local playbook_url="https://raw.githubusercontent.com/rancher/product-docs-playbook/refs/heads/main/product-docs-playbook-remote.yml"
+  local playbook_content
+  if ! playbook_content=$(curl -sSfL "$playbook_url"); then
+    echo "Warning: Failed to fetch playbook. Skipping component version updates." >&2
+    final_turtles_version=""
+    final_fleet_version=""
+  else
+    # Validate Turtles
+    if [[ -n "$final_turtles_version" ]]; then
+      echo "-> Validating Turtles version ${final_turtles_version}..."
+      local turtles_repo_url="https://github.com/rancher/turtles-product-docs.git"
+      local search_path="versions/${final_turtles_version}"
+      local start_paths_line
+      start_paths_line=$(echo "$playbook_content" | awk -v url="$turtles_repo_url" '$0 ~ url {found=1} found && /start_paths:/ {print $0; exit}')
+
+      if [[ "$start_paths_line" != *"$search_path"* ]]; then
+        echo "Warning: '${search_path}' not found in start_paths for Turtles docs in playbook. Skipping update."
+        final_turtles_version=""
+      else
+        echo "   Confirmed '${search_path}' exists in playbook."
+      fi
+    fi
+
+    # Validate Fleet
+    if [[ -n "$final_fleet_version" ]]; then
+      echo "-> Validating Fleet version ${final_fleet_version}..."
+      local fleet_repo_url="https://github.com/rancher/fleet-product-docs.git"
+      local fleet_search_path="versions/${final_fleet_version}"
+      local fleet_start_paths_line
+      fleet_start_paths_line=$(echo "$playbook_content" | awk -v url="$fleet_repo_url" '$0 ~ url {found=1} found && /start_paths:/ {print $0; exit}')
+
+      if [[ "$fleet_start_paths_line" != *"$fleet_search_path"* ]]; then
+        echo "Warning: '${fleet_search_path}' not found in start_paths for Fleet docs in playbook. Skipping update."
+        final_fleet_version=""
+      else
+        echo "   Confirmed '${fleet_search_path}' exists in playbook."
+      fi
+    fi
+  fi
 
   local webhook_prime_mark
   local webhook_community_mark
@@ -301,6 +377,10 @@ main() {
   # Define file paths
   local base_path_en="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/modules/en/pages"
   local release_notes_file_en="${base_path_en}/release-notes.adoc"
+  local antora_file_versions="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/antora.yml"
+  local antora_file_community="${DOCS_REPO_PATH}/community-docs/${minor_version_with_v}/antora.yml"
+  local antora_file_srfa="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/antora-yml/antora-srfa.yml"
+
   local adapter_file_en="${base_path_en}/installation-and-upgrade/hosted-kubernetes/cloud-marketplace/aws/install-adapter.adoc"
   local webhook_file_en="${base_path_en}/security/rancher-webhook/rancher-webhook.adoc"
   local deprecated_file_en="${base_path_en}/faq/deprecated-features.adoc"
@@ -323,15 +403,37 @@ main() {
   done
 
   echo "Starting release task automation for version ${VERSION}..."
-  if "$DRY_RUN"; then
-    echo "--- DRY RUN MODE: No files will be modified. ---"
-  fi
   echo
 
   # Update revdate on all files
   for file in "${all_files[@]}"; do
     update_revdate "$file" "$iso_date"
   done
+
+  # Update antora.yml files
+  if [[ -n "$final_turtles_version" ]]; then
+    if [[ -f "$antora_file_versions" ]]; then
+      update_antora_attr "$antora_file_versions" "turtles-docs-version" "$final_turtles_version"
+    fi
+    if [[ -f "$antora_file_community" ]]; then
+      update_antora_attr "$antora_file_community" "turtles-docs-version" "$final_turtles_version"
+    fi
+    if [[ -f "$antora_file_srfa" ]]; then
+      update_antora_attr "$antora_file_srfa" "turtles-docs-version" "$final_turtles_version"
+    fi
+  fi
+
+  if [[ -n "$final_fleet_version" ]]; then
+    if [[ -f "$antora_file_versions" ]]; then
+      update_antora_attr "$antora_file_versions" "fleet-docs-version" "$final_fleet_version"
+    fi
+    if [[ -f "$antora_file_community" ]]; then
+      update_antora_attr "$antora_file_community" "fleet-docs-version" "$final_fleet_version"
+    fi
+    if [[ -f "$antora_file_srfa" ]]; then
+      update_antora_attr "$antora_file_srfa" "fleet-docs-version" "$final_fleet_version"
+    fi
+  fi
 
   # Update release-notes.adoc
   update_release_notes "$release_notes_file_en" "$VERSION" "$new_current_prime_mark" "$new_current_community_mark"
@@ -364,9 +466,6 @@ main() {
   update_matrix "$deprecated_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row_zh"
 
   echo "✅ All tasks completed."
-  if "$DRY_RUN"; then
-    echo "--- DRY RUN FINISHED ---"
-  fi
 }
 
 # Run the main function with all provided arguments
