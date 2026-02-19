@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'The release version (e.g., v2.13)'
-        required: true
-        default: 'v2.13'
+        description: 'The patch version (e.g., v2.13.1)'
+        required: false
+        default: ''
 
 jobs:
   build-and-commit:
@@ -15,9 +15,6 @@ jobs:
       contents: write # Needed to push to branch
     env:
       VERSION: ${{ inputs.version }}
-      INPUT_FILE: versions/${{ inputs.version }}/modules/en/pages/release-notes/${{ inputs.version }}.adoc
-      XML_FILE: release-notes-build/${{ inputs.version }}.xml
-      MARKDOWN_FILE: release-notes-build/${{ inputs.version }}.md
 
     steps:
       - name: Checkout code
@@ -42,27 +39,55 @@ jobs:
       - name: Create release notes build directory
         run: mkdir release-notes-build
 
-      - name: Convert AsciiDoc to DocBook
+      - name: Generate Release Notes
         run: |
-          if [ ! -f "$INPUT_FILE" ]; then
-            echo "Error: Input file $INPUT_FILE not found."
-            exit 1
+          if [ -n "$VERSION" ]; then
+            # Extract major.minor for directory (e.g. v2.13.1 -> v2.13)
+            VERSION_DIR=$(echo "$VERSION" | cut -d. -f1,2)
+            FILES="versions/$VERSION_DIR/modules/en/pages/release-notes/$VERSION.adoc"
+          else
+            FILES=$(find versions -type f -path "versions/*/modules/en/pages/release-notes/v*.adoc")
           fi
 
-          asciidoctor -v -a build-type=community -b docbook5 -o "$XML_FILE" "$INPUT_FILE"
+          for INPUT_FILE in $FILES; do
+            if [ ! -f "$INPUT_FILE" ]; then
+              if [ -n "$VERSION" ]; then
+                echo "Error: Input file $INPUT_FILE not found."
+                exit 1
+              fi
+              continue
+            fi
 
-      - name: Convert DocBook to GitHub-Flavored Markdown
-        run: |
-          pandoc -v
-          pandoc --from docbook \
-                 --to gfm \
-                 --output "$MARKDOWN_FILE" \
-                 "$XML_FILE"
+            BASENAME=$(basename "$INPUT_FILE" .adoc)
+            XML_FILE="release-notes-build/${BASENAME}.xml"
+            MARKDOWN_FILE="release-notes-build/${BASENAME}.md"
 
-      - name: Add title to release notes
-        run: |
-          TITLE_LINE=$(head -n 1 "$INPUT_FILE" | sed 's/^=/#/')
-          sed -i "1i${TITLE_LINE}\n" "$MARKDOWN_FILE"
+            # Convert AsciiDoc to DocBook
+            asciidoctor -v -a build-type=community -b docbook5 -o "$XML_FILE" "$INPUT_FILE"
+
+            # Workaround for admonition boxes with lists and no preceding para
+            # A pandoc bug?
+            sed -i '/^<important>$/{N;s/^<important>\n<itemizedlist>/<important><simpara>\&#8203;<\/simpara>\n<itemizedlist>/}' "$XML_FILE"
+
+            # Convert DocBook to GitHub-Flavored Markdown
+            pandoc -v
+            pandoc --from docbook \
+                   --to gfm \
+                   --wrap=none \
+                   --output "$MARKDOWN_FILE" \
+                   "$XML_FILE"
+
+            # Remove the empty lines added by the workaround above
+            sed -i '/^> \[!IMPORTANT\]$/{N;N;s/\n>.*\n>.*//}' "$MARKDOWN_FILE"
+
+            # Add an extra # to each Markdown header due to a missing title
+            sed -i 's/^#/##/' "$MARKDOWN_FILE"
+
+            # Re-add title to release notes.
+            # A pandoc bug?
+            TITLE_TEXT=$(grep -oP '(?<=<title>).*?(?=</title>)' "$XML_FILE" | head -n 1)
+            sed -i "1i# ${TITLE_TEXT}\n" "$MARKDOWN_FILE"
+          done
 
       - name: Deploy to release-notes-build branch
         env:
@@ -75,6 +100,6 @@ jobs:
           gh auth setup-git
           git checkout --orphan release-notes-build
           git add .
-          git commit -m "Generate Release Notes for ${{ inputs.version }}"
+          git commit -m "Generate Release Notes"
           git remote add origin "https://github.com/${{ github.repository }}.git"
           git push -f origin release-notes-build
