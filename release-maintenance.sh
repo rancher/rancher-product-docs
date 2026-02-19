@@ -428,7 +428,9 @@ main() {
       update_antora_attr "$antora_file_versions" "fleet-docs-version" "$final_fleet_version"
     fi
     if [[ -f "$antora_file_community" ]]; then
-      update_antora_attr "$antora_file_community" "fleet-docs-version" "$final_fleet_version"
+      # Strip 'v' prefix for Fleet community docs
+      local fleet_version_community="${final_fleet_version#v}"
+      update_antora_attr "$antora_file_community" "fleet-docs-version" "$fleet_version_community"
     fi
     if [[ -f "$antora_file_srfa" ]]; then
       update_antora_attr "$antora_file_srfa" "fleet-docs-version" "$final_fleet_version"
