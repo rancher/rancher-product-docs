@@ -323,31 +323,29 @@ main() {
     final_fleet_version="v${fleet_clean}"
   fi
 
-  # Validate versions against playbook
-  echo "-> Validating component versions against product-docs-playbook..."
+  # Validate Turtles
+  if [[ -n "$final_turtles_version" ]]; then
+    echo "-> Validating Turtles version ${final_turtles_version}..."
+    local turtles_url="https://github.com/rancher/turtles-product-docs/tree/main/versions/${final_turtles_version}"
+    local http_status
+    http_status=$(curl -s -L -o /dev/null -w "%{http_code}" "$turtles_url")
+
+    if [[ "$http_status" != "200" ]]; then
+      echo "Warning: '${final_turtles_version}' not found in Turtles docs repo. Skipping update."
+      final_turtles_version=""
+    else
+      echo "   Confirmed '${final_turtles_version}' exists in Turtles docs repo."
+    fi
+  fi
+
+  # Validate Fleet version against playbook
+  echo "-> Validating Fleet version against product-docs-playbook..."
   local playbook_url="https://raw.githubusercontent.com/rancher/product-docs-playbook/refs/heads/main/product-docs-playbook-remote.yml"
   local playbook_content
   if ! playbook_content=$(curl -sSfL "$playbook_url"); then
-    echo "Warning: Failed to fetch playbook. Skipping component version updates." >&2
-    final_turtles_version=""
+    echo "Warning: Failed to fetch playbook. Skipping Fleet version update." >&2
     final_fleet_version=""
   else
-    # Validate Turtles
-    if [[ -n "$final_turtles_version" ]]; then
-      echo "-> Validating Turtles version ${final_turtles_version}..."
-      local turtles_repo_url="https://github.com/rancher/turtles-product-docs.git"
-      local search_path="versions/${final_turtles_version}"
-      local start_paths_line
-      start_paths_line=$(echo "$playbook_content" | awk -v url="$turtles_repo_url" '$0 ~ url {found=1} found && /start_paths:/ {print $0; exit}')
-
-      if [[ "$start_paths_line" != *"$search_path"* ]]; then
-        echo "Warning: '${search_path}' not found in start_paths for Turtles docs in playbook. Skipping update."
-        final_turtles_version=""
-      else
-        echo "   Confirmed '${search_path}' exists in playbook."
-      fi
-    fi
-
     # Validate Fleet
     if [[ -n "$final_fleet_version" ]]; then
       echo "-> Validating Fleet version ${final_fleet_version}..."
