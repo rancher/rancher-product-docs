@@ -1,0 +1,112 @@
+= 回滚
+:page-languages: [en, zh]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:experimental:
+
+本页概述了如何在升级 Rancher 后将 Rancher 回滚到之前的版本。
+
+include::shared:ROOT:partial$zh/rollback-warning.adoc[]
+
+请在以下情况时按照本页的说明进行操作：
+
+* 正在运行的 Rancher 实例在备份完成后升级到了更新的版本。
+* 上游（本地）集群与进行备份的集群相同。
+
+[TIP]
+====
+
+* xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc[请参阅这些步骤来迁移 Rancher].
+* 如果你需要还原 Rancher 到同一版本的之前的状态, 请参阅xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc[还原 Rancher].
+====
+
+To roll back Rancher to a lower/previous version, use the *Rancher Backups* application and restore Rancher from backup.
+
+回滚后，Rancher 必须以较低/较早的版本启动。
+
+还原是通过创建 Restore 自定义资源实现的。
+
+[NOTE]
+.重要提示：
+====
+
+* 请按照此页面上的说明在已备份的同一集群上还原 Rancher。要把 Rancher 迁移到新集群，请参照步骤xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc[迁移 Rancher]。
+* 在使用相同设置恢复 Rancher 时，Rancher deployment 在恢复开始前被手动缩减，然后 Operator 将在恢复完成后将其缩回。因此，在恢复完成之前，Rancher 和 UI 都将不可用。如果 UI 不可用时，你可使用 ``kubectl create -f restore.yaml``YAML 恢复文件来使用初始的集群 kubeconfig。
+====
+
+
+== 步骤 1 ：创建 Restore 自定义资源
+
+. 点击 *☰ > 集群管理*。
+. 找到你的本地集群，并点击 *Explore*。
+. 在左侧导航栏中，点击 menu:Rancher 备份[还原]。
+
+[NOTE]
+====
+如果 Rancher Backups 应用不可见，你需要到 *Apps* 的 Charts 页面中安装应用。详情请参见xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc#_访问_charts[此处]。
+====
+
+
+. 单击**创建**。
+. 使用表单或 YAML 创建 Restore。如需获取使用表单创建 Restore 资源的更多信息，请参见xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc[配置参考]和xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc[示例]。
+. 如需使用 YAML 编辑器，点击menu:创建[使用 YAML 文件创建]。然后输入 Restore YAML。以下是 Restore 自定义资源示例：
++
+[,yaml]
+----
+apiVersion: resources.cattle.io/v1
+kind: Restore
+metadata:
+  name: restore-migration
+spec:
+  backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+  encryptionConfigSecretName: encryptionconfig
+  storageLocation:
+    s3:
+      credentialSecretName: s3-creds
+      credentialSecretNamespace: default
+      bucketName: rancher-backups
+      folder: rancher
+      region: us-west-2
+      endpoint: s3.us-west-2.amazonaws.com
+----
++
+如需获得配置 Restore 的帮助，请参见xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc[配置参考]和xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc[示例]。
+
+. 单击**创建**。
+
+*结果*：已创建备份文件并更新到目标存储位置。资源还原顺序如下：
+
+. 自定义资源定义（CRD）
+. 集群范围资源
+. 命名空间资源
+
+如需查看还原的处理方式，请检查 Operator 的日志。按照如下步骤获取日志：
+
+[,yaml]
+----
+kubectl get pods -n cattle-resources-system
+kubectl logs -n cattle-resources-system -f
+----
+
+== 步骤 2：回滚到上一个 Rancher 版本
+
+你可以使用 Helm CLI 回滚 Rancher。要回滚到上一个版本：
+
+[,yaml]
+----
+helm rollback rancher -n cattle-system
+----
+
+如果你不是想回滚到上一个版本，你也可以指定回滚的版本。查看部署历史记录：
+
+[,yaml]
+----
+helm history rancher -n cattle-system
+----
+
+确定目标版本后，执行回滚。此示例回滚到版本 `3`：
+
+[,yaml]
+----
+helm rollback rancher 3 -n cattle-system
+----
