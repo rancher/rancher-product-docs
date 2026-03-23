@@ -2,7 +2,7 @@
 ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
 endif::[]
-:revdate: 2026-03-25
+:revdate: 2026-03-23
 :page-revdate: {revdate}
 :release-version: v2.14.0
 :rn-component-version: v2.14
@@ -16,6 +16,8 @@ ifeval::["{build-type}" == "community"]
 :rn-back-up-rancher: https://ranchermanager.docs.rancher.com/{rn-component-version}/how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher
 :rn-install-rancher: https://ranchermanager.docs.rancher.com/{rn-component-version}/getting-started/installation-and-upgrade/other-installation-methods/rancher-behind-an-http-proxy/install-rancher
 :rn-private-registry: https://docs.k3s.io/installation/private-registry
+:rn-capi-v1beta2: https://turtles.docs.rancher.com/turtles/v0.26/en/tutorials/capi-v1beta2.html
+:rn-imagescan: https://fleet.rancher.io/how-tos-for-users/imagescan
 endif::[]
 ifeval::["{build-type}" != "community"]
 :rn-istio: xref:observability/istio/istio.adoc
@@ -27,6 +29,8 @@ ifeval::["{build-type}" != "community"]
 :rn-back-up-rancher: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
 :rn-install-rancher: xref:installation-and-upgrade/other-installation-methods/http-proxy/install-rancher.adoc
 :rn-private-registry: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/private-registry.html
+:rn-capi-v1beta2: https://documentation.suse.com/cloudnative/cluster-api/v0.26/en/tutorials/capi-v1beta2.html
+:rn-imagescan: https://documentation.suse.com/cloudnative/continuous-delivery/latest/en/how-tos-for-users/imagescan.html
 endif::[]
 
 [IMPORTANT]
@@ -52,11 +56,29 @@ endif::[]
 
 == Rancher General
 
-//=== Features and Enhancements
+=== Features and Enhancements
+
+* **Support for all Kubernetes Resource Types and Quotas**. Rancher now supports the use of arbitrary resource references and their quotas.
++
+[IMPORTANT]
+====
+This support does not cover the resources in the `ext.cattle.io` group, see https://github.com/rancher/rancher/issues/52602[#52602].
+====
++
+For more details, see https://github.com/rancher/rancher/issues/52403[#52403].
+* To simplify the Rancher Helm chart, support and version-checking code for End-of-Life (EOL) and unsupported versions of cert-manager have been removed. The Rancher chart now only supports cert-manager versions that are compatible with the Kubernetes versions supported by Rancher. See https://github.com/rancher/rancher/issues/52922[#52922].
+* Rancher v2.14 adds support for switching from ingress to Gateway API when installing the Rancher Helm chart. Note that when using the Gateway API network exposure type, Rancher can create and manage its own Gateway resource. However, if you have an existing Gateway that you manage independently (for example, a shared Gateway used by multiple applications), you will need to create your own HTTPRoute resources to route traffic to Rancher. See https://github.com/rancher/rancher/issues/52796[#52796].
+// FIXME: https://github.com/rancher/rancher-docs/pull/2151
 
 === Major Bug Fixes
 
-- Fixed an issue where upgrading Rancher from v2.13.2 to v2.14 caused Rancher pods to enter a `CrashLoopBackOff` state and fail to start. See https://github.com/rancher/rancher/issues/53854[#53854].
+* Fixed an issue where upgrading Rancher from v2.13.2 to v2.14 caused Rancher pods to enter a `CrashLoopBackOff` state and fail to start. See https://github.com/rancher/rancher/issues/53854[#53854].
+* **Support for custom claim mapping in Keycloak OIDC.** The custom claim mechanism for Keycloak OIDC now works as expected. For custom names, the display name will come from the `name` claim if populated - the preference order for display names is:
+[arabic]
+.. The "name" claim or **custom** "name" claim.
+.. The "email" claim, or **custom** "email claim".
++
+For groups, this may lead to additional permissions for newly detected groups claims.
 
 == Rancher App (Global UI)
 
@@ -66,12 +88,20 @@ endif::[]
 
 - Fixed an issue where the legacy `/v3/` API-UI page failed to load, resulting in a blank page and console errors when users attempted to access it via the host URL `<RANCHER-SERVER-URL>/v3`. See https://github.com/rancher/rancher/issues/52911[#52911].
 
+== Rancher CLI
+
+=== Behavior Changes
+
+- The Rancher CLI `token` command now supports authorization code flow with Microsoft Entra ID (formerly Azure AD) as an alternative to device code flow, which addresses environments where device code flow is blocked by security policies. Use `--auth-flow authcode` or set `CATTLE_OAUTH_AUTH_FLOW=authcode`. See https://github.com/rancher/rancher/issues/52404[#52404].
+
 == Authentication
 
 === Features and Enhancements
 
 - Rancher now supports using access tokens issued for OAuth and OpenID Connect (OIDC) as standard Bearer tokens (per RFC 6750) to authenticate with the platform. Previously, only an ID token could be used to impersonate and authenticate a user. As part of this functionality, you can configure the allowed scopes for an OIDC provider. See https://github.com/rancher/rancher/issues/52716[#52716].
 - Rancher supports the Proof Key for Code Exchange (PKCE) extension (RFC 7636) for OIDC authentication providers. Enabling `S256` PKCE token verification allows you to mitigate authorization code interception attacks during OIDC authentication flows. See https://github.com/rancher/rancher/issues/50665[#50665].
+- A new feature flag is now available to disable the deprecated `/v3-public` API endpoints. This allows you to test UI changes and integrations exclusively against the newer `/v1-public` endpoints. See https://github.com/rancher/rancher/issues/52680[#52680].
+- Rancher now includes Terraform resource support for the Amazon Cognito authentication provider. This allows you to programmatically manage Amazon Cognito integration, such as enabling or disabling the authentication provider, through Infrastructure as Code (IaC) practices instead of configuring it manually via the UI or API. See https://github.com/rancher/rancher/issues/51058[#51058].
 
 === Major Bug Fixes
 
@@ -79,7 +109,24 @@ endif::[]
 
 == Cluster Provisioning
 
-//=== Features and Enhancements
+=== Features and Enhancements
+
+- Rancher v2.14 adds support for Cluster API **v1beta2** by upgrading to **cluster-api v1.12.2** (from **v1.10.6**). Rolling back to **Rancher 2.13.x**, which supports Cluster API **v1beta1**, introduces compatibility issues and requires alternative rollback steps. Refer to the https://ranchermanager.docs.rancher.com/v2.14/getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks#alternative-steps-for-special-scenarios[Rancher documentation] for the required procedure. Refer to {rn-capi-v1beta2}[Upgrading to CAPI v1beta2] for more details on the changes introduced in this new API version.
+- Rancher now supports the provisioning and management of dual-stack (IPv4/IPv6) networking for EKS clusters. See https://github.com/rancher/rancher/issues/53584[53584].
+
+=== Behavior Changes
+
+* Rancher v2.14 removes support for Kubernetes 1.32. See https://github.com/rancher/rancher/issues/53764[53764].
+* **Embedded Cluster API removed**: The built-in Rancher Provisioning Cluster API functionality (`rancher-provisioning-capi`) has been removed in Rancher v2.14.0, as Rancher Turtles is now the default mechanism for deploying CAPI CRDs and controllers. This includes:
+** The `embedded-cluster-api` feature flag.
+** The `rancher-provisioning-capi` Helm chart.
+** Related webhooks and controllers.
+** **Migration Path:** The migration to Rancher Turtles happens automatically during the upgrade to v2.14.0. Rancher Turtles is now the only supported method for Cluster API (CAPI) integration with Rancher. Unless you are using a certificated CAPI provider installed through Turtles, no manual action is required.
++
+However, if you had previously disabled Rancher Turtles, you will need to manually re-enable it. A warning will let you know during Rancher startup if Turtles is disabled and that cluster provisioning will not operate as expected.
++
+For more information on installing and using Rancher Turtles, see the https://ranchermanager.docs.rancher.com/integrations-in-rancher/cluster-api/overview[Cluster API integration documentation]. See also https://github.com/rancher/rancher/issues/53291[#53291].
+* The Rancher Ingress resource no longer deploys `ingress-nginx`-specific annotations (`nginx.ingress.kubernetes.io/proxy-connect-timeout`, `nginx.ingress.kubernetes.io/proxy-read-timeout`, and `nginx.ingress.kubernetes.io/proxy-send-timeout`) by default. These annotations are no longer required for performance, and removing them improves compatibility with other ingress controllers following the https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/[announcement of `ingress-nginx` retirement].
 
 === Major Bug Fixes
 
@@ -92,9 +139,25 @@ endif::[]
 
 //=== Major Bug Fixes
 
-//== K3s Provisioning
+== K3s and RKE2 Provisioning
 
-//=== Known Issues
+=== Features and Enhancements
+
+* K3s and RKE2-provisioned clusters now support specifying different retention for S3 snapshots than for the local snapshots. See https://github.com/k3s-io/k3s/issues/12671[12671].
+* **Tech preview: native CAPI infrastructure providers (for example, CAPA and CAPV) support for Rancher-provisioned RKE2 clusters**. Rancher v2.14 can provision RKE2 clusters using native CAPI infrastructure providers, such as https://cluster-api-aws.sigs.k8s.io/[CAPA] (Cluster API Provider AWS) and https://github.com/kubernetes-sigs/cluster-api-provider-vsphere[CAPV] (Cluster API Provider vSphere), in addition to the previously supported method of provisioning using Rancher Node Drivers (`rancher/machine`).
++
+This is an experimental feature made available as a tech preview for evaluation. It should not be used for production clusters, and some configuration fields are subject to change. Future versions of this feature may be incompatible with this version.
++
+This method is distinct from provisioning using Rancher Turtles, for example, through CAPA + CAPRKE2 or Kubeadm.
++
+Note that these clusters cannot yet be provisioned via Rancher UI, and the cluster management UI is https://github.com/rancher/dashboard/issues/16679[disabled] for them (UI for exploring the cluster resources remains available).
+//FIXME
+//+
+//For examples on how to create clusters using this method with CAPA and CAPV, refer to the https://ranchermanager.docs.rancher.com/how-to-guides/advanced-user-guides/capi-infrastructure-providers[documentation].
+
+=== Known Issues
+
+* After updating an RKE2 or K3s cluster to a supported Kubernetes version, the S3 snapshot retention defaults to `5`, ignoring any previously set `snapshotRetention` values. This is caused by a known issue in RKE2 and K3s, tracked in https://github.com/k3s-io/k3s/issues/13769[k3s#13769], which is targeted for a fix in a future KDM update. As a workaround, Rancher v2.14.0 introduces the ability to explicitly specify `etcd-s3-retention` to manage S3 snapshot retention independently. See also https://github.com/rancher/rancher/issues/53046[#53046].
 
 //== RKE2 Provisioning
 
@@ -104,7 +167,11 @@ endif::[]
 
 //=== Features and Enhancements
 
-//== Continuous Delivery (Fleet)
+== Continuous Delivery (Fleet)
+
+=== Features and Enhancements
+
+- The Fleet `imagescan` feature, which has been provided as experimental, is now disabled by default and will be deprecated in a future release. With this feature disabled, Git repository paths referenced by `GitRepo` resources will fail to deploy if they contain `imageScans` in their `fleet.yaml` or equivalent configuration files. If you still require this feature, you can explicitly enable it by setting `imagescan.enabled=true` when installing Fleet. For more information, refer to the {rn-imagescan}[Image Scan documentation] and the guide on https://fleet.rancher.io/how-tos-for-operators/installation#enabling-imagescan[enabling imagescan]. See https://github.com/rancher/fleet/issues/4671[#4671].
 
 //=== Major Bug Fixes
 
