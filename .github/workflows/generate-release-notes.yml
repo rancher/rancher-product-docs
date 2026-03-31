@@ -41,6 +41,13 @@ jobs:
 
       - name: Generate Release Notes
         run: |
+          # Extract and format product name attributes from playbook
+          awk '
+            /# product names, DO NOT EDIT THIS LINE, USED BY SCRIPT/ { flag=1; next }
+            /^[ \t]*extensions:/ { flag=0 }
+            flag && NF>0 { sub(/^[ \t]+/, ":"); print }
+          ' playbook-community-local.yml > /tmp/attrs.adoc
+
           if [ -n "$VERSION" ]; then
             # Extract major.minor for directory (e.g. v2.13.1 -> v2.13)
             VERSION_DIR=$(echo "$VERSION" | cut -d. -f1,2)
@@ -62,14 +69,25 @@ jobs:
             XML_FILE="release-notes-build/${BASENAME}.xml"
             MARKDOWN_FILE="release-notes-build/${BASENAME}.md"
 
+            # Pre-process INPUT_FILE to inject product name attributes
+            awk '
+              NR==FNR { attrs = attrs $0 "\n"; next }
+              { print }
+              !d && index($0, "ifeval::[\"{build-type}\" == \"community\"]") {
+                printf "%s", attrs
+                d=1
+              }
+            ' /tmp/attrs.adoc "$INPUT_FILE" > /tmp/processed.adoc
+            mv /tmp/processed.adoc "$INPUT_FILE"
+
             # Convert AsciiDoc to DocBook
             asciidoctor -v -a build-type=community -b docbook5 -o "$XML_FILE" "$INPUT_FILE"
 
             # Convert DocBook to GitHub-Flavored Markdown
-            pandoc -v
             pandoc --from docbook \
                    --to gfm \
                    --wrap=none \
+                   --verbose \
                    --output "$MARKDOWN_FILE" \
                    "$XML_FILE"
 
