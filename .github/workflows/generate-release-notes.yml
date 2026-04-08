@@ -34,6 +34,8 @@ jobs:
           PANDOC_VERSION="3.9.0.1"
           DEB_URL="https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb"
           curl -sL -o pandoc.deb "${DEB_URL}"
+          # Verify the checksum of the downloaded package
+          echo "fbec6171aa4e96dd3c8c604e3ea30a9286cef8022397d0247c1fb64b7e5e8cee  pandoc.deb" | sha256sum -c -
           sudo dpkg -i pandoc.deb
 
       - name: Create release notes build directory
@@ -41,6 +43,13 @@ jobs:
 
       - name: Generate Release Notes
         run: |
+          # Extract and format product name attributes from playbook
+          awk '
+            /# product names, DO NOT EDIT THIS LINE, USED BY SCRIPT/ { flag=1; next }
+            /^[ \t]*extensions:/ { flag=0 }
+            flag && NF>0 { sub(/^[ \t]+/, ":"); print }
+          ' playbook-community-local.yml > /tmp/attrs.adoc
+
           if [ -n "$VERSION" ]; then
             # Extract major.minor for directory (e.g. v2.13.1 -> v2.13)
             VERSION_DIR=$(echo "$VERSION" | cut -d. -f1,2)
@@ -59,17 +68,30 @@ jobs:
             fi
 
             BASENAME=$(basename "$INPUT_FILE" .adoc)
+            ADOC_FILE="release-notes-build/${BASENAME}.adoc"
             XML_FILE="release-notes-build/${BASENAME}.xml"
             MARKDOWN_FILE="release-notes-build/${BASENAME}.md"
+
+            # Pre-process INPUT_FILE to inject product name attributes
+            awk '
+              NR==FNR { attrs = attrs $0 "\n"; next }
+              { print }
+              !d && index($0, "ifeval::[\"{build-type}\" == \"community\"]") {
+                printf "%s", attrs
+                d=1
+              }
+            ' /tmp/attrs.adoc "$INPUT_FILE" > /tmp/processed.adoc
+            mv /tmp/processed.adoc "$INPUT_FILE"
+            cp "$INPUT_FILE" "$ADOC_FILE"
 
             # Convert AsciiDoc to DocBook
             asciidoctor -v -a build-type=community -b docbook5 -o "$XML_FILE" "$INPUT_FILE"
 
             # Convert DocBook to GitHub-Flavored Markdown
-            pandoc -v
             pandoc --from docbook \
                    --to gfm \
                    --wrap=none \
+                   --verbose \
                    --output "$MARKDOWN_FILE" \
                    "$XML_FILE"
 
