@@ -1,0 +1,75 @@
+name: Draft Release Notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release version (e.g., v2.13.4)'
+        required: true
+
+jobs:
+  draft-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Generate Release Notes Draft
+        run: ./.github/draft-release-notes.sh "${{ inputs.version }}"
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          PR_BODY_TEMPLATE: |
+            - [ ] Remove the old info, issues listed as Bug Fixes and Features, moved previous 'Known Issues' and 'Behavior Changes' to 'Long-standing Known Issues' and 'Previous Rancher Behavior Changes' section.
+            - [ ] New issues for __VERSION__ (last checked: 01/01/70):
+              - [ ] [rancher/rancher-prime](https://github.com/rancher/rancher-prime/issues?q=state%3Aclosed%20label%3A%22release-note%22%20milestone%3A__VERSION__) (Open: 0, Closed: 0)
+                - [rancher/rancher Prime-only](https://github.com/rancher/rancher/issues?q=is%3Aissue%20state%3Aopen%20milestone%3A__VERSION__%20label%3Arelease-note-prime) (Open: 0, Closed: 0)
+                - [rancher/rancher](https://github.com/rancher/rancher/issues?q=is%3Aissue%20state%3Aopen%20milestone%3A__VERSION__%20label%3Arelease-note) (Open: 0, Closed: 0)
+              - [ ] [rancher/dashboard](https://github.com/rancher/dashboard/issues?q=is%3Aissue%20state%3Aclosed%20milestone%3A__VERSION__%20label%3Arelease-note) (Open: 0, Closed: 0)
+              - [ ] [rancher/backup-restore-operator](https://github.com/rancher/backup-restore-operator/issues?q=is%3Aissue%20state%3Aopen%20label%3Arelease-note%20milestone%3A__VERSION__) (Open: 0, Closed: 0)
+            - [ ] Existing Known Issues (last verified: 01/01/70)
+            - [ ] Updated K8s versions
+            
+            Also, the `versions/__MINOR_VERSION__/modules/zh/pages/release-notes/__VERSION__.adoc` file is just a copy of `versions/__MINOR_VERSION__/modules/en/pages/release-notes/__VERSION__.adoc` atm and does not need to be reviewed.
+        run: |
+          # Extract version from tag (e.g., v2.13.4-alpha1 -> v2.13.4)
+          VERSION=${VERSION%%-*}
+          MINOR_VERSION=${VERSION%.*}
+          BRANCH_NAME="release-notes-${VERSION}"
+
+          if git ls-remote --heads origin "$VERSION" | grep -q "$VERSION"; then
+            BASE_BRANCH="$VERSION"
+          else
+            BASE_BRANCH="main"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH_NAME"
+          git add .
+          git commit -m "Draft release notes for $VERSION"
+          git push -f origin "$BRANCH_NAME"
+
+          PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --base "$BASE_BRANCH" --json number --jq '.[0].number')
+          PR_BODY="${PR_BODY_TEMPLATE//__VERSION__/$VERSION}"
+          PR_BODY="${PR_BODY//__MINOR_VERSION__/$MINOR_VERSION}"
+
+          if [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]]; then
+            gh pr edit "$PR_NUMBER" \
+              --title "Add Release Notes for $VERSION" \
+              --body "$PR_BODY"
+          else
+            gh pr create \
+              --title "Add Release Notes for $VERSION" \
+              --body "$PR_BODY" \
+              --base "$BASE_BRANCH" \
+              --head "$BRANCH_NAME" \
+              --milestone "$VERSION"
+          fi
