@@ -75,6 +75,54 @@ CURRENT_DATE=$(date +%Y-%m-%d)
 
 echo "Updating attributes in $NEW_FILE..."
 
+# Fetch latest K8s versions from data.json
+DATA_URL="https://releases.rancher.com/kontainer-driver-metadata/release-${MINOR_VERSION}/data.json"
+DATA_JSON=$(mktemp)
+echo "Fetching KDM data from $DATA_URL..."
+curl -sSfL "$DATA_URL" -o "$DATA_JSON" || echo "Warning: Failed to fetch $DATA_URL"
+
+LATEST_K8S=""
+if ! command -v jq &> /dev/null; then
+    echo "Warning: 'jq' is not installed. Skipping automatic Kubernetes version extraction."
+elif [ -s "$DATA_JSON" ]; then
+    echo "Extracting latest Kubernetes versions from data.json for $NEW_VERSION..."
+    K8S_VERSIONS=$(jq -r '.k3s.releases[] | select(.minChannelServerVersion != null and .maxChannelServerVersion != null) | "\(.version) \(.minChannelServerVersion) \(.maxChannelServerVersion)"' "$DATA_JSON" 2>/dev/null | awk -v target="$NEW_VERSION" '
+    function ver_val(v) {
+        sub(/^v/, "", v);
+        sub(/-.*$/, "", v);
+        split(v, a, ".");
+        return (a[1]+0) * 1000000 + (a[2]+0) * 1000 + (a[3]+0);
+    }
+    BEGIN { tv = ver_val(target); }
+    {
+        minv = ver_val($2);
+        maxv = ver_val($3);
+        if (tv >= minv && tv <= maxv) {
+            print $1;
+        }
+    }')
+    if [ -n "$K8S_VERSIONS" ]; then
+        CLEAN_VERSIONS=$(echo "$K8S_VERSIONS" | cut -d'+' -f1 | sort -V -r)
+        SEEN_MINORS=""
+        COUNT=0
+        for v in $CLEAN_VERSIONS; do
+            MINOR=$(echo "$v" | cut -d'.' -f1,2)
+            if [[ ! "$SEEN_MINORS" =~ "$MINOR" ]]; then
+                SEEN_MINORS="$SEEN_MINORS $MINOR"
+                if [ $COUNT -eq 0 ]; then
+                    LATEST_K8S="* $v (Default)"
+                else
+                    LATEST_K8S="$LATEST_K8S
+* $v"
+                fi
+                COUNT=$((COUNT+1))
+                if [ $COUNT -eq 3 ]; then break; fi
+            fi
+        done
+    fi
+fi
+rm -f "$DATA_JSON"
+
 # If the template was a .0 release, check if we need to add missing sections
 ADD_PREV_ATTR=0
 ADD_CHANGES_SEC=0
@@ -93,7 +141,8 @@ awk -v date="$CURRENT_DATE" \
     -v minor_ver="$MINOR_VERSION" \
     -v prev_ver="$PREV_VERSION" \
     -v add_prev="$ADD_PREV_ATTR" \
-    -v add_changes="$ADD_CHANGES_SEC" '
+    -v add_changes="$ADD_CHANGES_SEC" \
+    -v k8s_list="$LATEST_K8S" '
 BEGIN {
     sec_list[1] = "== Rancher General";
     sec_list[2] = "== Rancher App (Global UI)";
@@ -168,6 +217,19 @@ function insert_missing_sections() {
     print;
     next
 }
+/^=== Kubernetes Versions for RKE2\/K3s/ {
+    print
+    if (k8s_list != "") {
+        print ""
+        print k8s_list
+        print ""
+        skip_k8s = 1
+    }
+    next
+}
+skip_k8s && /^=== / { skip_k8s = 0 }
+skip_k8s && /^== / { skip_k8s = 0 }
+skip_k8s { next }
 { print }
 ' "$NEW_FILE" > "${NEW_FILE}.tmp" && mv "${NEW_FILE}.tmp" "$NEW_FILE"
 
