@@ -1,0 +1,100 @@
+name: Draft Release Notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The release version (e.g., v2.13.4)'
+        required: true
+
+jobs:
+  draft-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Generate Release Notes Draft
+        run: ./.github/draft-release-notes.sh "${{ inputs.version }}"
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          PR_BODY_TEMPLATE: |
+            - [ ] Remove the old info, issues listed as Bug Fixes and Features, move previous 'Known Issues' and 'Behavior Changes' to 'Long-standing Known Issues' and 'Previous Rancher Behavior Changes' section.
+            - [ ] New issues for __VERSION__:
+              - [ ] [rancher/rancher-prime](https://github.com/rancher/rancher-prime/issues?q=state%3Aclosed%20label%3A%22release-note%22%20milestone%3A__VERSION__)
+                - [rancher/rancher Prime-only](https://github.com/rancher/rancher/issues?q=is%3Aissue%20state%3Aopen%20milestone%3A__VERSION__%20label%3Arelease-note-prime)
+                - [rancher/rancher](https://github.com/rancher/rancher/issues?q=is%3Aissue%20state%3Aopen%20milestone%3A__VERSION__%20label%3Arelease-note)
+              - [ ] [rancher/dashboard](https://github.com/rancher/dashboard/issues?q=is%3Aissue%20state%3Aclosed%20milestone%3A__VERSION__%20label%3Arelease-note)
+              - [ ] [rancher/backup-restore-operator](https://github.com/rancher/backup-restore-operator/issues?q=is%3Aissue%20state%3Aopen%20label%3Arelease-note%20milestone%3A__VERSION__)
+            - [ ] Existing Known Issues
+            - [ ] Updated K8s versions
+
+            Also, the `versions/__MINOR_VERSION__/modules/zh/pages/release-notes/__VERSION__.adoc` file is just a copy of `versions/__MINOR_VERSION__/modules/en/pages/release-notes/__VERSION__.adoc` atm and does not need to be reviewed.
+
+            <details>
+            <summary>copilot prompt template</summary>
+
+            ```text
+            @copilot
+
+            * First, clean up the `__VERSION__.adoc` files in this PR:
+              * Remove any bug fix release notes listed under `Major Bug Fixes` sections.
+              * Remove any feature enhancements release notes listed under `Features and Enhancements` sections.
+              * Move the issues listed under `Behavior Changes` and `Known Issues` sections to later in the document, to sections `Previous Rancher Behavior Changes` and `Long-standing Known Issues`. Older issues are listed with their respective categories, for example issued originally under `Cluster Provisioning` are moved to the `Long-standing Known Issues - Cluster Provisioning` section.
+                * For each moved issue, list it under the release it was introduced in, for example `Rancher v2.13.1:`, following the format of other old issues.
+            * Next, use the search queries in the PR body to search for the issues labeled as `release-note` or `release-note-prime`.
+            * For each found issue, scan the body, comments, referenced Pull Requests and GitHub issues and labels to understand the full context of the Rancher __VERSION__ release and the status of the issue.
+              * Summarize the scanned contents as a release note, following the format found in the `__VERSION__.adoc` files.
+              * If the issue is a backport/forwardport, the issue will reference another issue that it is backported/forwardported from. Check the referenced issue to see if it has a `release-note` or `release-note-prime` label. If it does, reuse the existing description.
+              * If the issue has a comment containing a Release Notes summary of the issue, reuse that as the description.
+              * Update reused descriptions for clarity and grammar as needed.
+            *  Update the `__VERSION__.adoc` files with the summarized release notes, placing them under the correct section in the document. Attempt to determine the correct section by scanning issue labels for relevant areas and teams. If no suitable section can be determined, place the issue under `Rancher General`.
+            * For each issue under the specific section, determine the release note type of each issue and place it under the correct subsection category of `Features and Enhancements`, `Behavior Changes`, `Major Bug Fixes`, or `Known Issues`.
+            * Post a comment summarizing found issues, formatted as separate tables for each search query. Each table should also contain the determined category and found references to related issues or PRs.
+            * Scan issues found in the `Long-standing Known Issues` section in the `__VERSION__.adoc` files, follow the referenced links and list issues closed in the past 45 days in a table in the comment, including the date and a summary of the latest updates made to the issue. Ignore any closed as not planned issues.
+            * Finally, remove empty placeholder sections in the document.
+            ```
+            </details>
+        run: |
+          # Extract version from tag (e.g., v2.13.4-alpha1 -> v2.13.4)
+          VERSION=${VERSION%%-*}
+          MINOR_VERSION=${VERSION%.*}
+          BRANCH_NAME="release-notes-${VERSION}"
+
+          if git ls-remote --heads origin "$VERSION" | grep -q "$VERSION"; then
+            BASE_BRANCH="$VERSION"
+          else
+            BASE_BRANCH="main"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH_NAME"
+          git add .
+          git commit -m "Draft release notes for $VERSION"
+          git push -f origin "$BRANCH_NAME"
+
+          PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --base "$BASE_BRANCH" --json number --jq '.[0].number')
+          PR_BODY="${PR_BODY_TEMPLATE//__VERSION__/$VERSION}"
+          PR_BODY="${PR_BODY//__MINOR_VERSION__/$MINOR_VERSION}"
+
+          if [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]]; then
+            gh pr edit "$PR_NUMBER" \
+              --title "Add Release Notes for $VERSION" \
+              --body "$PR_BODY"
+          else
+            gh pr create \
+              --title "Add Release Notes for $VERSION" \
+              --body "$PR_BODY" \
+              --base "$BASE_BRANCH" \
+              --head "$BRANCH_NAME" \
+              --milestone "$VERSION"
+          fi
