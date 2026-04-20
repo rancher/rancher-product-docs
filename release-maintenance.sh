@@ -435,6 +435,17 @@ main() {
     fi
   fi
 
+  if [[ "$NEW_CURRENT_PRIME_AVAIL" == "y" && "$NEW_CURRENT_COMMUNITY_AVAIL" == "n" ]]; then
+    if [[ -f "$antora_file_versions" ]]; then
+      update_antora_attr "$antora_file_versions" "current-patch-version" "$VERSION"
+    fi
+  else
+    if [[ -f "$antora_file_versions" && -f "$antora_file_community" ]]; then
+      update_antora_attr "$antora_file_versions" "current-patch-version" "$VERSION"
+      update_antora_attr "$antora_file_community" "current-patch-version" "$VERSION"
+    fi
+  fi
+
   # Update release-notes.adoc
   update_release_notes "$release_notes_file_en" "$VERSION" "$new_current_prime_mark" "$new_current_community_mark"
   update_release_notes "$release_notes_file_zh" "$VERSION" "$new_current_prime_mark" "$new_current_community_mark"
