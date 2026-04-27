@@ -16,6 +16,7 @@ set -o pipefail
 # The script assumes it is located in the root of the docs repository.
 # It determines its own location to make the path portable.
 DOCS_REPO_PATH=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+DOCS_REPO_PATH=${DOCS_REPO_PATH%scripts}
 
 # --- Global Variables ---
 INTERACTIVE=false
