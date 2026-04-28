@@ -338,28 +338,18 @@ main() {
     fi
   fi
 
-  # Validate Fleet version against playbook
-  echo "-> Validating Fleet version against product-docs-playbook..."
-  local playbook_url="https://raw.githubusercontent.com/rancher/product-docs-playbook/refs/heads/main/product-docs-playbook-remote.yml"
-  local playbook_content
-  if ! playbook_content=$(curl -sSfL "$playbook_url"); then
-    echo "Warning: Failed to fetch playbook. Skipping Fleet version update." >&2
-    final_fleet_version=""
-  else
-    # Validate Fleet
-    if [[ -n "$final_fleet_version" ]]; then
-      echo "-> Validating Fleet version ${final_fleet_version}..."
-      local fleet_repo_url="https://github.com/rancher/fleet-product-docs.git"
-      local fleet_search_path="versions/${final_fleet_version}"
-      local fleet_start_paths_line
-      fleet_start_paths_line=$(echo "$playbook_content" | awk -v url="$fleet_repo_url" '$0 ~ url {found=1} found && /start_paths:/ {print $0; exit}')
+  # Validate Fleet
+  if [[ -n "$final_fleet_version" ]]; then
+    echo "-> Validating Fleet version ${final_fleet_version}..."
+    local fleet_url="https://github.com/rancher/fleet-product-docs/tree/product-docs/versions/${final_fleet_version}"
+    local http_status
+    http_status=$(curl -s -L -o /dev/null -w "%{http_code}" "$fleet_url")
 
-      if [[ "$fleet_start_paths_line" != *"$fleet_search_path"* ]]; then
-        echo "Warning: '${fleet_search_path}' not found in start_paths for Fleet docs in playbook. Skipping update."
-        final_fleet_version=""
-      else
-        echo "   Confirmed '${fleet_search_path}' exists in playbook."
-      fi
+    if [[ "$http_status" != "200" ]]; then
+      echo "Warning: '${final_fleet_version}' not found in Fleet docs repo. Skipping update."
+      final_fleet_version=""
+    else
+      echo "   Confirmed '${final_fleet_version}' exists in Fleet docs repo."
     fi
   fi
 
@@ -432,6 +422,19 @@ main() {
     fi
     if [[ -f "$antora_file_srfa" ]]; then
       update_antora_attr "$antora_file_srfa" "fleet-docs-version" "$final_fleet_version"
+    fi
+  fi
+
+  local current_patch_version="${VERSION#v}"
+  if [[ "$NEW_CURRENT_PRIME_AVAIL" == "y" && "$NEW_CURRENT_COMMUNITY_AVAIL" == "n" ]]; then
+    # Strip 'v' prefix
+    if [[ -f "$antora_file_versions" ]]; then
+      update_antora_attr "$antora_file_versions" "current-patch-version" "$current_patch_version"
+    fi
+  else
+    if [[ -f "$antora_file_versions" && -f "$antora_file_community" ]]; then
+      update_antora_attr "$antora_file_versions" "current-patch-version" "$current_patch_version"
+      update_antora_attr "$antora_file_community" "current-patch-version" "$current_patch_version"
     fi
   fi
 
