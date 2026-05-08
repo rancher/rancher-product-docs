@@ -1,0 +1,242 @@
+= Mises à niveau
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-06
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/upgrades.adoc 
+:product-path: installation-and-upgrade/upgrades.adoc
+ifeval::["{build-type}" != "community"]
+:xref-air-gap: xref:installation-and-upgrade/other-installation-methods/air-gapped/air-gapped.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-upgrade-certmanager: xref:installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-air-gap-publish-images: xref:installation-and-upgrade/other-installation-methods/air-gapped/publish-images.adoc
+:xref-helm-chart-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+:xref-air-gap-upgrade: xref:installation-and-upgrade/other-installation-methods/air-gapped/upgrades.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-air-gap: xref:getting-started/installation-et-mise-à-niveau/autres-méthodes-d-installation/isolé-physiquement-helm-cli-install/index.adoc
+:xref-backup-cluster: xref:procédure-guides/nouveaux-utilisateurs-guides/sauvegarde-restauration-et-récupération-après-sinistre/sauvegarde-rancher.adoc
+:xref-upgrade-certmanager: xref:getting-started/installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-air-gap-publish-images: xref:getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/publish-images.adoc
+:xref-helm-chart-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+:xref-air-gap-upgrade: xref:getting-started/installation-et-mise-à-niveau/install-upgrade-on-a-kubernetes-cluster/isolé-physiquement-upgrades.adoc
+endif::[]
+
+Les instructions suivantes vous guideront à travers la mise à niveau d'un serveur Rancher qui a été installé sur un cluster Kubernetes avec Helm. Ces étapes s'appliquent également aux installations isolées physiquement avec Helm.
+
+Pour les instructions de mise à niveau de Rancher installé avec Docker, référez-vous à xref:[cette page.]
+
+[#_prerequisites]
+== Conditions préalables
+
+[#_access_to_kubeconfig]
+=== Accès à kubeconfig
+
+Helm doit être exécuté depuis le même emplacement que votre fichier kubeconfig, ou le même emplacement où vous exécutez vos commandes kubectl.
+
+Si vous avez installé Kubernetes avec RKE2/K3s, le Kubeconfig est stocké dans le répertoire `/etc/rancher/rke2/rke2.yaml` ou `/etc/rancher/k3s/k3s.yaml` selon la distribution choisie.
+
+Le kubeconfig peut également être ciblé manuellement pour le cluster prévu avec le tag `--kubeconfig` (voir{nbsp}: https://helm.sh/docs/helm/helm/)
+
+[#_review_known_issues]
+=== Examiner les problèmes connus
+
+Consultez la liste des problèmes connus pour chaque version de Rancher, qui peut être trouvée dans les notes de version sur https://github.com/rancher/rancher/releases[GitHub] et sur les https://forums.rancher.com/c/announcements/12[forums Rancher.]
+
+[#_helm_version]
+=== Version de Helm
+
+Les instructions de mise à niveau supposent que vous utilisez Helm 3.
+
+[#_for_air_gapped_installs_populate_private_registry]
+=== Pour les installations isolées physiquement{nbsp}: Peupler le registre privé.
+
+Pour {xref-air-gap}[les installations isolées physiquement uniquement,] collectez et remplissez les images pour la nouvelle version du serveur Rancher. Suivez le guide pour {xref-air-gap-publish-images}[remplir votre registre privé] avec les images pour la version de Rancher vers laquelle vous souhaitez mettre à niveau.
+
+[#_for_upgrades_with_cert_manager_older_than_0_8_0]
+=== Pour les mises à niveau avec cert-manager antérieur à 0.8.0
+
+https://community.letsencrypt.org/t/blocking-old-cert-manager-versions/98753[Let's Encrypt bloquera les instances de cert-manager antérieures à 0.8.0 à partir du 1er novembre 2019.] Mettez à niveau cert-manager vers la dernière version en suivant {xref-upgrade-certmanager}[ces instructions.]
+
+[#_upgrade_outline]
+== Aperçu de la mise à niveau
+
+Suivez les étapes pour mettre à niveau le serveur Rancher{nbsp}:
+
+[#_1_back_up_your_kubernetes_cluster_that_is_running_rancher_server]
+=== 1. Sauvegardez votre cluster Kubernetes qui exécute le serveur Rancher
+
+Utilisez {xref-backup-cluster}[l'application de sauvegarde] pour sauvegarder Rancher.
+
+Vous utiliserez la sauvegarde comme point de restauration si quelque chose ne va pas pendant la mise à niveau.
+
+[#_2_update_the_helm_chart_repository]
+=== 2. Mettez à jour le dépôt de graphiques Helm
+
+. Mettez à jour le cache de votre dépôt Helm local.
++
+----
+helm repo update
+----
+
+. Obtenez le nom du dépôt que vous avez utilisé pour installer Rancher.
++
+----
+helm repo list
+
+NAME                     URL
+rancher-prime          <helm-chart-repo-url>
+----
+
+. Récupérez le dernier graphique pour installer Rancher à partir du dépôt de graphiques Helm.
++
+Cette commande téléchargera les derniers graphiques et les enregistrera dans le répertoire actuel sous forme de fichier `.tgz`.
++
+[,plain]
+----
+ helm fetch rancher-prime/rancher
+----
++
+Vous pouvez récupérer le graphique pour la version spécifique à laquelle vous mettez à niveau en ajoutant le tag `--version=`.  Par exemple :
++
+[,plain]
+----
+ helm fetch rancher-prime/rancher --version={current-patch-version}
+----
+
+[#_3_review_rancher_feature_chart_versions_before_upgrade]
+=== 3. Examinez les versions des graphiques de fonctionnalités de Rancher avant la mise à niveau
+
+Les graphiques de fonctionnalités de Rancher suivent des lignes de publication spécifiques qui s'alignent sur les versions de Rancher. Les versions majeures des graphiques de fonctionnalités correspondent aux versions mineures de Rancher et suivent un schéma de versionnement défini.
+
+Avant de mettre à niveau Rancher, examinez tous les graphiques de fonctionnalités de Rancher installés et mettez-les à jour vers la dernière version disponible dans leur ligne de publication de graphique actuelle. Cela aide à garantir la compatibilité et évite les problèmes potentiels pendant ou après la mise à niveau de Rancher.
+
+Pour examiner les graphiques de fonctionnalités installés{nbsp}:
+
+1. Dans l'interface utilisateur de Rancher, allez à **Apps & Marketplace**.
+2. Sélectionnez **Applications installées**.
+3. Examinez les versions des graphiques et mettez à jour vers la dernière version de correctif dans la même version majeure de graphique si nécessaire.
+
+Pour plus d'informations, consultez le {xref-helm-chart-in-rancher}#_schéma_de_versionnement[Graphiques Helm dans Rancher – Schéma de versionnement].
+
+[#_4_upgrade_rancher]
+=== 4. Mettre à niveau Rancher
+
+Cette section décrit comment mettre à niveau les installations normales (connectées à Internet) ou isolées physiquement de Rancher avec Helm.
+
+[NOTE]
+.Instructions pour l'isolation physique{nbsp}:
+====
+
+Si vous installez Rancher dans un environnement isolé physiquement, ignorez le reste de cette page et générez le modèle Helm en suivant les instructions sur {xref-air-gap-upgrade}[cette page.]
+====
+
+[IMPORTANT]
+.Mise à niveau depuis Rancher v2.13.1
+====
+Dans Rancher v2.13.2, le nom du graphique Helm est revenu de `rancher-prime` à `rancher`. Si vous mettez à niveau depuis v2.13.1, la ressource Ingress existante créée par le graphique précédent entre en conflit avec le nouveau, ce qui entraîne l'échec de la mise à niveau avec une erreur similaire à{nbsp}:
+
+[,shell]
+----
+Error: UPGRADE FAILED: failed to create resource: admission webhook "validate.nginx.ingress.kubernetes.io" denied the request: host "rancher.my.org" and path "/" is already defined in ingress cattle-system/rancher-rancher-prime
+----
+
+Pour prévenir ou résoudre ce problème, vous devez supprimer manuellement l'ancien Ingress avant de terminer la mise à niveau{nbsp}:
+
+[,shell]
+----
+kubectl delete ingress rancher-rancher-prime -n cattle-system
+----
+====
+
+Obtenez les valeurs, qui ont été passées avec `--set`, à partir du graphique Helm Rancher actuel qui est installé.
+
+----
+helm get values rancher -n cattle-system
+
+hostname: rancher.my.org
+----
+
+[NOTE]
+====
+
+Il y aura plus de valeurs qui seront listées avec cette commande. Ceci est juste un exemple d'une des valeurs.
+====
+
+
+[TIP]
+====
+
+Votre nom de déploiement peut varier{nbsp}; par exemple, si vous déployez Rancher via le Marketplace AWS, le nom de déploiement est 'rancher-prime'.
+Ainsi{nbsp}:
+
+----
+helm get values rancher-prime -n cattle-system
+
+hostname: rancher.my.org
+----
+====
+
+
+Si vous mettez à niveau cert-manager vers la dernière version depuis v1.5 ou inférieure, suivez les {xref-upgrade-certmanager}#_option_c_upgrade_cert_manager_from_versions_15_and_below[documents de mise à niveau de cert-manager] pour apprendre comment mettre à niveau cert-manager sans avoir besoin de désinstaller ou de réinstaller Rancher. Sinon, suivez les <<_steps_to_upgrade_rancher,étapes pour mettre à niveau Rancher>> ci-dessous.
+
+[#_steps_to_upgrade_rancher]
+==== Étapes pour mettre à niveau Rancher
+
+Mettez à niveau Rancher vers la dernière version avec tous vos paramètres.
+
+Prenez toutes les valeurs de l'étape précédente et ajoutez-les à la commande en utilisant `--set key=value`.
+
+----
+helm upgrade rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set hostname=rancher.my.org
+----
+
+[NOTE]
+====
+
+Ce qui précède est un exemple, il peut y avoir plus de valeurs de l'étape précédente qui doivent être ajoutées.
+====
+
+
+[TIP]
+====
+Si vous déployez Rancher via le Marketplace AWS, le nom de déploiement est 'rancher-prime'.
+Ainsi{nbsp}:
+
+----
+helm upgrade rancher-prime rancher-prime/rancher \
+  --namespace cattle-system \
+  --set hostname=rancher.my.org
+----
+====
+
+
+Alternativement, il est possible d'exporter les valeurs actuelles vers un fichier et de référencer ce fichier lors de la mise à niveau. Par exemple, pour ne changer que la version de Rancher{nbsp}:
+
+. Exportez les valeurs actuelles vers un fichier{nbsp}:
++
+----
+ helm get values rancher -n cattle-system -o yaml > values.yaml
+----
+
+. Mettez à jour uniquement la version de Rancher{nbsp}:
++
+----
+ helm upgrade rancher rancher-prime/rancher \
+   --namespace cattle-system \
+   -f values.yaml \
+   --version={current-patch-version}
+----
+
+[#_5_verify_the_upgrade]
+=== 5. Vérifiez la mise à niveau
+
+Connectez-vous à Rancher pour confirmer que la mise à niveau a réussi.
+
+[#_known_upgrade_issues]
+== Problèmes de mise à niveau connus
+
+Une liste des problèmes connus pour chaque version de Rancher peut être trouvée dans les notes de version sur https://github.com/rancher/rancher/releases[GitHub] et sur les https://forums.rancher.com/c/announcements/12[forums de Rancher.]

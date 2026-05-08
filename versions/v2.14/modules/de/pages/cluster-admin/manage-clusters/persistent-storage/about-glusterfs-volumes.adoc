@@ -1,0 +1,52 @@
+= GlusterFS Volumes
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/about-glusterfs-volumes.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/about-glusterfs-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+[NOTE]
+====
+
+Dieser Abschnitt gilt nur für {xref-launch-k8s-with-rancher}[RKE-Cluster.]
+====
+
+
+In Clustern, die Daten auf GlusterFS Volumes speichern, kann es zu einem Problem kommen, bei dem Pods nach dem Neustart des `kubelet` die Volumes nicht einbinden können. Die Protokollierung des `kubelet` zeigt: `transport endpoint is not connected`. Um dies zu verhindern, können Sie Ihren Cluster so konfigurieren, dass das `systemd-run`-Binary im `kubelet`-Container eingebunden wird. Es gibt zwei Voraussetzungen, bevor Sie die Cluster-Konfiguration ändern können:
+
+* Der Knoten muss das `systemd-run`-Binary installiert haben (dies kann überprüft werden, indem der Befehl `which systemd-run` auf jedem Cluster-Knoten verwendet wird)
+* Das `systemd-run`-Binary muss mit dem Debian-Betriebssystem kompatibel sein, auf dem das Hyperkube-Image basiert (dies kann überprüft werden, indem der folgende Befehl auf jedem Cluster-Knoten ausgeführt wird, wobei das Image-Tag durch die Kubernetes-Version ersetzt wird, die Sie verwenden möchten)
+
+----
+docker run -v /usr/bin/systemd-run:/usr/bin/systemd-run -v /usr/lib/x86_64-linux-gnu/libcrypto.so.3:/usr/lib/x86_64-linux-gnu/libcrypto.so.3 -v /lib/systemd/libsystemd-shared-249.so:/lib/systemd/libsystemd-shared-249.so --entrypoint /usr/bin/systemd-run rancher/hyperkube:v1.26.14-rancher1 --version
+----
+
+[CAUTION]
+====
+
+Bevor Sie Ihr Kubernetes-YAML aktualisieren, um das `systemd-run`-Binary einzubinden, stellen Sie sicher, dass das `systemd`-Paket auf Ihren Cluster-Knoten installiert ist. Wenn dieses Paket nicht installiert ist _bevor_ die Bind-Mounts in Ihrem Kubernetes-YAML erstellt werden, wird Docker automatisch die Verzeichnisse und Dateien auf jedem Knoten erstellen und die Installation des Pakets wird nicht erfolgreich sein.
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/usr/bin/systemd-run:/usr/bin/systemd-run"
+      - "/usr/lib/x86_64-linux-gnu/libcrypto.so.3:/usr/lib/x86_64-linux-gnu/libcrypto.so.3"
+      - "/lib/systemd/libsystemd-shared-249.so:/lib/systemd/libsystemd-shared-249.so"
+----
+
+Nachdem der Cluster die Bereitstellung abgeschlossen hat, können Sie die Protokollierung des `kubelet`-Containers überprüfen, um zu sehen, ob die Funktionalität aktiviert ist, indem Sie nach der folgenden Protokollzeile suchen:
+
+----
+Detected OS with systemd
+----

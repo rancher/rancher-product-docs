@@ -1,0 +1,248 @@
+= Configurer OIDC générique
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-13
+:page-revdate: {revdate}
+:community-path: procédure/nouveaux-utilisateurs/authentification-permissions-et-configuration/authentification-config/configurer-oidc-générique.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-generic-oidc.adoc
+:description: Créez un client OpenID Connect (OIDC) et configurez Rancher pour fonctionner avec votre fournisseur d'authentification. Vos utilisateurs peuvent alors se connecter à Rancher en utilisant leurs identifiants du fournisseur d'authentification.
+
+L'OIDC générique permet aux utilisateurs de se connecter à Rancher en utilisant les identifiants de leur compte existant auprès d'un fournisseur d'identité OIDC (IdP). Rancher prend en charge l'intégration avec le protocole OIDC et le protocole SAML. Les deux implémentations sont fonctionnellement équivalentes lorsqu'elles sont utilisées avec Rancher. Les instructions suivantes décrivent comment créer un client OIDC et configurer Rancher pour fonctionner avec votre fournisseur d'authentification. Les utilisateurs peuvent alors se connecter à Rancher en utilisant leurs identifiants de l'IdP OIDC.
+
+[#_prerequisites]
+== Conditions préalables
+
+[#_identity_provider]
+=== Fournisseur d'identité
+
+Dans Rancher, l'OIDC générique est désactivé.
+
+[NOTE]
+====
+Consultez la documentation de votre IdP spécifique pour compléter les prérequis listés.
+====
+
+[#_oidc_client]
+==== Client OIDC
+
+Dans votre IdP, créez un nouveau client avec les paramètres ci-dessous{nbsp}:
+
+|===
+| Paramètre | Valeur
+
+| `Client ID`
+| +++<CLIENT_ID>+++(e.g. `rancher`)+++</CLIENT_ID>+++
+
+| `Name`
+| +++<CLIENT_NAME>+++(e.g. `rancher`)+++</CLIENT_NAME>+++
+
+| `Client Protocol`
+| `openid-connect`
+
+| `Access Type`
+| `confidential`
+
+| `Valid Redirect URI`
+| `https://yourRancherHostURL/verify-auth`
+|===
+
+Dans le nouveau client OIDC, créez des mappers pour exposer les champs de l'utilisateur.
+
+[NOTE]
+====
+Les revendications `groups` et `full_group_path` générées par les mappers Groupes et Chemin de Groupe, que vous créez dans le client OIDC de votre fournisseur d'identité, doivent être des tableaux JSON, par exemple `"groups":["admins","devs","qa"]` et `"full_group_path":["/admins","/devs","/qa"]`.
+====
+
+. Créez un nouveau `Groups Mapper` avec les paramètres ci-dessous{nbsp}:
++
+|===
+| Paramètre | Valeur
+
+| `Name`
+| `Groups Mapper`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `groups`
+
+| `Add to ID token`
+| `OFF`
+
+| `Add to access token`
+| `OFF`
+
+| `Add to user info`
+| `ON`
+|===
+
+. Créez un nouveau `Client Audience` avec les paramètres ci-dessous{nbsp}:
++
+|===
+| Paramètre | Valeur
+
+| `Name`
+| `Client Audience`
+
+| `Mapper Type`
+| `Audience`
+
+| `Included Client Audience`
+| +++<CLIENT_NAME>++++++</CLIENT_NAME>+++
+
+| `Add to access token`
+| `ON`
+|===
+
+. Créez un nouveau `Groups Path` avec les paramètres ci-dessous.
++
+|===
+| Paramètre | Valeur
+
+| `Name`
+| `Group Path`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `full_group_path`
+
+| `Full group path`
+| `ON`
+
+| `Add to user info`
+| `ON`
+|===
+
+[CAUTION]
+====
+Rancher utilise la valeur reçue dans la revendication "sub" pour former le PrincipalID qui est l'identifiant unique dans Rancher.  Il est important de faire de cela une valeur qui soit unique et immuable.
+====
+
+[#_configuring_generic_oidc_in_rancher]
+== Configuration de l'OIDC générique dans Rancher
+
+. Dans le coin supérieur gauche de l'interface utilisateur de Rancher, cliquez sur *☰ > Utilisateurs et authentification*.
+. Dans la barre de navigation à gauche, cliquez sur *Fournisseur d'authentification*.
+. Sélectionnez *OIDC générique*.
+. Complétez le formulaire *Configurer un compte OIDC*. Pour obtenir de l'aide sur le remplissage du formulaire, consultez la <<_configuration_reference,référence de configuration>>.
+. Cliquez sur *Activer*.
++
+Rancher vous redirigera vers la page de connexion de l'IdP. Entrez vos identifiants IdP pour valider votre configuration Rancher Keycloak.
++
+[NOTE]
+====
+Vous devrez peut-être désactiver votre bloqueur de fenêtres contextuelles pour voir la page de connexion de l'IdP.
+====
+
+*Résultat :* Rancher est configuré pour fonctionner avec votre fournisseur en utilisant le protocole OIDC. Vos utilisateurs peuvent désormais se connecter à Rancher en utilisant leurs identifiants IdP.
+
+[#_custom_claim_mapping]
+=== Mapping de revendications personnalisé
+
+Le mapping de revendications personnalisé dans la configuration OIDC générique est pris en charge pour les revendications `name`, `email` et `groups`. Cela vous permet de mapper manuellement ces revendications OIDC lorsque votre IdP n'utilise pas de noms standards dans les tokens.
+
+[#_how_a_custom_groups_claim_works]
+==== Comment fonctionne une revendication de groupes personnalisée
+
+Une revendication de groupes personnalisée influence le fonctionnement des groupes d'utilisateurs{nbsp}:
+
+* Si la revendication OIDC standard `groups` et la revendication de groupes personnalisée sont toutes deux présentes dans le jeton de l'utilisateur, la revendication personnalisée complète la liste des groupes fournie par la revendication standard.
+* S'il n'y a pas de revendication de groupes standard dans le jeton, les groupes listés dans la revendication personnalisée constitueront les seuls groupes de l'utilisateur.
+
+[NOTE]
+====
+Aucune fonctionnalité de recherche n'est disponible pour les groupes provenant d'une revendication personnalisée. Pour attribuer un rôle à l'un de ces groupes, vous devez entrer manuellement le nom exact du groupe dans le champ RBAC.
+====
+
+[#_configuring_custom_claims]
+==== Configuration des revendications personnalisées
+
+Lorsque vous êtes sur le formulaire *Configurer un compte OIDC*{nbsp}:
+
+. Sélectionnez *Ajouter des revendications personnalisées*.
+. Ajoutez vos revendications personnalisées `name`, `email` ou `groups` dans le champ approprié *Revendications personnalisées*.
+
+Par exemple, si votre IdP envoie `groups` dans une revendication appelée `custom_roles`, entrez `custom_roles` dans le champ *Revendication de groupes personnalisée*. Rancher complète ensuite la revendication OIDC standard `groups` ou recherche cette revendication spécifique lors du traitement du jeton de l'utilisateur.
+
+[#_configuration_reference]
+=== Référence de configuration :
+
+|===
+| Champ | Description
+
+| ID du client
+| L'ID client de votre client OIDC.
+
+| Secret du client
+| Le secret généré de votre client OIDC.
+
+| Clé privée/Certificat
+| Une paire clé/certificat pour créer un shell sécurisé entre Rancher et votre IdP. Requis si HTTPS/SSL est activé sur votre serveur OIDC.
+
+| noeuds d'extrémité
+| Choisissez d'utiliser les valeurs générées pour les champs Rancher URL, Issue et Auth Endpoint ou de fournir des valeurs de remplacement manuelles si elles sont incorrectes.
+
+| URL de Rancher
+| L'URL de votre serveur Rancher.
+
+| Émetteur
+| L'URL de votre IdP.  Si votre fournisseur a la découverte activée, Rancher utilise l'URL de l'émetteur pour récupérer toutes les URL requises.
+
+| Point de terminaison d'authentification
+| L'URL où les utilisateurs sont redirigés pour s'authentifier.
+|===
+
+[#_custom_claims]
+==== Revendications personnalisées
+
+|===
+| Champ de revendication personnalisée | Revendication OIDC par défaut | Description de la revendication personnalisée
+
+| Revendication de nom personnalisé
+| `name`
+| Le nom de la revendication dans le jeton OIDC qui contient le nom complet ou le nom d'affichage de l'utilisateur.
+
+| Revendication d'email personnalisée
+| `email`
+| Le nom de la revendication dans le jeton OIDC qui contient l'adresse email de l'utilisateur.
+
+| Revendication de groupes personnalisée
+| `groups`
+| Le nom de la revendication dans le jeton OIDC qui contient les appartenances aux groupes de l'utilisateur (utilisé pour RBAC).
+|===
+
+[#_oidc_support_for_pkce_extension]
+== Support OIDC pour l'extension PKCE
+
+include::shared:ROOT:partial$en/oidc-pkce-support.adoc[]
+
+[#_troubleshooting]
+== Dépannage
+
+Si vous rencontrez des problèmes lors du test de la connexion au serveur OIDC, vérifiez d'abord les options de configuration de votre client OIDC. Vous pouvez également inspecter les journaux de Rancher pour aider à identifier ce qui cause des problèmes. Les journaux de débogage peuvent contenir des informations plus détaillées sur l'erreur. Veuillez vous référer à xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[Comment puis-je activer la journalisation de débogage] dans cette documentation.
+
+Toutes les entrées de journal liées à OIDC générique sont précédées de `[generic oidc]` ou `[oidc]`.
+
+[#_you_are_not_redirected_to_your_authentication_provider]
+=== Vous n'êtes pas redirigé vers votre fournisseur d'authentification.
+
+Si vous remplissez le formulaire *Configurer un compte OIDC générique* et cliquez sur *Activer*, et que vous n'êtes pas redirigé vers votre IdP, vérifiez la configuration de votre client OIDC.
+
+[#_the_generated_issuer_and_auth_endpoint_are_incorrect]
+=== Les `Issuer` et `Auth Endpoint` générés sont incorrects
+
+Si les `Issuer` et `Auth Endpoint` sont générés incorrectement, ouvrez le formulaire *Configurer un compte OIDC*, changez *Points de terminaison* en `Specify (advanced)` et remplacez la valeur de `Issuer`.
+
+[#_error_invalid_grant_type]
+=== Erreur : "grant_type invalide"
+
+Dans certains cas, le message d'erreur "grant_type invalide" peut être trompeur et est en réalité causé par une configuration incorrecte du `Valid Redirect URI`.
+
+[#_configuring_oidc_single_logout_slo]
+== Configuration de la déconnexion unique OIDC (SLO)
+
+include::shared:ROOT:partial$en/configure-slo-oidc.adoc[]

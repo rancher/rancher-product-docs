@@ -1,0 +1,155 @@
+= Optimierung und bewährte Praktiken für {rancher-product-name} im großen Maßstab
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/tuning-and-best-practices-for-rancher-at-scale.adoc 
+:product-path: installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc
+ifeval::["{build-type}" != "community"]
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/kommunikation-mit-downstream-clustern.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+:xref-tips-for-running-rancher: xref:installation-and-upgrade/best-practices/tips-for-running-rancher.adoc
+:xref-tuning-etcd-for-large-installs: xref:installation-and-upgrade/best-practices/tuning-etcd-for-large-installs.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architektur/kommunikation-mit-downstream-nutzer-clustern.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-authn-authz: xref:how-to-guides/neue-nutzer-anleitungen/authentifizierung-berechtigungen-und-globale-konfiguration/authentifizierung-konfiguration/index.adoc
+:xref-tips-for-running-rancher: xref:reference-guides/best-practices/rancher-server/tips-for-running-rancher.adoc
+:xref-tuning-etcd-for-large-installs: xref:how-to-guides/advanced-user-guides/tune-etcd-for-large-installs.adoc
+endif::[]
+
+Dieser Leitfaden beschreibt die bewährten Praktiken und Optimierungsansätze zur Skalierung von Rancher-Setups und die damit verbundenen Herausforderungen. Wenn Systeme wachsen, wird die Leistung natürlicherweise abnehmen, aber es gibt Schritte, die die Belastung von Rancher minimieren und die Fähigkeit von Rancher optimieren können, größere Infrastrukturen zu verwalten.
+
+[#_optimizing_rancher_performance]
+== Optimierung der Rancher-Leistung
+
+* Halten Sie Rancher mit Patch-Versionen auf dem neuesten Stand. Wir verbessern Rancher kontinuierlich mit Leistungsverbesserungen und Fehlerkorrekturen. Die neueste Rancher-Version enthält alle angesammelten Verbesserungen in Bezug auf Leistung und Stabilität sowie Updates basierend auf den Erfahrungen der Entwickler und dem Feedback der Benutzer.
+* Skalieren Sie immer schrittweise und überwachen Sie alle Verhaltensänderungen während des Vorgangs. Es ist in der Regel einfacher, Leistungsprobleme zu lösen, sobald sie auftreten, bevor andere Probleme die Ursache verschleiern.
+* Reduzieren Sie die Netzwerk-Latenz zwischen dem Upstream Rancher-Cluster und den Downstream-Clustern so weit wie möglich. Beachten Sie, dass die Verzögerung unter anderem eine Funktion der geografischen Entfernung ist - wenn Sie Cluster oder Knoten auf der ganzen Welt benötigen, ziehen Sie mehrere Rancher-Installationen in Betracht.
+
+[#_minimizing_load_on_the_upstream_cluster]
+== Minimierung der Last auf dem Upstream-Cluster
+
+Beim Hochskalieren von Rancher ist ein typischer Engpass das Wachstum der Ressourcen im Upstream (lokalen) Kubernetes-Cluster. Der Upstream-Cluster enthält Informationen für alle Downstream-Cluster. Viele Operationen, die auf Downstream-Clustern angewendet werden, erstellen neue Objekte im Upstream-Cluster und erfordern Berechnungen von Handlern, die im Upstream-Cluster ausgeführt werden.
+
+[#_minimizing_third_party_software_on_the_upstream_cluster]
+=== Minimierung von Drittanbieter-Software auf dem Upstream-Cluster
+
+Die in den {xref-tips-for-running-rancher}#_minimize_third-party_software_on_the_upstream_cluster[allgemeine Rancher-Empfehlungen] skizzierten Empfehlungen sind in einem hochskalierbaren Kontext besonders wichtig.
+
+[#_managing_your_object_counts]
+=== Verwaltung Ihrer Objektzahlen
+
+Etcd ist die zugrunde liegende Datenbank für Kubernetes und Rancher. Die Datenbank kann schließlich an Grenzen hinsichtlich der Anzahl eines einzelnen Kubernetes-Ressourcentyps stoßen, den sie speichern kann. Die genauen Grenzen variieren und hängen von verschiedenen Faktoren ab. Erfahrungen zeigen jedoch, dass häufig Leistungsprobleme auftreten, sobald die Objektanzahl eines einzelnen Ressourcentyps 60.000 überschreitet. Oft ist dieser Typ `RoleBinding`.
+
+Dies ist typisch für Rancher, da viele Operationen neue `RoleBinding`-Objekte im Upstream-Cluster als Nebeneffekt erzeugen.
+
+Sie können die Anzahl der `RoleBindings` im Upstream-Cluster auf folgende Weise reduzieren:
+
+* Fügen Sie Benutzer nur dann zu Clustern und Projekten hinzu, wenn es notwendig ist.
+* Entfernen Sie Cluster und Projekte, wenn sie nicht mehr benötigt werden.
+* Verwenden Sie benutzerdefinierte Rollen nur, wenn es notwendig ist.
+* Verwenden Sie so wenige Regeln wie möglich in benutzerdefinierten Rollen.
+* Überlegen Sie, ob das Hinzufügen einer Rolle zu einem Benutzer redundant ist.
+* Erwägen Sie, weniger, aber leistungsstärkere Cluster zu verwenden.
+* Kubernetes-Berechtigungen sind immer "additiv" (Erlauben-Liste) und nicht "subtraktiv" (Verweigern-Liste). Versuchen Sie, Konfigurationen zu minimieren, die den Zugriff auf alle, bis auf einen Aspekt eines Clusters, Projekts oder Namensraums gewähren, da dies zur Erstellung einer hohen Anzahl von `RoleBinding`-Objekten führen wird.
+* Experimentieren Sie, um zu sehen, ob die Erstellung neuer Projekte oder Cluster zu weniger `RoleBindings` für Ihren spezifischen Anwendungsfall führt.
+
+[#_using_external_authentication]
+=== Verwendung externer Authentifizierung
+
+Wenn Sie fünfzig oder mehr Benutzer haben, sollten Sie einen {xref-authn-authz}[externen Authentifizierungsanbieter] konfigurieren. Dies ist notwendig für eine bessere Leistung.
+
+Nachdem Sie die externe Authentifizierung konfiguriert haben, stellen Sie sicher, dass Sie Berechtigungen an Gruppen statt an einzelnen Benutzern zuweisen. Dies hilft, die `RoleBinding` Objektanzahl zu reduzieren.
+
+[#_rolebinding_count_estimation]
+=== Schätzung der RoleBinding-Anzahl
+
+Vorhersagen, wie viele `RoleBinding` Objekte eine gegebene Konfiguration erstellen wird, ist kompliziert. Die folgenden Überlegungen können jedoch eine grobe Schätzung bieten:
+
+* Für eine Mindestschätzung verwenden Sie die Formel `32C + U + 2UaC + 8P + 5Pa`.
+ ** `C` ist die Gesamtanzahl der Cluster.
+ ** `U` ist die Gesamtanzahl der Benutzer.
+ ** `Ua` ist die durchschnittliche Anzahl der Benutzer mit einer Mitgliedschaft in einem Cluster.
+ ** `P` ist die Gesamtanzahl der Projekte.
+ ** `Pa` ist die durchschnittliche Anzahl der Benutzer mit einer Mitgliedschaft in einem Projekt.
+* Die Anzahl der `RoleBindings` steigt linear mit der Anzahl der Cluster, Projekte und Benutzer.
+
+[#_using_new_apps_over_legacy_apps]
+=== Verwendung neuer Apps anstelle von Legacy-Apps
+
+Rancher verwendet zwei Kubernetes-App-Ressourcen: `apps.projects.cattle.io` und `apps.cattle.cattle.io`. Legacy-Apps, dargestellt durch `apps.projects.cattle.io`, wurden mit der früheren Cluster-Manager-Benutzeroberfläche eingeführt und sind jetzt veraltet. Aktuelle Apps, dargestellt durch `apps.catalog.cattle.io`, finden sich in der Cluster-Explorer-Benutzeroberfläche für ihren jeweiligen Cluster. `Apps.cattle.cattle.io` Apps sind vorzuziehen, da ihre Daten in Downstream-Clustern gespeichert sind, was Ressourcen im Upstream-Cluster freisetzt.
+
+Sie sollten alle verbleibenden Legacy-Apps, die in der Cluster-Manager-Benutzeroberfläche erscheinen, entfernen und durch Apps in der Cluster-Explorer-Benutzeroberfläche ersetzen. Erstellen Sie neue Apps nur in der Cluster-Explorer-Benutzeroberfläche.
+
+[#_using_the_authorized_cluster_endpoint_ace]
+=== Verwendung des autorisierten Cluster-Endpunkts (ACE)
+
+Ein {xref-arch-com-ds-cluster}#_4_autorisierter_Cluster_Endpunkt[Autorisierter Cluster Endpunkt] (ACE) bietet Zugriff auf die Kubernetes-API von von Rancher bereitgestellten RKE2- und K3s-Clustern. Wenn aktiviert, fügt der ACE einen Kontext zu den kubeconfig-Dateien hinzu, die für den Cluster generiert werden. Der Kontext verwendet einen direkten Endpunkt zum Cluster und umgeht damit Rancher. Dies reduziert die Last auf Rancher in Fällen, in denen ein unmedierter API-Zugriff akzeptabel oder bevorzugt ist. Siehe {xref-arch-com-ds-cluster}#_4_autorisierter_Cluster_Endpunkt[Autorisierter Cluster Endpunkt] für weitere Informationen und Konfigurationsanweisungen.
+
+[#_reducing_event_handler_executions]
+=== Reduzierung der Ausführungen von Ereignis-Handlern
+
+Der Großteil der Logik von Rancher erfolgt über Ereignis-Handler. Diese Ereignis-Handler werden auf einem Objekt ausgeführt, wann immer das Objekt aktualisiert wird und wenn Rancher gestartet wird. Zusätzlich werden sie alle 10 Stunden ausgeführt, wenn Rancher die Caches synchronisiert. In skalierten Setups bringen diese geplanten Ausführungen enorme Leistungskosten mit sich, da jeder Handler auf jedem anwendbaren Objekt ausgeführt wird. Die geplante Ausführung des Handlers kann jedoch mit der `CATTLE_SYNC_ONLY_CHANGED_OBJECTS`-Umgebungsvariable deaktiviert werden. Wenn alle 10 Stunden Spitzen bei der Ressourcenzuteilung auftreten, kann diese Einstellung helfen.
+
+Der Wert für `CATTLE_SYNC_ONLY_CHANGED_OBJECTS` kann eine durch Kommas getrennte Liste der folgenden Optionen sein. Die Werte beziehen sich auf Arten von Handlern und Controllern (die Strukturen, die Handler enthalten und ausführen). Das Hinzufügen der Controller-Typen zur Variablen verhindert, dass diese Controller ihre Handler im Rahmen der Cache-Synchronisierung ausführen.
+
+* `mgmt` bezieht sich auf Management-Controller, die nur auf einem Rancher-Knoten ausgeführt werden.
+* `user` bezieht sich auf Benutzer-Controller, die für jeden Cluster ausgeführt werden. Einige davon laufen auf demselben Knoten wie Management-Controller, während andere im nachgelagerten Cluster ausgeführt werden. Diese Option zielt auf die ersteren ab.
+* `scaled` bezieht sich auf skalierte Controller, die auf jedem Rancher-Knoten ausgeführt werden. Sie sollten vermeiden, diesen Wert festzulegen, da die skalierten Handler für kritische Funktionen verantwortlich sind und Änderungen die Stabilität des Clusters beeinträchtigen können.
+
+Kurz gesagt, wenn Sie alle 10 Stunden CPU-Auslastungsspitzen bemerken, fügen Sie die `CATTLE_SYNC_ONLY_CHANGED_OBJECTS`-Umgebungsvariable zu Ihrer Rancher-Bereitstellung (in der `spec.containers.env`-Liste) mit dem Wert `mgmt,user` hinzu.
+
+[#_optimizations_outside_of_rancher]
+== Optimierungen außerhalb von Rancher
+
+Wichtige Einflussfaktoren sind die eigene Leistung und Konfiguration des zugrunde liegenden Clusters. Der Upstream-Cluster kann, wenn er falsch konfiguriert ist, einen Engpass verursachen, den die Rancher-Software nicht beheben kann.
+
+[#_manage_upstream_cluster_nodes_directly_with_rke2_product_name]
+=== Verwalten Sie die Knoten des Upstream-Clusters direkt mit {rke2-product-name}.
+
+Da Rancher sehr anspruchsvoll gegenüber dem Upstream-Cluster sein kann, insbesondere im großen Maßstab, sollten Sie die volle administrative Kontrolle über die Konfiguration und die Knoten des Clusters haben. Um die Ursache des übermäßigen Ressourcenverbrauchs zu identifizieren, verwenden Sie standardmäßige Linux-Fehlerbehebungstechniken und -werkzeuge. Dies kann helfen, zwischen Problemen zu unterscheiden, die von Rancher, Kubernetes oder Betriebssystemkomponenten verursacht werden.
+
+Obwohl verwaltete Kubernetes-Dienste die Bereitstellung und Ausführung von Kubernetes-Clustern erleichtern, werden sie für den Upstream-Cluster in Szenarien mit hohem Maßstab nicht empfohlen. Verwaltete Kubernetes-Dienste beschränken typischerweise den Zugriff auf Konfigurationen und Einblicke in einzelne Knoten und Dienste.
+
+Verwenden Sie RKE2 für großangelegte Anwendungsfälle.
+
+[#_keep_all_upstream_cluster_nodes_co_located]
+=== Halten Sie alle Knoten des Upstream-Clusters zusammen.
+
+Um hohe Verfügbarkeit zu gewährleisten, ist Kubernetes so konzipiert, dass Knoten und Steuerkomponenten in verschiedenen Zonen ausgeführt werden. Wenn sich jedoch Knoten und Steuerungskomponenten in verschiedenen Zonen befinden, kann der Netzwerkverkehr langsamer sein.
+
+Der Verkehr zwischen Rancher-Komponenten und der Kubernetes-API ist besonders empfindlich gegenüber niedriger Latenz, ebenso wie der etcd-Verkehr zwischen Knoten.
+
+Um die Leistung zu verbessern, führen Sie alle Upstream-Knotencluster am selben Standort aus. Stellen Sie insbesondere sicher, dass die Latenz zwischen etcd-Knoten und Rancher so niedrig wie möglich ist.
+
+[#_keeping_kubernetes_versions_up_to_date]
+=== Kubernetes-Versionen auf dem neuesten Stand halten
+
+Sie sollten den lokalen Kubernetes-Cluster auf dem neuesten Stand halten. Dies stellt sicher, dass Ihr Cluster alle verfügbaren Leistungsverbesserungen und Fehlerkorrekturen hat.
+
+[#_optimizing_etcd]
+=== Optimierung von etcd
+
+Etcd ist die Backend-Datenbank für Kubernetes und Rancher. Es spielt eine sehr wichtige Rolle für die Leistung von Rancher.
+
+Die beiden Hauptengpässe für https://etcd.io/docs/v3.5/op-guide/performance/[die Leistung von etcd] sind die Geschwindigkeit der Festplatten und des Netzwerks. Etcd sollte auf dedizierten Knoten mit einem schnellen network-setup und SSDs betrieben werden, die hohe Eingang/Ausgang-Operationen pro Sekunde (IOPS) ermöglichen. Für weitere Informationen zur Leistung von etcd siehe https://www.suse.com/support/kb/doc/?id=000020100[Langsame etcd-Leistung (Leistungstests und Optimierung)] und {xref-tuning-etcd-for-large-installs}[Tuning von etcd für große Installationen]. Informationen zu Festplatten finden Sie auch in den {xref-install-reqs}#_disks[Installationsanforderungen].
+
+Es ist am besten, etcd genau auf drei Knoten zu betreiben, da das Hinzufügen weiterer Knoten die Betriebsgeschwindigkeit verringert. Dies mag gegen die gängigen Skalierungsansätze sprechen, liegt jedoch an den https://etcd.io/docs/v3.5/faq/#what-is-maximum-cluster-size[Replikationsmechanismen] von etcd.
+
+Die Leistung von etcd wird auch negativ beeinflusst, wenn zwischen den Knoten nicht die erforderliche niedrige Latenz herrscht, da dies die Netzwerkkommunikation verlangsamt. Etcd-Knoten sollten zusammen mit Rancher-Knoten lokalisiert werden.
+
+[#_browser_requirements]
+=== Browseranforderungen
+
+Bei hoher Skalierung überträgt Rancher mehr Daten vom Upstream-Cluster an die UI-Komponenten, die im Browser ausgeführt werden, und diese Komponenten müssen auch mehr Verarbeitung durchführen.
+
+Für die beste Leistung stellen Sie sicher, dass der Host, der die Hardware ausführt, diese Anforderungen erfüllt:
+
+* 2020 i5 der 10. Generation von Intel (4 Kerne) oder gleichwertig
+* 8 GB RAM
+* Gesamtbandbreite des Netzwerks zum Upstream-Cluster: 72 Mb/s (entspricht einem einzelnen 802.11n Wi-Fi 4 Linkstream, ~8 MB/s http-Downloaddurchsatz)
+* Round-Trip-Zeit (Ping-Zeit) vom Browser zum Upstream-Cluster: 150 ms oder weniger

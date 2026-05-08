@@ -1,0 +1,119 @@
+= Sichern {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-backup-storage-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/storage.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-rancher-backup-config: xref:reference-guides/backup-restore-configuration/backup-configuration.adoc
+:xref-rancher-backup-storage-config: xref:reference-guides/backup-restore-configuration/storage-configuration.adoc
+:xref-migrate-cluster: xref:how-to-guides/neue-anleitungen/sicherung-wiederherstellung-und-notfallwiederherstellung/migration-rancher-zu-neuem-cluster.adoc
+:xref-back-restore-example-configs: xref:reference-guides/backup-restore-configuration/examples.adoc
+endif::[]
+
+In diesem Abschnitt erfahren Sie, wie Sie Rancher, das auf einem beliebigen Kubernetes-Cluster läuft, sichern. Um Rancher, das mit Docker installiert wurde, zu sichern, beachten Sie die Anweisungen für xref:[Einzelknoten-Sicherungen].
+
+Der Backup-Wiederherstellungsoperator muss im lokalen Cluster installiert werden und sichert nur die Rancher-App. Die Backup- und Wiederherstellungsoperationen werden nur im lokalen Kubernetes-Cluster durchgeführt.
+
+Bitte beachten Sie, dass die Version 2.x.x des rancher-backup Operators für Rancher v2.6.x gedacht ist.
+
+[CAUTION]
+====
+
+Beim Wiederherstellen eines Backups in ein neues Rancher setup sollte die Version des neuen setups mit der Version übereinstimmen, in der das Backup erstellt wurde. Die Kubernetes-Version sollte ebenfalls berücksichtigt werden, wenn ein Backup wiederhergestellt wird, da die unterstützte apiVersion im Cluster und in der Backup-Datei unterschiedlich sein könnte.
+====
+
+
+[#_prerequisites]
+== Voraussetzungen
+
+Die Rancher-Version muss v2.5.0 oder höher sein.
+
+Siehe {xref-migrate-cluster}#_2_restore_from_backup_using_a_restore_custom_resource[hier] für Hilfe beim Wiederherstellen einer vorhandenen Backup-Datei in ein v1.22-Cluster in Rancher v2.6.3.
+
+[#_1_install_the_rancher_backup_operator]
+== 1. Installieren Sie den Rancher Backup Operator
+
+Der Speicherort für Backups ist eine Einstellung auf Operator-Ebene, daher muss er konfiguriert werden, wenn die Rancher Backups-Anwendung installiert oder aktualisiert wird.
+
+Backups werden als .tar.gz-Dateien erstellt. Diese Dateien können in S3 oder Minio hochgeladen oder in einem persistenten Volume gespeichert werden.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der Seite *Cluster* zum `local` Cluster und klicken Sie auf *Erkunden*. Der `local` Cluster führt den Rancher-Server aus.
+. Klicken Sie auf menu:Apps[Diagramme].
+. Klicken Sie auf *Rancher Backups*.
+. Klicken Sie auf *Installieren*.
+. Konfigurieren Sie den Standard-Speicherort. Für Hilfe, siehe den {xref-rancher-backup-storage-config}[Abschnitt zur Speicherkonfiguration.]
+. Klicken Sie auf *Installieren*.
+
+[NOTE]
+====
+
+Es gibt ein bekanntes Problem in Fleet, das nach der Durchführung einer Wiederherstellung mit dem Backup-Restore-Operator auftritt: Die für clientSecretName und helmSecretName verwendeten Secrets sind nicht in den Fleet gitrepos enthalten. Siehe {xref-fleet-overview}#_troubleshooting[hier] für eine Umgehungslösung.
+====
+
+
+[#_2_perform_a_backup]
+== 2. Führen Sie eine Sicherung durch
+
+Um eine Sicherung durchzuführen, muss eine benutzerdefinierte Ressource vom Typ Backup erstellt werden.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der Seite *Cluster* zum `local` Cluster und klicken Sie auf *Erkunden*.
+. Klicken Sie in der linken Navigationsleiste auf menu:Rancher Backups[Backups].
+. Klicken Sie auf *Erstellen*.
+. Erstellen Sie das Backup mit dem Formular oder mit dem YAML-Editor.
+. Um die Sicherungsdetails mit dem Formular zu konfigurieren, klicken Sie auf *Erstellen* und verweisen Sie auf die {xref-rancher-backup-config}[Konfigurationsreferenz] und auf die {xref-back-restore-example-configs}#_backup[Beispiele.]
+. Um den YAML-Editor zu verwenden, können wir auf menu:Erstellen[Aus YAML erstellen] klicken. Geben Sie das Sicherungs-YAML ein. Diese Beispiel-Sicherungs-Benutzerressource würde verschlüsselte, wiederkehrende Sicherungen in S3 erstellen. Die App verwendet den `credentialSecretNamespace` Wert, um zu bestimmen, wo nach dem S3-Sicherungs-Secret gesucht werden soll:
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Backup
+ metadata:
+   name: s3-recurring-backup
+ spec:
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+   resourceSetName: rancher-resource-set-full
+   encryptionConfigSecretName: encryptionconfig
+   schedule: "@every 1h"
+   retentionCount: 10
+----
++
+
+[NOTE]
+====
+Beim Erstellen der Backup-Ressource mit dem YAML-Editor muss der `resourceSetName` auf `rancher-resource-set-full` oder `rancher-resource-set-basic` gesetzt werden.
+====
+
++
+Für Hilfe bei der Konfiguration der Sicherung, siehe die {xref-rancher-backup-config}[Konfigurationsreferenz] und die {xref-back-restore-example-configs}#_backup[Beispiele.]
++
+
+[CAUTION]
+====
+Der `rancher-backup` Operator speichert die Datei EncryptionConfiguration nicht. Der Inhalt der Datei EncryptionConfiguration muss gespeichert werden, wenn ein verschlüsseltes Backup erstellt wird, und dieselbe Datei muss verwendet werden, wenn von diesem Backup wiederhergestellt wird.
+====
+
+
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Die Sicherungsdatei wird im Speicherort erstellt, der in der benutzerdefinierten Backup-Ressource konfiguriert ist. Der Name dieser Datei wird verwendet, wenn eine Wiederherstellung durchgeführt wird.

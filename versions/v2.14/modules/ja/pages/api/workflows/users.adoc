@@ -1,0 +1,210 @@
+= ユーザ
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-12-10
+:page-revdate: {revdate}
+:community-path: api/workflows/users.adoc 
+:product-path: api/workflows/users.adoc
+
+[#_user_resource]
+== ユーザーリソース
+
+`User`リソース（users.management.cattle.io）は、Rancherにおけるユーザーアカウントを表します。
+
+`User`リソースのフィールドと構造の説明を取得するには、次のコマンドを実行してください：
+
+[source,shell]
+====
+kubectl explain users.management.cattle.io
+====
+
+[#_creating_a_user]
+== ユーザの作成
+
+ローカルユーザーを作成するには、2段階のプロセスが必要です：`User`リソースを作成し、その後Kubernetesの`Secret`を介してパスワードを提供する必要があります。
+
+十分な権限を持つユーザーのみが`User`リソースを作成できます。
+
+[source,shell]
+====
+kubectl create -f -<<EOF
+apiVersion: management.cattle.io/v3
+kind: User
+metadata:
+  name: testuser
+displayName: "Test User"
+username: "testuser"
+EOF
+====
+
+ユーザーのパスワードは、`cattle-local-user-passwords`ネームスペース内の`Secret`オブジェクトに提供する必要があります。RancherのWebhookは自動的にパスワードをハッシュ化し、`Secret`を更新します。
+
+[IMPORTANT]
+====
+重要:`Secret`は、`User`リソースのmetadata.name（およびユーザー名）と同じ名前でなければなりません。
+====
+
+[source,shell]
+====
+kubectl create -f -<<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: testuser
+  namespace: cattle-local-user-passwords
+type: Opaque
+stringData:
+  password: Pass1234567!
+EOF
+====
+
+平文のパスワードが送信されると、Rancher-Webhookは自動的にそれをハッシュ化し、`Secret`の内容を置き換え、平文のパスワードが保存されないようにします：
+
+[source,yaml]
+====
+apiVersion: v1
+data:
+  password: 1c1Y4CdjlehGWFz26F414x2qoj4gch5L5OXsx35MAa8=
+  salt: m8Co+CfMDo5XwVl0FqYzGcRIOTgRrwFSqW8yurh5DcE=
+kind: Secret
+metadata:
+  annotations:
+    cattle.io/password-hash: pbkdf2sha3512
+  name: testuser
+  namespace: cattle-local-user-passwords
+  ownerReferences:
+  - apiVersion: management.cattle.io/v3
+    kind: User
+    name: testuser
+    uid: 663ffb4f-8178-46c8-85a3-337f4d5cbc2e
+  uid: bade9f0a-b06f-4a77-9a39-4284dc2349c5
+type: Opaque
+====
+
+[#_updating_users_password]
+== ユーザーのパスワードの更新
+
+ユーザーのパスワードを変更するには、セキュアなパスワードの更新を処理する`PasswordChangeRequest`リソースを使用してください。
+
+[source,shell]
+====
+kubectl create  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: PasswordChangeRequest
+spec:
+  userID: "testuser"
+  currentPassword: "Pass1234567!"
+  newPassword: "NewPass1234567!"
+EOF
+====
+
+[#_listing_users]
+== ユーザの一覧
+
+クラスター内のすべての`User`リソースをリストします：
+
+[source,shell]
+====
+kubectl get users
+NAME           AGE
+testuser       3m54s
+user-4n5ws     12m
+====
+
+[#_viewing_a_user]
+== ユーザーの表示
+
+特定の`User`リソースを名前で表示します：
+
+[source,shell]
+====
+kubectl get user testuser
+NAME           AGE
+testuser       3m54s
+====
+
+[#_deleting_a_user]
+== ユーザの削除
+
+ユーザーを削除すると、対応するパスワード`Secret`も自動的に削除されます。
+
+[source,shell]
+====
+kubectl delete user testuser
+user.management.cattle.io "testuser" deleted
+====
+
+[#_get_a_current_users_information]
+== 現在のユーザーの情報を取得
+
+クライアントは、現在認証されているユーザーに関する情報を取得するために`SelfUser`リソースを使用し、そのIDを知る必要はありません。ユーザーIDは`.status.userID`フィールドに返されます。
+
+[source,shell]
+====
+kubectl create -o jsonpath='{.status.userID}'  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: SelfUser
+EOF
+testuser
+====
+
+[#_refreshing_a_users_group_membership]
+== ユーザーのグループメンバーシップの更新
+
+ユーザーグループメンバーシップの更新は、`GroupMembershipRefreshRequest`リソースによってトリガーされます。
+
+[NOTE]
+====
+グループメンバーシップは、外部認証プロバイダーのみサポートされています。
+====
+
+[#_for_a_single_user]
+=== 単一ユーザー用
+
+[source,shell]
+====
+kubectl create -o jsonpath='{.status}'  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: GroupMembershipRefreshRequest
+spec:
+  userId: testuser
+EOF
+{
+    "conditions": [
+        {
+            "lastTransitionTime": "2025-11-10T12:01:03Z",
+            "message": "",
+            "reason": "",
+            "status": "True",
+            "type": "UserRefreshInitiated"
+        }
+    ],
+    "summary": "Completed"
+}
+====
+
+[#_for_all_users]
+=== すべてのユーザー用
+
+[source,shell]
+====
+kubectl create -o jsonpath='{.status}'  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: GroupMembershipRefreshRequest
+spec:
+   userId: "*"
+EOF
+{
+    "conditions": [
+        {
+            "lastTransitionTime": "2025-11-10T12:01:59Z",
+            "message": "",
+            "reason": "",
+            "status": "True",
+            "type": "UserRefreshInitiated"
+        }
+    ],
+    "summary": "Completed"
+}
+====

@@ -1,0 +1,110 @@
+= Tableaux de bord Grafana persistants
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: procédure-guides/guide-utilisateur-avancé/guide-de-surveillance-et-d'alerte/créer-un-tableau-de-bord-grafana-persistant.adoc 
+:product-path: observabilité/surveillance-et-tableaux-de-bord/personnaliser-le-tableau-de-bord/créer-un-tableau-de-bord-grafana-persistant.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-monitoring-rbac: xref:observability/monitoring-and-dashboards/rbac-for-monitoring.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-monitoring-rbac: xref:integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc
+endif::[]
+
+Pour permettre au tableau de bord Grafana de persister après le redémarrage de l'instance Grafana, ajoutez la configuration JSON du tableau de bord dans un ConfigMap. Les ConfigMaps permettent également de déployer les tableaux de bord avec une approche basée sur GitOps ou CD. Cela permet de mettre le tableau de bord sous contrôle de version.
+
+[#_creating_a_persistent_grafana_dashboard]
+== Créer un tableau de bord Grafana persistant
+
+[NOTE]
+.Conditions préalables :
+====
+
+* L'application de surveillance doit être installée.
+* Pour créer le tableau de bord persistant, vous devez avoir au moins les permissions *Gérer les ConfigMaps* RBAC de Rancher qui vous sont attribuées dans le projet ou l'espace de noms contenant les tableaux de bord Grafana. Cela correspond aux rôles RBAC natifs de Kubernetes `monitoring-dashboard-edit` ou `monitoring-dashboard-admin` exposés par le chart de surveillance.
+* Pour voir les liens vers les interfaces de surveillance externes, y compris les tableaux de bord Grafana, vous aurez besoin d'au moins un rôle {xref-rancher-monitoring-rbac}#_utilisateurs_avec_permissions_basées_sur_rancher[membre du projet.]
+====
+
+
+[#_1_get_the_json_model_of_the_dashboard_that_you_want_to_persist]
+=== 1. Obtenez le modèle JSON du tableau de bord que vous souhaitez rendre persistant
+
+Pour créer un tableau de bord persistant, vous devrez obtenir le modèle JSON du tableau de bord que vous souhaitez rendre persistant. Vous pouvez utiliser un tableau de bord préfabriqué ou créer le vôtre.
+
+Pour utiliser un tableau de bord préfabriqué, rendez-vous sur https://grafana.com/grafana/dashboards,, ouvrez sa page de détails et cliquez sur le bouton *Télécharger JSON* pour obtenir le modèle JSON pour l'étape suivante.
+
+Pour utiliser votre propre tableau de bord{nbsp}:
+
+. Cliquez sur le lien pour ouvrir Grafana. Sur la page de détails du cluster, cliquez sur *Surveillance*.
+. Connectez-vous à Grafana. Remarque : Le nom d'utilisateur et le mot de passe par défaut pour l'instance Grafana sont `admin/prom-operator`. Des identifiants alternatifs peuvent également être fournis lors du déploiement ou de la mise à niveau du chart.
++
+
+[NOTE]
+====
+Peu importe qui a le mot de passe, pour accéder à l'instance Grafana, vous avez toujours besoin d'au moins les permissions *Gérer les services* ou *Voir la surveillance* dans le projet où Rancher Monitoring est déployé. Des identifiants alternatifs peuvent également être fournis lors du déploiement ou de la mise à niveau du chart.
+====
+
+
+. Créez un tableau de bord en utilisant l'interface utilisateur de Grafana. Une fois terminé, allez dans les paramètres du tableau de bord en cliquant sur l'icône d'engrenage dans le menu de navigation supérieur. Dans le menu de navigation de gauche, cliquez sur *Modèle JSON*.
+. Copiez la structure de données JSON qui apparaît.
+
+[#_2_create_a_configmap_using_the_grafana_json_model]
+=== 2. Créez un ConfigMap en utilisant le modèle JSON de Grafana.
+
+Créez un ConfigMap dans l'espace de noms qui contient vos tableaux de bord Grafana (par exemple, `cattle-dashboards` par défaut).
+
+Le ConfigMap devrait ressembler à ceci{nbsp}:
+
+[,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    grafana_dashboard: "1"
+  name: <dashboard-name>
+  namespace: cattle-dashboards # Change if using a non-default namespace
+data:
+  <dashboard-name>.json: |-
+    <copied-json>
+----
+
+Par défaut, Grafana est configuré pour surveiller tous les ConfigMaps avec l'étiquette `grafana_dashboard` dans l'espace de noms `cattle-dashboards`.
+
+Pour spécifier que vous souhaitez que Grafana surveille les ConfigMaps dans tous les espaces de noms, référez-vous à <<_configuring_namespaces_for_the_grafana_dashboard_configmap,cette section>>.
+
+Pour créer le ConfigMap via l'interface utilisateur de Rancher, assurez-vous d'abord que vous êtes actuellement connecté à l'interface utilisateur de Grafana, afin de garantir que les tableaux de bord s'importent sans rencontrer de problèmes de permissions. Ensuite, retournez à l'interface utilisateur de Rancher et effectuez les étapes suivantes{nbsp}:
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster où vous souhaitez voir les visualisations et cliquez sur *Explorer*.
+. Cliquez sur menu:Plus de ressources[Noyau> ConfigMaps].
+. Cliquez sur *Create*.
+. Dans l'onglet *Données*, configurez les paires clé-valeur similaires à l'exemple ci-dessus. Lors de la saisie de la valeur pour `<dashboard-name>.json`, cliquez sur *Lire à partir du fichier* pour télécharger le modèle de données JSON en tant que valeur.
+. Dans l'onglet *Étiquettes et annotations*, cliquez sur *Ajouter une étiquette* et entrez `grafana_dashboard` comme clé, et `1` comme valeur.
+. Cliquez sur *Create*.
+
+*Résultat :* Une fois le ConfigMap créé, il devrait apparaître dans l'interface utilisateur de Grafana et être conservé même si le pod Grafana est redémarré.
+
+[NOTE]
+====
+
+La paire clé-valeur réelle peut différer si vous avez modifié le chart Helm pour surveiller une étiquette et une valeur de tableau de bord différentes.
+====
+
+
+Les tableaux de bord persistés à l'aide de ConfigMaps ne peuvent pas être supprimés ou modifiés depuis l'interface utilisateur de Grafana.
+
+Si vous essayez de supprimer le tableau de bord dans l'interface utilisateur de Grafana, vous verrez le message d'erreur "Le tableau de bord ne peut pas être supprimé car il a été provisionné." Pour supprimer le tableau de bord, vous devrez supprimer le ConfigMap.
+
+[#_configuring_namespaces_for_the_grafana_dashboard_configmap]
+=== Configuration des espaces de noms pour le ConfigMap du tableau de bord Grafana.
+
+Pour spécifier que vous souhaitez que Grafana surveille les ConfigMaps dans tous les espaces de noms, définissez cette valeur dans le chart Helm `rancher-monitoring`{nbsp}:
+
+----
+grafana.sidecar.dashboards.searchNamespace=ALL
+----
+
+Notez que les rôles RBAC exposés par le chart de surveillance pour ajouter des tableaux de bord Grafana sont toujours limités à donner des autorisations aux utilisateurs pour ajouter des tableaux de bord dans l'espace de noms défini dans `grafana.dashboards.namespace`, qui par défaut est `cattle-dashboards`.

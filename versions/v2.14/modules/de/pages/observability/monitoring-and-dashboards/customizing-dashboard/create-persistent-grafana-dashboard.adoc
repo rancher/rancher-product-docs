@@ -1,0 +1,110 @@
+= Persistente Grafana-Dashboards
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/monitoring-alerting-guides/create-persistent-grafana-dashboard.adoc 
+:product-path: observability/monitoring-and-dashboards/customizing-dashboard/create-persistent-grafana-dashboard.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-monitoring-rbac: xref:observability/monitoring-and-dashboards/rbac-for-monitoring.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-monitoring-rbac: xref:integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc
+endif::[]
+
+Um zu ermöglichen, dass das Grafana-Dashboard nach dem Neustart der Grafana-Instanz bestehen bleibt, fügen Sie die Dashboard-Konfigurations-JSON in eine ConfigMap ein. ConfigMaps ermöglichen es auch, die Dashboards mit einem GitOps- oder CD-basierten Ansatz bereitzustellen. Dies ermöglicht es, das Dashboard unter Versionskontrolle zu stellen.
+
+[#_creating_a_persistent_grafana_dashboard]
+== Erstellen eines persistenten Grafana-Dashboards
+
+[NOTE]
+.Voraussetzungen:
+====
+
+* Die Überwachungsanwendung muss installiert sein.
+* Um das persistente Dashboard zu erstellen, müssen Ihnen mindestens die *Manage Config Maps* Rancher RBAC-Berechtigungen im Projekt oder Namespace zugewiesen sein, das die Grafana-Dashboards enthält. Dies entspricht den `monitoring-dashboard-edit` oder `monitoring-dashboard-admin` Kubernetes-nativen RBAC-Rollen, die vom Monitoring-Chart bereitgestellt werden.
+* Um die Links zu den externen Überwachungs-UIs, einschließlich Grafana-Dashboards, zu sehen, benötigen Sie mindestens eine {xref-rancher-monitoring-rbac}#_users_with_rancher_based_permissions[Projektmitglied-Rolle.]
+====
+
+
+[#_1_get_the_json_model_of_the_dashboard_that_you_want_to_persist]
+=== 1. Holen Sie sich das JSON-Modell des Dashboards, das Sie persistent machen möchten.
+
+Um ein persistentes Dashboard zu erstellen, müssen Sie das JSON-Modell des Dashboards abrufen, das Sie persistent machen möchten. Sie können ein vorgefertigtes Dashboard verwenden oder Ihr eigenes erstellen.
+
+Um ein vorgefertigtes Dashboard zu verwenden, gehen Sie zu https://grafana.com/grafana/dashboards,, öffnen Sie die Detailseite und klicken Sie auf die Schaltfläche *Download JSON*, um das JSON-Modell für den nächsten Schritt zu erhalten.
+
+Um Ihr eigenes Dashboard zu verwenden:
+
+. Klicken Sie auf den Link, um Grafana zu öffnen. Klicken Sie auf der Detailseite des Clusters auf *Monitoring*.
+. Melden Sie sich bei Grafana an. Hinweis: Der Standard-Admin-Benutzername und das Passwort für die Grafana-Instanz sind `admin/prom-operator`. Alternative Anmeldeinformationen können auch beim Bereitstellen oder Aktualisieren des Charts angegeben werden.
++
+
+[NOTE]
+====
+Unabhängig davon, wer das Passwort hat, benötigen Sie, um auf die Grafana-Instanz zuzugreifen, mindestens die Berechtigungen *Manage Services* oder *View Monitoring* im Projekt, in dem Rancher Monitoring bereitgestellt ist. Alternative Anmeldeinformationen können auch beim Bereitstellen oder Aktualisieren des Charts angegeben werden.
+====
+
+
+. Erstellen Sie ein Dashboard mit der Benutzeroberfläche von Grafana. Sobald Sie fertig sind, gehen Sie zu den Einstellungen des Dashboards, indem Sie auf das Zahnradsymbol im oberen Navigationsmenü klicken. Klicken Sie im linken Navigationsmenü auf *JSON Model*.
+. Kopieren Sie die angezeigte JSON-Datenstruktur.
+
+[#_2_create_a_configmap_using_the_grafana_json_model]
+=== 2. Erstellen Sie eine ConfigMap mit dem Grafana-JSON-Modell.
+
+Erstellen Sie eine ConfigMap im Namespace, der Ihre Grafana-Dashboards enthält (z. B. `cattle-dashboards` standardmäßig).
+
+Die ConfigMap sollte folgendermaßen aussehen:
+
+[,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    grafana_dashboard: "1"
+  name: <dashboard-name>
+  namespace: cattle-dashboards # Change if using a non-default namespace
+data:
+  <dashboard-name>.json: |-
+    <copied-json>
+----
+
+Standardmäßig ist Grafana so konfiguriert, dass es alle ConfigMaps mit dem `grafana_dashboard`-Label im `cattle-dashboards`-Namespace überwacht.
+
+Um anzugeben, dass Sie möchten, dass Grafana ConfigMaps in allen Namespaces überwacht, beziehen Sie sich auf <<_configuring_namespaces_for_the_grafana_dashboard_configmap,this section>>.
+
+Um die ConfigMap über die Rancher-Benutzeroberfläche zu erstellen, stellen Sie zunächst sicher, dass Sie derzeit bei der Grafana-Benutzeroberfläche angemeldet sind, um sicherzustellen, dass Dashboards ohne Berechtigungsprobleme importiert werden. Kehren Sie dann zur Rancher-Benutzeroberfläche zurück und führen Sie die folgenden Schritte aus:
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der Seite *Clusters* zu dem Cluster, in dem Sie die Visualisierungen sehen möchten, und klicken Sie auf *Explore*.
+. Klicken Sie auf menu:More Resources[Kernel> ConfigMaps].
+. Klicken Sie auf *Erstellen*.
+. Richten Sie auf der Registerkarte *Data* die Schlüssel-Wert-Paare ähnlich dem obigen Beispiel ein. Wenn Sie den Wert für `<dashboard-name>.json` eingeben, klicken Sie auf *Read from File*, um das JSON-Datenmodell als Wert hochzuladen.
+. Klicken Sie auf der Registerkarte *Labels & Annotations* auf *Add Label* und geben Sie `grafana_dashboard` als Schlüssel und `1` als Wert ein.
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Nachdem die ConfigMap erstellt wurde, sollte sie in der Grafana-Benutzeroberfläche angezeigt werden und auch bestehen bleiben, wenn das Grafana-Pod neu gestartet wird.
+
+[NOTE]
+====
+
+Das tatsächliche Schlüssel-Wert-Paar kann abweichen, wenn Sie das Helm-Chart geändert haben, um ein anderes Dashboard-Label und einen anderen Wert zu überwachen.
+====
+
+
+Dashboards, die mit ConfigMaps persistiert werden, können nicht über die Grafana-Benutzeroberfläche gelöscht oder bearbeitet werden.
+
+Wenn Sie versuchen, das Dashboard in der Grafana-Benutzeroberfläche zu löschen, sehen Sie die Fehlermeldung "Dashboard kann nicht gelöscht werden, da es bereitgestellt wurde." Um das Dashboard zu löschen, müssen Sie die ConfigMap löschen.
+
+[#_configuring_namespaces_for_the_grafana_dashboard_configmap]
+=== Konfiguration von Namespaces für die Grafana-Dashboard-ConfigMap
+
+Um anzugeben, dass Sie möchten, dass Grafana ConfigMaps in allen Namespaces überwacht, setzen Sie diesen Wert im `rancher-monitoring` Helm-Chart:
+
+----
+grafana.sidecar.dashboards.searchNamespace=ALL
+----
+
+Bitte beachten Sie, dass die vom Monitoring-Chart bereitgestellten RBAC-Rollen zur Hinzufügung von Grafana-Dashboards weiterhin darauf beschränkt sind, Benutzern Berechtigungen zum Hinzufügen von Dashboards im `grafana.dashboards.namespace` definierten Namespace zu erteilen, der standardmäßig auf `cattle-dashboards` gesetzt ist.

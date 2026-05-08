@@ -1,0 +1,74 @@
+= テイントと許容の操作
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/logging/taints-and-tolerations.adoc 
+:product-path: observability/logging/taints-and-tolerations.adoc
+
+Kubernetesノードに「汚染」を施すと、そのノード上で実行されるポッドが拒否されます。
+
+ポッドがそのノードの汚染に対して`toleration`を持たない限り、クラスター内の他のノードで実行されます。
+
+https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/[Taints and tolerations]は、`nodeSelector` https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector[フィールド]`PodSpec`内で連携して機能し、汚染の_逆_の効果を可能にします。
+
+`nodeSelector`を使用すると、ポッドは特定のノードに対して親和性を持ちます。
+
+両者は、ポッドが実行されるノードを選択するための選択肢を提供します。
+
+* <<_default_implementation_in_ranchers_logging_stack,Rancherのログスタックにおけるデフォルトの実装>>
+* <<_adding_nodeselector_settings_and_tolerations_for_custom_taints,カスタムテイント用のNodeSelector設定とTolerationの追加>>
+
+[#_default_implementation_in_ranchers_logging_stack]
+== Rancherのログスタックにおけるデフォルトの実装
+
+デフォルトでは、RancherはすべてのLinuxノードに`cattle.io/os=linux`を施し、Windowsノードには汚染を施しません。
+ログスタックのポッドは、この汚染に対して`tolerations`を持ち、Linuxノードで実行できるようにします。
+さらに、ほとんどのログスタックポッドはLinux上でのみ実行され、Linuxノードで実行されることを保証するために`nodeSelector`が追加されています。
+
+この例のPod YAMLファイルは、nodeSelectorがトレランスと共に使用されていることを示しています：
+
+[,yaml]
+----
+apiVersion: v1
+kind: Pod
+# metadata...
+spec:
+  # containers...
+  tolerations:
+    - key: cattle.io/os
+      operator: "Equal"
+      value: "linux"
+      effect: NoSchedule
+  nodeSelector:
+    kubernetes.io/os: linux
+----
+
+上記の例では、ポッドがLinuxノードでのみ実行されることを保証し、すべてのLinuxノードに施した汚染に対して`toleration`を追加します。
+
+Rancherの既存の汚染や、独自のカスタム汚染でも同様のことができます。
+
+[#_adding_nodeselector_settings_and_tolerations_for_custom_taints]
+== カスタムテイント用のNodeSelector設定とTolerationの追加
+
+独自の`nodeSelector`設定を追加したい場合や、追加の汚染に対して`tolerations`を追加したい場合は、次の値をチャートの値に渡すことができます。
+
+[,yaml]
+----
+tolerations:
+  # insert tolerations...
+nodeSelector:
+  # insert nodeSelector...
+----
+
+これらの値は、`fluentd`、`fluentbit`、`logging-operator`の各コンテナに両方の設定を追加します。
+本質的に、これらはログスタック内のすべてのポッドに対するグローバル設定です。
+
+ただし、_のみ_の`fluentbit`コンテナに対してトレランスを追加したい場合は、次の値をチャートの値に追加できます。
+
+[,yaml]
+----
+fluentbit_tolerations:
+  # insert tolerations list for fluentbit containers only...
+----

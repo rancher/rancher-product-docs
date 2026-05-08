@@ -1,0 +1,110 @@
+= 永続的なGrafanaダッシュボード
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/monitoring-alerting-guides/create-persistent-grafana-dashboard.adoc 
+:product-path: observability/monitoring-and-dashboards/customizing-dashboard/create-persistent-grafana-dashboard.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-monitoring-rbac: xref:observability/monitoring-and-dashboards/rbac-for-monitoring.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-monitoring-rbac: xref:integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc
+endif::[]
+
+Grafanaインスタンスが再起動した後もダッシュボードを永続化するためには、ダッシュボードの設定JSONをConfigMapに追加してください。ConfigMapを使用することで、ダッシュボードをGitOpsまたはCDベースのアプローチでデプロイすることも可能です。これにより、ダッシュボードをバージョン管理下に置くことができます。
+
+[#_creating_a_persistent_grafana_dashboard]
+== 永続的なGrafanaダッシュボードの作成
+
+[NOTE]
+.前提条件:
+====
+
+* 監視アプリケーションをインストールする必要があります。
+* 永続的なダッシュボードを作成するには、Grafanaダッシュボードを含むプロジェクトまたはネームスペースにおいて、少なくとも*Manage Config Maps*のRancher RBAC権限が割り当てられている必要があります。これは、Monitoringチャートによって公開される`monitoring-dashboard-edit`または`monitoring-dashboard-admin`のKubernetesネイティブRBACロールに相当します。
+* Grafanaダッシュボードを含む外部監視UIへのリンクを見るには、少なくとも{xref-rancher-monitoring-rbac}#_users_with_rancher_based_permissions[project-member role.]が必要です。
+====
+
+
+[#_1_get_the_json_model_of_the_dashboard_that_you_want_to_persist]
+=== 1.永続化したいダッシュボードのJSONモデルを取得してください。
+
+永続的なダッシュボードを作成するには、永続化したいダッシュボードのJSONモデルを取得する必要があります。既製のダッシュボードを使用するか、自分自身で作成することができます。
+
+既製のダッシュボードを使用するには、 https://grafana.com/grafana/dashboards,に移動して詳細ページを開き、次のステップのために*JSONをダウンロード*ボタンをクリックしてJSONモデルを取得してください。
+
+自分のダッシュボードを使用するには：
+
+. リンクをクリックしてGrafanaを開いてください。クラスターの詳細ページで、*Monitoring*をクリックしてください。
+. Grafanaにログインします。注意:Grafanaインスタンスのデフォルトの管理者ユーザー名とパスワードは`admin/prom-operator`です。代替の認証情報は、チャートのデプロイまたはアップグレード時にも提供できます。
++
+
+[NOTE]
+====
+パスワードを持っている人に関係なく、Grafanaインスタンスにアクセスするには、Rancher Monitoringがデプロイされているプロジェクトで少なくとも*サービスの管理*または*監視の表示*の権限が必要です。代替の認証情報は、チャートのデプロイまたはアップグレード時にも提供できます。
+====
+
+
+. GrafanaのUIを使用してダッシュボードを作成します。完了したら、上部のナビゲーションメニューにあるギアアイコンをクリックしてダッシュボードの設定に移動します。左側のナビゲーションメニューで、*JSON Model*をクリックします。
+. 表示されたJSONデータ構造をコピーします。
+
+[#_2_create_a_configmap_using_the_grafana_json_model]
+=== 2.GrafanaのJSONモデルを使用してConfigMapを作成します。
+
+Grafanaダッシュボードを含むネームスペースでConfigMapを作成します（デフォルトでは`cattle-dashboards`など）。
+
+ConfigMapは次のようになります：
+
+[,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    grafana_dashboard: "1"
+  name: <dashboard-name>
+  namespace: cattle-dashboards # Change if using a non-default namespace
+data:
+  <dashboard-name>.json: |-
+    <copied-json>
+----
+
+デフォルトでは、Grafanaは`cattle-dashboards`名前空間内の`grafana_dashboard`ラベルを持つすべてのConfigMapを監視するように設定されています。
+
+GrafanaがすべてのネームスペースでConfigMapを監視するように指定するには、<<_configuring_namespaces_for_the_grafana_dashboard_configmap,このセクション>>を参照してください。
+
+Rancher UIを通じてConfigMapを作成するには、まずGrafana UIにログインしていることを確認し、ダッシュボードが権限の問題なくインポートされるようにします。次に、Rancher UIに戻り、次の手順を実行します：
+
+. 左上隅で、*☰ > Cluster Management*をクリックします。
+. *Clusters*ページで、視覚化を表示したいクラスターに移動し、*Explore*をクリックします。
+. menu:More Resources[Core > ConfigMaps]をクリックします。
+. ［*作成*］をクリックします。
+. *Data*タブで、上記の例に似たキーと値のペアを設定します。`<dashboard-name>.json`の値を入力する際に、*Read from File*をクリックしてJSONデータモデルを値としてアップロードします。
+. *Labels & Annotations*タブで、*Add Label*をクリックし、`grafana_dashboard`をキーとして、`1`を値として入力します。
+. ［*作成*］をクリックします。
+
+*結果:*ConfigMapが作成された後、Grafana UIに表示され、Grafanaポッドが再起動されても保持されるはずです。
+
+[NOTE]
+====
+
+実際のキーと値のペアは、異なるダッシュボードのラベルと値を監視するようにHelmチャートを変更した場合は異なる場合があります。
+====
+
+
+ConfigMapを使用して永続化されたダッシュボードは、Grafana UIから削除したり編集したりすることはできません。
+
+Grafana UIでダッシュボードを削除しようとすると、"Dashboard cannot be deleted because it was provisioned." というエラーメッセージが表示されます。ダッシュボードを削除するには、ConfigMapを削除する必要があります。
+
+[#_configuring_namespaces_for_the_grafana_dashboard_configmap]
+=== GrafanaダッシュボードConfigMapのためのネームスペースの設定
+
+GrafanaがすべてのネームスペースでConfigMapを監視するように指定するには、この値を`rancher-monitoring` Helmチャートに設定してください：
+
+----
+grafana.sidecar.dashboards.searchNamespace=ALL
+----
+
+Grafanaダッシュボードを追加するためにMonitoringチャートによって公開されるRBACロールは、`grafana.dashboards.namespace`で定義されたネームスペース内でユーザーがダッシュボードを追加するための権限を与えることに制限されていることに注意してください。デフォルトは`cattle-dashboards`です。

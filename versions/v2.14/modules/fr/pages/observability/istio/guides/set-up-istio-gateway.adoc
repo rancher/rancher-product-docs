@@ -1,0 +1,173 @@
+= Configurer la passerelle Istio
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-istio-gateway.adoc 
+:product-path: observability/istio/guides/set-up-istio-gateway.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-traffic-management-setup: xref:observability/istio/guides/set-up-traffic-management.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-traffic-management-setup: xref:how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] a cessé la prise en charge depuis Rancher v2.12.0{nbsp}; tournez-vous vers l'https://apps.rancher.io[SUSE Application Collection] d'Istio pour une sécurité renforcée (incluse dans les abonnements SUSE Rancher Prime).
+Des informations détaillées peuvent être trouvées dans https://forums.suse.com/t/deprecation-of-rancher-istio/45043[cette annonce].
+====
+
+La passerelle de chaque cluster peut avoir son propre port ou équilibreur de charge, ce qui n'est pas lié à un maillage de services. Par défaut, chaque cluster provisionné par Rancher dispose d'un contrôleur d'ingress NGINX permettant le trafic vers le cluster.
+
+Vous pouvez utiliser le contrôleur Nginx Ingress avec ou sans Istio installé. Si c'est la seule passerelle de votre cluster, Istio pourra acheminer le trafic d'un service à un autre, mais Istio ne pourra pas recevoir de trafic de l'extérieur du cluster.
+
+Pour permettre à Istio de recevoir du trafic externe, vous devez activer la passerelle d'Istio, qui fonctionne comme un proxy nord-sud pour le trafic externe. Lorsque vous activez la passerelle Istio, le résultat est que votre cluster aura deux Ingress.
+
+Vous devrez également configurer une passerelle Kubernetes pour vos services. Cette ressource Kubernetes pointe vers l'implémentation de la passerelle d'entrée d'Istio vers le cluster.
+
+Vous pouvez acheminer le trafic vers le maillage de services avec un équilibreur de charge ou utiliser la passerelle NodePort d'Istio. Cette section décrit comment configurer la passerelle NodePort.
+
+Pour plus d'informations sur la passerelle Istio, consultez la https://istio.io/docs/reference/config/networking/v1alpha3/gateway/[documentation d'Istio.]
+
+image::istio-ingress.svg[Dans un cluster avec Istio activé, you can have two Ingresses: the default Nginx Ingress, and the default Istio controller.]
+
+[#_enable_an_istio_gateway]
+== Activer une passerelle Istio
+
+La passerelle d'entrée est un service Kubernetes qui sera déployé dans votre cluster. La passerelle Istio permet une personnalisation et une flexibilité plus étendues.
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster que vous avez créé et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur menu:Istio[Passerelles].
+. Cliquez sur *Créer à partir de Yaml*.
+. Collez votre yaml de passerelle Istio, ou *Lire à partir du fichier*.
+. Cliquez sur *Create*.
+
+*Résultat :* La passerelle est déployée et va maintenant acheminer le trafic avec les règles appliquées.
+
+[#_example_istio_gateway]
+== Exemple de passerelle Istio
+
+Nous ajoutons les déploiements de l'appli BookInfo dans les services lors de l'exemple des charges de travail. Ensuite, nous ajoutons une passerelle Istio afin que l'appli soit accessible depuis l'extérieur de votre cluster.
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster que vous avez créé et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur menu:Istio[Passerelles].
+. Cliquez sur *Créer à partir de Yaml*.
+. Copiez et collez le yaml de la passerelle fourni ci-dessous.
+. Cliquez sur *Create*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+----
+
+Puis, pour déployer le VirtualService qui fournit le routage du trafic pour la passerelle{nbsp}:
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster que vous avez créé et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur menu:Istio[VirtualServices].
+. Copiez et collez le yaml de VirtualService fourni ci-dessous.
+. Cliquez sur *Create*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: bookinfo
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - bookinfo-gateway
+  http:
+  - match:
+    - uri:
+        exact: /productpage
+    - uri:
+        prefix: /static
+    - uri:
+        exact: /login
+    - uri:
+        exact: /logout
+    - uri:
+        prefix: /api/v1/products
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+----
+
+*Résultat :* Vous avez configuré votre ressource de passerelle afin qu'Istio puisse recevoir du trafic de l'extérieur du cluster.
+
+Confirmez que la ressource existe en exécutant{nbsp}:
+
+----
+kubectl get gateway -A
+----
+
+Le résultat devrait être quelque chose comme ceci{nbsp}:
+
+----
+NAME               AGE
+bookinfo-gateway   64m
+----
+
+[#_access_the_productpage_service_from_a_web_browser]
+=== Accédez au service ProductPage depuis un navigateur Web
+
+Pour tester et vérifier que l'appli BookInfo a été déployée correctement, celle-ci peut être consultée dans un navigateur Web en utilisant l'adresse IP et le port du contrôleur Istio, combinés avec le nom de la requête spécifié dans votre ressource de passerelle Kubernetes{nbsp}:
+
+`\http://<IP of Istio controller>:<Port of istio controller>/productpage`
+
+Pour obtenir l'URL et le port de la passerelle d'entrée,
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster que vous avez créé et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur *Charge de travail*.
+. Faites défiler vers le bas jusqu'à l'espace de noms `istio-system`.
+. Dans `istio-system`, il y a une charge de travail nommée `istio-ingressgateway`. Sous le nom de cette charge de travail, vous devriez voir des liens, tels que `80/tcp`.
+. Cliquez sur l'un de ces liens. Cela devrait vous montrer l'URL de la passerelle d'entrée dans votre navigateur Web. Ajoutez `/productpage` à l'URL.
+
+*Résultat :* Vous devriez voir l'appli BookInfo dans votre navigateur Web.
+
+Pour obtenir de l'aide sur l'inspection de l'URL et des ports du contrôleur Istio, essayez les commandes de la https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#determining-the-ingress-ip-and-ports[documentation Istio.]
+
+[#_troubleshooting]
+== Dépannage
+
+La https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#troubleshooting[documentation officielle d'Istio] suggère `kubectl` commandes pour inspecter l'hôte d'entrée correct et le port d'entrée pour les requêtes externes.
+
+[#_confirming_that_the_kubernetes_gateway_matches_istios_ingress_controller]
+=== Confirmer que la passerelle Kubernetes correspond au contrôleur d'entrée d'Istio
+
+Vous pouvez essayer les étapes de cette section pour vous assurer que la passerelle Kubernetes est configurée correctement.
+
+Dans la ressource de la passerelle, le sélecteur fait référence au contrôleur d'entrée par défaut d'Istio par son étiquette, où la clé de l'étiquette est `istio` et la valeur est `ingressgateway`.  Pour vous assurer que l'étiquette est appropriée pour la passerelle, procédez comme suit{nbsp}:
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster que vous avez créé et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur *Charge de travail*.
+. Faites défiler vers le bas jusqu'à l'espace de noms `istio-system`.
+. Dans `istio-system`, il y a une charge de travail nommée `istio-ingressgateway`. Cliquez sur le nom de cette charge de travail et allez à la section *Étiquettes et annotations*. Vous devriez voir qu'elle a la clé `istio` et la valeur `ingressgateway`. Cela confirme que le sélecteur dans la ressource de la passerelle correspond au contrôleur d'entrée par défaut d'Istio.
+
+[#__xref_istio_traffic_management_setup_next_set_up_istios_components_for_traffic_management]
+=== {xref-istio-traffic-management-setup}[Suivant{nbsp}: Configurer les composants d'Istio pour la gestion du trafic]

@@ -1,0 +1,59 @@
+= Wie der autorisierte Cluster-Endpunkt funktioniert
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc 
+:product-path: cluster-admin/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-cli: xref:rancher-admin/cli/rancher-cli.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-arch-com-ds-cluster: xref:about-rancher/architektur/kommunikation-mit-downstream-clustern.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-cli: xref:reference-guides/cli-with-rancher/rancher-cli.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architektur/kommunikation-mit-downstream-nutzer-clustern.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+
+In diesem Abschnitt wird beschrieben, wie die kubectl-CLI, die kubeconfig-Datei und der autorisierte Cluster-Endpunkt zusammenarbeiten, um Ihnen den direkten Zugriff auf einen Downstream-Kubernetes-Cluster zu ermöglichen, ohne sich über den Rancher-Server zu authentifizieren. Es soll Hintergrundinformationen und Kontext zu den Anweisungen für {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[wie man kubectl einrichtet, um direkt auf einen Cluster zuzugreifen] bereitstellen.
+
+[#_about_the_kubeconfig_file]
+== Über die Kubeconfig-Datei
+
+Die kubeconfig-Datei wird verwendet, um den Zugriff auf Kubernetes zu konfigurieren, wenn sie zusammen mit dem kubectl-Kommandozeilenwerkzeug (oder anderen Clients) verwendet wird.
+
+Die kubeconfig-Datei und ihr Inhalt sind spezifisch für jeden Cluster. Sie kann von der *Clusters* Seite in Rancher heruntergeladen werden:
+
+. Klicken Sie auf *☰* in der oberen linken Ecke.
+. Wählen Sie *Clusterverwaltung*.
+. Suchen Sie den Cluster, dessen kubeconfig Sie herunterladen möchten, und wählen Sie *⁝* am Ende der Zeile aus.
+. Wählen Sie *Download KubeConfig* aus dem Untermenü.
+
+Sie benötigen eine separate kubeconfig-Datei für jeden Cluster, auf den Sie in Rancher Zugriff haben.
+
+Nachdem Sie die kubeconfig-Datei heruntergeladen haben, können Sie die kubeconfig-Datei und ihre Kubernetes https://kubernetes.io/docs/reference/kubectl/cheatsheet/#kubectl-context-and-configuration[contexts] verwenden, um auf Ihren Downstream-Cluster zuzugreifen.
+
+Wenn Administratoren xref:api/api-tokens.adoc#_disable_tokens_in_generated_kubeconfigs[kubeconfig-Token-Generierung deaktiviert haben], erfordert die kubeconfig-Datei, dass die {xref-rancher-cli}[Rancher CLI] in Ihrem PATH vorhanden ist.
+
+[#_about_the_kube_api_auth_authentication_webhook]
+== Über das kube-api-auth Authentifizierungs-Webhook
+
+Der `kube-api-auth` Mikrodienst wird bereitgestellt, um die Benutzer-Authentifizierungsfunktionalität für den {xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[autorisierten Cluster-Endpunkt] bereitzustellen. Wenn Sie auf den Benutzercluster über `kubectl` zugreifen, authentifiziert der Kubernetes-API-Server des Clusters Sie, indem er den `kube-api-auth` Dienst als Webhook verwendet.
+
+Während der Cluster-Bereitstellung wird die Datei `/etc/kubernetes/kube-api-authn-webhook.yaml` bereitgestellt und `kube-apiserver` wird mit `--authentication-token-webhook-config-file=/etc/kubernetes/kube-api-authn-webhook.yaml` konfiguriert. Dies konfiguriert den `kube-apiserver`, um `http://127.0.0.1:6440/v1/authenticate` abzufragen, um die Authentifizierung für Bearer-Token zu bestimmen.
+
+Die Planungsregeln für `kube-api-auth` sind unten aufgeführt:
+
+|===
+| Komponente | nodeAffinity nodeSelectorTerms | nodeSelector | Toleranzen
+
+| kube-api-auth
+| `beta.kubernetes.io/os:NotIn:windows`
+`node-role.kubernetes.io/controlplane:In:"true"`
+| keine
+| `operator:Exists`
+|===

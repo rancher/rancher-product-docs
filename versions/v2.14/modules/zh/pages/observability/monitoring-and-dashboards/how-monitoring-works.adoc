@@ -1,224 +1,260 @@
-= Monitoring 的工作原理
+= 监控是如何工作的
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-15
+endif::[]
+:revdate: 2026-03-23
 :page-revdate: {revdate}
+:community-path: integrations-in-rancher/monitoring-and-alerting/how-monitoring-works.adoc 
+:product-path: observability/monitoring-and-dashboards/how-monitoring-works.adoc
+ifeval::["{build-type}" != "community"]
+:xref-receivers: xref:observability/monitoring-and-dashboards/configuration/receivers.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-receivers: xref:reference-guides/monitoring-v2-configuration/receivers.adoc
+endif::[]
 
-== 1. 架构概述
+[#_1_architecture_overview]
+== 1.体系结构概述
 
-_*下文描述了数据如何流经 Monitoring V2 应用程序：*_
+_*以下部分描述了数据如何在监控 V2 应用程序中流动：*_
 
+[#_prometheus_operator]
 === Prometheus Operator
 
-Prometheus Operator 观察正在创建的 ServiceMonitors、PodMonitors 和 PrometheusRules。在创建 Prometheus 配置资源时，Prometheus Operator 会调用 Prometheus API 来同步新配置。如本节末尾的图所示，Prometheus Operator 充当 Prometheus 和 Kubernetes 之间的中介，调用 Prometheus API 来同步 Prometheus 与 Kubernetes 中的监控相关资源。
+Prometheus Operator 观察到 ServiceMonitors、PodMonitors 和 Prometheus规则的创建。当 Prometheus 配置资源被创建时，Prometheus Operator 调用 Prometheus API 来同步新的配置。正如本节末尾的图示所示，Prometheus Operator 充当 Prometheus 和 Kubernetes 之间的中介，调用 Prometheus API 将 Prometheus 与 Kubernetes 中的监控相关资源同步。
 
-=== ServiceMonitor 和 PodMonitor
+[#_servicemonitors_and_podmonitors]
+=== ServiceMonitors 和 PodMonitors
 
-ServiceMonitor 和 PodMonitor 以声明方式指定需要监控的目标，例如 Service 和 Pod。
+ServiceMonitors 和 PodMonitors 声明性地指定需要监控的目标，例如 Services 和 Pods。
 
-* 目标是根据配置的 Prometheus 抓取间隔定期抓取的，而抓取的指标存储在 Prometheus 时间序列数据库（Time Series Database，TSDB）中。
-* 为了执行抓取，你需要使用标签选择器来定义 ServiceMonitor 和 PodMonitor，这些标签选择器用于确定要抓取的 Service 或 Pod，并能确定端点（端点能确定抓取如何在给定目标上进行，例如在 TCP 10252 中抓取指标，通过 IP 地址 x.x.x.x 进行代理）。
-* 开箱即用地，Monitoring V2 附带了一些预配置的 Exporter，这些 Exporter 根据其所在的 Kubernetes 集群的类型进行部署。有关详细信息，请参阅<<_5_抓取和公开指标,抓取和公开指标>>。
+* 目标根据配置的 Prometheus 抓取间隔以定期的时间表进行抓取，抓取的指标存储在 Prometheus 时间序列数据库 (TSDB) 中。
+* 为了执行抓取，ServiceMonitors 和 PodMonitors 使用标签选择器来定义哪些 Services 或 Pods 应该被抓取，以及确定如何在给定目标上进行抓取的端点，例如在 TCP 10252 上抓取/metrics，通过 IP 地址 x.x.x.x 进行代理。
+* 开箱即用，监控 V2 附带某些预配置的出口程序，这些出口程序根据其部署的 Kubernetes 集群类型进行部署。有关更多信息，请参见 <<_5_scraping_and_exposing_metrics,抓取和暴露指标>>。
 
+[#_how_pushprox_works]
 === PushProx 的工作原理
 
-* 某些内部 Kubernetes 组件是通过部署在 Monitoring V2 中名为 *PushProx* 的代理来抓取的。通过 PushProx 向 Prometheus 公开指标的 Kubernetes 组件分别是 `kube-controller-manager`、`kube-scheduler`, `etcd` 和 `kube-proxy`。
-* 对于每个 PushProx Exporter，我们在所有目标节点上都部署一个 PushProx 客户端。例如，将 PushProx 客户端部署到 kube-controller-manager 的所有 controlplane 节点、kube-etcd 的所有 etcd 节点上，和 kubelet 的所有节点上。
-* 我们为每个 Exporter 部署了一个 PushProx 代理。导出指标的流程如下：
+* 某些内部 Kubernetes 组件通过作为监控 V2 一部分部署的代理 *PushProx* 进行抓取。通过 PushProx 向 Prometheus 暴露指标的 Kubernetes 组件包括：`kube-controller-manager`、`kube-scheduler`、`etcd` 和 `kube-proxy`。
+* 对于每个 PushProx 出口程序，我们在所有目标节点上部署一个 PushProx 客户端。例如，PushProx 客户端被部署到所有 kube-controller-manager 的控制平面节点、所有 kube-etcd 的 etcd 节点和所有 kubelet 的节点上。
+* 我们为每个出口程序精确部署一个 PushProx 代理。导出指标的过程如下：
 
 . PushProx 客户端与 PushProx 代理建立出站连接。
-. 然后，客户端会轮询代理以获取进入代理的抓取请求。
-. 当代理收到来自 Prometheus 的抓取请求时，客户端会将其视为轮询的结果。
+. 客户端随后向代理发送轮询请求，以获取进入代理的抓取请求。
+. 当代理从 Prometheus 接收到抓取请求时，客户端将其视为轮询的结果。
 . 客户端抓取内部组件。
-. 内部组件通过将指标推回代理来响应。
+. 内部组件通过将指标推送回代理来响应。
 
-.使用 PushProx 导出指标的过程
-image::pushprox-process.svg[使用 PushProx 导出指标的过程]
+.使用PushProx导出指标的流程
+image::pushprox-process.svg[使用PushProx导出指标的流程]
 
+[#_prometheusrules]
 === PrometheusRules
 
-PrometheusRule 用于定义指标或时间序列数据库查询触发告警的规则。规则是按时间间隔评估的。
+Prometheus规则允许用户定义哪些指标或时间序列数据库查询应导致警报被触发。规则在一定时间间隔内进行评估。
 
-* **记录规则**根据已收集的现有序列创建一个新的时间序列。它们常用于预先计算的复杂查询。
-* **告警规则**运行特定查询，如果查询评估为非零值，则从 Prometheus 触发告警。
+* *记录规则*基于已收集的现有时间序列创建新的时间序列。它们通常用于预计算复杂查询。
+* *警报规则*运行特定查询，并在查询评估为非零时触发 Prometheus 的警报。
 
-=== 告警路由
+[#_alert_routing]
+=== 警报路由
 
-一旦 Prometheus 确定需要触发告警，就会将告警转发到 *Alertmanager*。
+一旦Prometheus确定需要触发警报，警报将被转发到*Alertmanager*。
 
-* 告警包含来自 PromQL 查询本身的标签，以及指定初始 PrometheusRule 时设置的其他标签和注释。
-* 在接收任何告警之前，Alertmanager 会用配置中指定的**路由 (Route)** 和**接收器 (Receiver)** 来形成一个路由树，所有传入的告警都会在该路由树上进行评估。路由树的每个节点都可以根据附加到 Prometheus 告警的标签来指定要进行的其他分组、标签和过滤。路由树上的节点（通常是叶节点）还可以指定到达的告警需要发送到什么接收器，例如 Slack、PagerDuty、SMS 等。请注意，Alertmanager 首先向 *alertingDriver* 发送告警，然后 alertingDriver 再将告警发送或转发到正确的目标位置。
-* 路由和接收器也通过 Alertmanager Secret 存储在 Kubernetes API 中。当 Secret 更新时，Alertmanager 也会自动更新。请注意，路由仅通过标签发生（而不是通过注释等）。
+* 警报包含来自PromQL查询本身的标签，以及作为指定初始PrometheusRule的一部分可以提供的附加标签和注释。
+* 在接收任何警报之前，Alertmanager将使用其配置中指定的*路由*和*接收器*形成一个路由树，以评估所有传入的警报。路由树的每个节点可以根据附加到Prometheus警报的标签指定需要进行的额外分组、标记和过滤。路由树上的一个节点（通常是叶节点）还可以指定到达它的警报需要发送到配置的接收器，例如Slack、PagerDuty、短信等。请注意，Alertmanager将首先将警报发送到*alertingDriver*，然后alertingDriver将警报发送或转发到正确的目的地。
+* 路由和接收器也通过Alertmanager Secret存储在Kubernetes API中。当Secret更新时，Alertmanager也会自动更新。请注意，路由仅通过标签进行（而不是通过注释等）。
 
-== 2. Prometheus 的工作原理
+[#_2_how_prometheus_works]
+== 2.Prometheus 的工作原理
 
+[#_storing_time_series_data]
 === 存储时间序列数据
 
-收集 Exporter 的指标后，Prometheus 将时间序列存储在本地磁盘时间序列数据库中。Prometheus 可以选择与远程系统集成，但 `rancher-monitoring` 使用本地存储来存储时间序列数据库。
+在从出口收集指标后，Prometheus 将时间序列存储在本地磁盘时间序列数据库中。Prometheus 可选择与远程系统集成，但 `rancher-monitoring` 使用本地存储作为时间序列数据库。
 
-存储后，用户可以使用 PromQL（Prometheus 的查询语言）查询此 TSDB。
+一旦存储，用户可以使用 PromQL 查询此 TSDB，这是 Prometheus 的查询语言。
 
-PromQL 查询可以通过以下两种方式进行可视化：
+PromQL 查询可以通过两种方式可视化：
 
-. 通过在 Prometheus 的 Graph UI 中提供查询，UI 会显示数据的简单图形视图。
-. 通过创建包含 PromQL 查询和其他格式化指令的 Grafana 仪表板，这些指令用于标记轴、添加单位、更改颜色、使用替代可视化等。
+. 通过在 Prometheus 的图形用户界面中提供查询，这将显示数据的简单图形视图。
+. 通过创建一个包含 PromQL 查询和额外格式指令的 Grafana 仪表板，这些指令标记轴、添加单位、改变颜色、使用替代可视化等。
 
+[#_defining_rules_for_prometheus]
 === 为 Prometheus 定义规则
 
-规则定义了 Prometheus 需要在常规 `evaluationInterval` 上执行的查询，从而执行某些操作，例如触发告警（告警规则）或根据 TSDB 中存在的其他查询（记录规则）预先计算查询。这些规则编码在 PrometheusRules 自定义资源中。创建或更新 PrometheusRule 自定义资源后，Prometheus Operator 会观察变化，并调用 Prometheus API 来定期同步 Prometheus 当前正在评估的规则集。
+规则定义 Prometheus 需要定期`evaluationInterval`执行的查询，以执行某些操作，例如触发警报（警报规则）或基于 TSDB 中其他现有查询的预计算查询（记录规则）。这些规则被编码在 Prometheus规则自定义资源中。当 PrometheusRule 自定义资源被创建或更新时，Prometheus Operator 观察到变化并调用 Prometheus API 以在定期间隔内同步 Prometheus 当前评估的规则集。
 
-PrometheusRule 支持定义一个或多个 RuleGroup。每个 RuleGroup 由一组 Rule 对象组成，每个 Rule 对象均能表示告警或记录规则，并具有以下字段：
+Prometheus规则 允许您定义一个或多个 RuleGroups。每个 RuleGroup 由一组 Rule 对象组成，每个对象可以表示警报规则或记录规则，具有以下字段：
 
-* 新告警或记录的名称
-* 新告警或记录的 PromQL 表达式
-* 用于标记告警或记录的标签（例如集群名称或严重性）
-* 对需要在告警通知上显示的其他重要信息进行编码的注释（例如摘要、描述、消息、Runbook URL 等）。记录规则不需要此字段。
+* 新警报或记录的名称
+* 新警报或记录的 PromQL 表达式
+* 应附加到警报或记录的标签，以识别它（例如，集群名称或严重性）
+* 用于编码任何需要在警报通知中显示的额外重要信息的注释（例如摘要、描述、消息、运行手册 URL 等）。此字段在记录规则中不是必需的。
 
-在评估link:https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api-reference/api.md#rule[规则]时，Prometheus 将执行配置的 PromQL 查询，添加其他标签（或注释 - 仅用于告警规则），并为规则执行所需的操作。例如，如果某个告警规则将 `team:front-end` 作为标签添加到配置的 PromQL 查询，该标签会尾附到触发的告警，这将允许 Alertmanager 将告警转发到正确的接收器。
+在评估一个 https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api-reference/api.md#rule[规则] 时，Prometheus 运行提供的 PromQL 查询，添加提供的标签，并执行该规则的适当操作。如果规则触发警报，Prometheus 还会添加提供的注释。例如，一个将 `team: front-end` 作为标签添加到提供的 PromQL 查询的警报规则，会将该标签附加到触发的警报上，这将允许 Alertmanager 将警报转发到正确的接收者。
 
-=== 告警和记录规则
+[#_alerting_and_recording_rules]
+=== 警报和记录规则。
 
-Prometheus 不会维护告警是否处于 active 状态。它在每个评估间隔内重复触发告警，并根据 Alertmanager 对告警进行分组和过滤成有意义的通知。
+Prometheus 不维护警报是否处于活动状态。它在每个评估间隔重复触发警报，依赖 Alertmanager 将警报分组并过滤成有意义的通知。
 
-`evaluation_interval` 常量定义了 Prometheus 根据时间序列数据库评估告警规则的频率。与 `scrape_interval` 类似，`evaluation_interval` 的默认值也是一分钟。
+`evaluation_interval` 常量定义了 Prometheus 评估其警报规则与时间序列数据库的频率。与 `scrape_interval` 类似，`evaluation_interval` 的默认值也为一分钟。
 
-规则包含在一组规则文件中。规则文件包括告警规则和记录规则，但只有告警规则才会在评估后触发告警。
+规则包含在一组规则文件中。规则文件包括警报规则和记录规则，但只有警报规则在评估后会触发警报。
 
-对于记录规则，Prometheus 会运行查询，然后将其存储为时间序列。如果需要存储非常昂贵或耗时的查询的结果，这种合成的时间序列则非常有用，因此你可以在后续更快地进行查询它们。
+对于记录规则，Prometheus 运行一个查询，然后将其存储为时间序列。这个合成时间序列对于存储昂贵或耗时查询的结果非常有用，以便将来可以更快地查询。
 
-告警规则是更常用的。每当告警规则评估为正数时，Prometheus 都会触发告警。
+警报规则更常用。每当警报规则评估为正数时，Prometheus 会触发警报。
 
-在触发告警之前，Rule 文件会根据实际用例将标签和注释添加到告警中：
+规则文件在触发警报之前根据用例向警报添加标签和注释：
 
-* 标签用于标识告警的信息，并可能影响告警的路由。例如，如果在发送有关某个容器的告警时，你可以使用容器 ID 作为标签。
-* 注释用于表示不影响告警路由位置的信息，例如 Runbook 或错误消息。
+* 标签指示识别警报的信息，并可能影响警报的路由。例如，在发送关于某个容器的警报时，可以使用容器 ID 作为标签。
+* 注释表示不影响警报路由的信息，例如运行手册或错误消息。
 
-== 3. Alertmanager 的工作原理
+[#_3_how_alertmanager_works]
+== 3.Alertmanager 的工作原理。
 
-Alertmanager 处理由 Prometheus server 等客户端应用发送的告警。它负责以下任务：
+Alertmanager 处理由客户端应用程序（如 Prometheus 服务器）发送的警报。它负责以下任务：
 
-* 删除重复数据，分组，并将告警路由到正确的接收器集成（例如电子邮件、PagerDuty 或 OpsGenie）
-* 静音和抑制告警
-* 跟踪随时间触发的告警
-* 发送告警的状态，即告警是否正在触发，或者是否已经解决
+* 去重、分组和将警报路由到正确的接收端集成，例如电子邮件、PagerDuty 或 OpsGenie。
+* 静默和抑制警报。
+* 跟踪随时间推移而触发的警报。
+* 发送警报当前是否正在触发或已解决的状态。
 
-=== 由 alertingDrivers 转发的告警
+[#_alerts_forwarded_by_alertingdrivers]
+=== 由 alertingDrivers 转发的警报。
 
-安装 alertingDriver 后会根据 alertingDriver 的配置创建一个 `Service`，可用作 Teams 或 SMS 的接收器 URL。接收器中的 URL 会指向 alertingDrivers。因此 Alertmanager 首先向 alertingDriver 发送告警，然后 alertingDriver 将告警转发或发送到正确的目的位置。
+当安装 alertingDrivers 时，这会创建一个 `Service`，可以用作 Teams 或 SMS 的接收器 URL，具体取决于 alertingDriver 的配置。接收器中的 URL 指向 alertingDrivers；因此，Alertmanager 首先将警报发送到 alertingDriver，然后 alertingDriver 将警报转发或发送到正确的目的地。
 
-=== 将告警路由到接收器
+[#_routing_alerts_to_receivers]
+=== 将警报路由到接收器。
 
-Alertmanager 负责协调告警的发送位置。它允许你根据标签对告警进行分组，并根据标签匹配情况来触发告警。一个最顶层路由会接受所有告警。然后，Alertmanager 会根据告警是否匹配下一个路由的条件，继续将告警路由到接收器。
+Alertmanager 协调警报的发送位置。它允许您根据标签对警报进行分组，并根据是否匹配某些标签来触发它们。一个顶级路由接受所有警报。从那里，Alertmanager 根据警报是否符合下一个路由的条件继续将警报路由到接收器。
 
-虽然 Rancher UI 表单只允许编辑两层深的路由树，但你可以通过编辑 Alertmanager Secret 来配置更深的嵌套路由结构。
+虽然 Rancher UI 表单仅允许编辑深度为两级的路由树，但您可以通过编辑 Alertmanager Secret 配置更深层次的嵌套路由结构。
 
+[#_configuring_multiple_receivers]
 === 配置多个接收器
 
-你可以编辑 Rancher UI 中的表单来设置一个接收器资源，其中包含 Alertmanager 将告警发送到你的通知系统所需的所有信息。
+通过编辑 Rancher UI 中的表单，您可以设置一个接收器资源，其中包含 Alertmanager 发送警报到您的通知系统所需的所有信息。
 
-通过在 Alertmanager 或接收器配置中编辑自定义 YAML，你还可以将告警发送到多个通知系统。有关详细信息，请参阅xref:./configuration/receivers.adoc#_配置多个接收器[接收器配置]。
+通过编辑 Alertmanager 或接收器配置中的自定义 YAML，您还可以将警报发送到多个通知系统。有关更多信息，请参见配置 {xref-receivers}#_configuring_multiple_receivers[接收器] 的部分。
 
-== 4. Monitoring V2 特定组件
+[#_4_monitoring_v2_specific_components]
+== 4.监控 V2 特定组件
 
-Prometheus Operator 引入了一组link:https://github.com/prometheus-operator/prometheus-operator#customresourcedefinitions[自定义资源定义]，允许用户通过在集群上创建和修改这些自定义资源来部署和管理 Prometheus 和 Alertmanager 实例。
+Prometheus Operator 引入了一组 https://github.com/prometheus-operator/prometheus-operator#customresourcedefinitions[自定义资源定义]，允许用户通过在集群上创建和修改这些自定义资源来部署和管理 Prometheus 和 Alertmanager 实例。
 
-Prometheus Operator 会根据 Rancher UI 中编辑的资源和配置选项的实时状态来自动更新 Prometheus 配置。
+Prometheus Operator 将根据资源的实时状态和在 Rancher UI 中编辑的配置选项自动更新您的 Prometheus 配置。
 
+[#_resources_deployed_by_default]
 === 默认部署的资源
 
-默认情况下，由 https://github.com/prometheus-operator/kube-prometheus[kube-prometheus] 项目策划的一组资源会作为 Rancher Monitoring 安装的一部分部署到你的集群上，用来设置基本的 Monitoring/Alerting 堆栈。
+默认情况下，由 https://github.com/prometheus-operator/kube-prometheus[kube-prometheus] 项目策划的一组资源会作为安装 Rancher 监控应用程序的一部分部署到您的集群上，以设置基本的监控/警报堆栈。
 
-你可以在 https://github.com/rancher/charts/tree/main/charts/rancher-monitoring[`rancher-monitoring`] Helm Chart 中找到部署到你的集群以支持此解决方案的资源，该 chart 密切跟踪由 Prometheus 社区维护的上游 https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack[kube-prometheus-stack] Helm Chart，并在 https://github.com/rancher/charts/blob/main/charts/rancher-monitoring/CHANGELOG.md[CHANGELOG.md] 中跟踪变更。
+支持此解决方案的资源可以在 https://github.com/rancher/charts/tree/main/charts/rancher-monitoring[`rancher-monitoring`] Helm 图表中找到，该图表与 Prometheus 社区维护的上游 https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack[kube-prometheus-stack] Helm 图表密切相关，并在 https://github.com/rancher/charts/blob/main/charts/rancher-monitoring/CHANGELOG.md[CHANGELOG.md] 中跟踪某些更改。
 
-=== 默认 Exporter
+[#_default_exporters]
+=== 默认的导出器
 
-Monitoring V2 部署了三个默认 Exporter，它们为 Prometheus 提供额外的指标来存储：
+监控 V2 部署了三个默认的导出器，提供额外的指标供 Prometheus 存储：
 
-. `node-exporter`：公开 Linux 主机的硬件和操作系统指标。有关 `node-exporter` 的更多信息，请参阅link:https://prometheus.io/docs/guides/node-exporter/[上游文档]。
-. `windows-exporter`：公开 Windows 主机的硬件和操作系统指标（仅部署在 Windows 集群上）。有关 `windows-exporter` 的更多信息，请参阅link:https://github.com/prometheus-community/windows_exporter[上游文档]。
-. `kube-state-metrics`：公开跟踪 Kubernetes API 中包含的资源状态的其他指标（例如，pod、工作负载等）。有关 `kube-state-metrics` 的更多信息，请参阅link:https://github.com/kubernetes/kube-state-metrics/tree/master/docs[上游文档]。
+. `node-exporter`: 为 Linux 主机暴露硬件和操作系统指标。有关 `node-exporter` 的更多信息，请参阅 https://prometheus.io/docs/guides/node-exporter/[上游文档]。
+. `windows-exporter`: 为 Windows 主机暴露硬件和操作系统指标（仅在 Windows 集群上部署）。有关 `windows-exporter` 的更多信息，请参阅 https://github.com/prometheus-community/windows_exporter[上游文档]。
+. `kube-state-metrics`: 暴露跟踪 Kubernetes API 中包含的资源状态的额外指标（例如，pods、工作负载等）。有关 `kube-state-metrics` 的更多信息，请参阅 https://github.com/kubernetes/kube-state-metrics/tree/master/docs[上游文档]。
 
-ServiceMonitor 和 PodMonitor 将按照<<_定义要抓取的指标,此定义>>来抓取这些 Exporter。Prometheus 会存储这些指标，你可以通过 Prometheus 的 UI 或 Grafana 查询结果。
+ServiceMonitors 和 PodMonitors 将根据 <<_defining_what_metrics_are_scraped,此处>> 定义抓取这些导出器。Prometheus 存储这些指标，您可以通过 Prometheus 的 UI 或 Grafana 查询结果。
 
-有关记录规则、告警规则和 Alertmanager 的更多信息，请参阅<<_1_架构概述,架构>>。
+有关记录规则、警报规则和 Alertmanager 的更多信息，请参见 <<_1_architecture_overview,架构>> 部分。
 
-=== Rancher UI 中公开的组件
+[#_components_exposed_in_the_rancher_ui]
+=== 在 Rancher UI 中暴露的组件
 
-安装 monitoring 应用后，你将能够在 Rancher UI 中编辑以下组件：
+安装监控应用程序后，您将能够在 Rancher UI 中编辑以下组件：
 
 |===
 | 组件 | 组件类型 | 编辑的目的和常见用例
 
 | ServiceMonitor
 | 自定义资源
-| 设置 Kubernetes Service 来获取其自定义指标。自动更新 Prometheus 自定义资源中的抓取配置。
+| 设置 Kubernetes 服务以抓取自定义指标。自动更新 Prometheus 自定义资源中的抓取配置。
 
 | PodMonitor
 | 自定义资源
-| 设置 Kubernetes Pod 来获取其自定义指标。自动更新 Prometheus 自定义资源中的抓取配置。
+| 设置 Kubernetes Pod 以抓取自定义指标。自动更新 Prometheus 自定义资源中的抓取配置。
 
 | 接收器
-| 配置块（Alertmanager 的一部分）
-| 修改将告警发送到什么位置的信息（例如，Slack、PagerDuty 等）以及发送告警的其他必要信息（例如，TL​​S 证书、代理 URL 等）。自动更新 Alertmanager 自定义资源。
+| 配置块（Alertmanager 的一部分）。
+| 修改发送警报的位置（例如，Slack、PagerDuty等）和发送警报所需的任何信息（例如，TLS证书、代理URL等）。自动更新 Alertmanager 自定义资源。
 
-| Route
-| 配置块（Alertmanager 的一部分）
-| 修改用于根据标签过滤、标记和分组告警的路由树，并将告警发送到所需的接收器。自动更新 Alertmanager 自定义资源。
+| 路由
+| 配置块（Alertmanager 的一部分）。
+| 修改用于根据标签过滤、标记和分组警报的路由树，并将其发送到适当的接收器。自动更新 Alertmanager 自定义资源。
 
 | PrometheusRule
 | 自定义资源
-| 定义其他查询，这些查询能触发告警或定义 Prometheus TSDB 中现有的物化视图。自动更新 Prometheus 自定义资源。
+| 定义需要触发警报的额外查询或定义现有系列的物化视图，这些系列在 Prometheus 的 TSDB 中。 自动更新 Prometheus 自定义资源。
 |===
 
+[#_pushprox]
 === PushProx
 
-PushProx 允许 Prometheus 跨网络边界抓取指标，这样，用户就不用必须为 Kubernetes 集群中每个节点上的内部 Kubernetes 组件公开指标端口。
+PushProx 允许 Prometheus 跨网络边界抓取指标，这样用户就不必在 Kubernetes 集群中的每个节点上暴露内部 Kubernetes 组件的指标端口。
 
-由于 Kubernetes 组件的指标通常暴露在集群中节点的主机网络上，PushProx 部署了一个客户端 DaemonSet，这些客户端位于每个节点的主机网络上，并与位于 Kubernetes API 上的单个代理建立出站连接。然后，你可以让 Prometheus 通过代理将抓取请求发送到每个客户端，这样，Prometheus 能从内部 Kubernetes 组件抓取指标，而不需要打开任何入站节点端口。
+由于 Kubernetes 组件的指标通常在集群中节点的主机网络上暴露，PushProx 部署了一个客户端的 DaemonSet，这些客户端位于每个节点的 hostNetwork 上，并与位于 Kubernetes API 上的单个代理建立出站连接。然后可以配置 Prometheus 通过代理向每个客户端发送抓取请求，这样它就可以从内部 Kubernetes 组件抓取指标，而无需打开任何入站节点端口。
 
-有关更多信息，请参阅<<_使用_pushprox_抓取指标,使用 PushProx 抓取指标>>。
+有关更多信息，请参阅 <<_scraping_metrics_with_pushprox,使用 PushProx 抓取指标>>。
 
-== 5. 抓取和公开指标
+[#_5_scraping_and_exposing_metrics]
+== 5.抓取和暴露指标
 
-=== 定义要抓取的指标
+[#_defining_what_metrics_are_scraped]
+=== 定义抓取哪些指标
 
-ServiceMonitor 和 PodMonitor 定义了 Prometheus 要抓取的目标。link:https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/getting-started/design.md#prometheus[Prometheus 自定义资源]告诉 Prometheus 应该使用哪个 ServiceMonitor 或 PodMonitor 来确定从哪里抓取指标。
+ServiceMonitors 和 PodMonitors 定义了 Prometheus 要抓取的目标。 https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/getting-started/design.md#prometheus[Prometheus 自定义资源] 告诉 Prometheus 应该使用哪些 ServiceMonitors 或 PodMonitors 来找出从哪里抓取指标。
 
-Prometheus Operator 观察 ServiceMonitor 和 PodMonitor。当它观察到二者被创建或更新时，它会调用 Prometheus API 来更新 Prometheus 自定义资源中的抓取配置，并使该配置与 ServiceMonitor 或 PodMonitor 中的抓取配置保持同步。此抓取配置告诉 Prometheus 从哪些端点抓取指标，以及如何标记这些端点的指标。
+Prometheus Operator 观察 ServiceMonitors 和 PodMonitors。当它观察到这些被创建或更新时，它调用 Prometheus API 来更新 Prometheus 自定义资源中的抓取配置，并保持与 ServiceMonitors 或 PodMonitors 中的抓取配置同步。该抓取配置告诉 Prometheus 从哪些端点抓取指标，以及它将如何标记来自这些端点的指标。
 
-Prometheus 会根据 `scrape_interval`（默认为一分钟）来抓取定义在抓取配置中的所有指标。
+Prometheus 在每个 `scrape_interval` 上抓取其抓取配置中定义的所有指标，默认情况下为一分钟。
 
-抓取配置可以作为 Prometheus 自定义资源的一部分被查看，该资源在 Rancher UI 中公开。
+抓取配置可以作为 Rancher UI 中暴露的 Prometheus 自定义资源的一部分进行查看。
 
-=== Prometheus Operator 如何设置指标抓取
+[#_how_the_prometheus_operator_sets_up_metrics_scraping]
+=== Prometheus Operator如何设置指标抓取
 
-Prometheus Deployment 或 StatefulSet 能抓取指标，而 Prometheus 的配置由 Prometheus 自定义资源控制。Prometheus Operator 会观察 Prometheus 和 Alertmanager 资源，当它们被创建时，Prometheus Operator 使用用户定义的配置，为 Prometheus 或 Alertmanager 创建一个 Deployment 或 StatefulSet。
+Prometheus 部署或 StatefulSet 抓取指标，Prometheus 的配置由 Prometheus 自定义资源控制。Prometheus Operator 监视 Prometheus 和 Alertmanager 资源，当它们被创建时，Prometheus Operator 会根据用户定义的配置为 Prometheus 或 Alertmanager 创建一个 Deployment 或 StatefulSet。
 
-如果 Prometheus Operator 观察到正在创建的 ServiceMonitor、PodMonitor 和 PrometheusRule，它就知道需要在 Prometheus 中更新抓取配置。首先，会通过更新 Prometheus 的 Deployment 或 StatefulSet 卷中的配置和规则文件来更新 Prometheus。然后，再调用 Prometheus API 来同步新配置，从而将 Prometheus Deployment 或 StatefulSet 修改到位。
+当 Prometheus Operator 观察到 ServiceMonitors、PodMonitors 和 PrometheusRules 被创建时，它知道需要在 Prometheus 中更新抓取配置。它通过首先更新 Prometheus 的 Deployment 或 StatefulSet 中的配置和规则文件来更新 Prometheus。然后它调用 Prometheus API 来同步新配置，导致 Prometheus 的 Deployment 或 StatefulSet 被就地修改。
 
-=== 如何公开 Kubernetes 组件指标
+[#_how_kubernetes_component_metrics_are_exposed]
+=== Kubernetes 组件指标如何被暴露
 
-Prometheus 从称为 https://prometheus.io/docs/instrumenting/exporters/[exporter] 的 deployment 中抓取指标，exporter 以 Prometheus 可以抓取的格式导出时间序列数据。在 Prometheus 中，时间序列由属于相同指标和相同标记维度集的时间戳值流组成。
+Prometheus 从被称为 https://prometheus.io/docs/instrumenting/exporters/[exporters,] 的部署中抓取指标，这些部署以 Prometheus 可以摄取的格式导出时间序列数据。在 Prometheus 中，时间序列由属于同一指标和同一组标记维度的时间戳值流组成。
 
+[#_scraping_metrics_with_pushprox]
 === 使用 PushProx 抓取指标
 
-某些内部 Kubernetes 组件是通过部署在 Monitoring V2 中名为 PushProx 的代理来抓取的。有关 PushProx 的详细信息，请参阅<<_pushprox_的工作原理,此处>>和上面的<<_1_架构概述,架构>>部分。
+某些内部 Kubernetes 组件通过部署在 Monitoring V2 中、名为 PushProx 的代理进行抓取。有关 PushProx 的详细信息，请参阅 <<_how_pushprox_works,这里>> 和上述 <<_1_architecture_overview,架构>> 部分。
 
+[#_scraping_metrics]
 === 抓取指标
 
-Prometheus 直接抓取以下 Kubernetes 组件：
+以下 Kubernetes 组件由 Prometheus 直接抓取：
 
 * kubelet*
-* ingress-nginx**
+* Traefik**
 * coreDns/kubeDns
 * kube-api-server
 
-* 你可以选择通过 `hardenedKubelet.enabled` 来使用 PushProx，但这不是默认设置。
+* 您可以选择性地使用 `hardenedKubelet.enabled` 来使用 PushProx，但这不是默认设置。
 
-** RKE2 集群默认部署 ingress-nginx，并将其视为内部 Kubernetes 组件。
+** 对于 RKE2 集群，Traefik 默认部署并被视为内部 Kubernetes 组件。
 
-=== 基于 Kubernetes 发行版抓取指标
+[#_scraping_metrics_based_on_kubernetes_distribution]
+=== 基于 Kubernetes 发行版的指标抓取
 
-指标的抓取方式根据 Kubernetes 发行版而有所不同。有关术语的帮助，请参阅<<_名词解释,此处>>。详情见下表：
+根据 Kubernetes 发行版，指标的抓取方式不同。有关术语的帮助，请参见 <<_terminology,这里>>。有关详细信息，请参见下表：
 
 .指标如何暴露给 Prometheus
 |===
@@ -245,35 +281,36 @@ Prometheus 直接抓取以下 Kubernetes 组件：
 | k3sServer.enabled
 
 | kubelet
-| 收集 kubelet 直接公开的指标
-| 收集 kubelet 直接公开的指标
-| 收集 kubelet 直接公开的指标
+| 直接收集 kubelet 暴露的指标
+| 直接收集 kubelet 暴露的指标
+| 直接收集 kubelet 暴露的指标
 
-| ingress-nginx*
-| 收集 kubelet 直接公开的指标，由 rke2IngressNginx.enabled 公开
+| Traefik*
+| 直接收集 kubelet 暴露的指标
 | 不可用
 | 不可用
 
 | coreDns/kubeDns
-| 收集 coreDns/kubeDns 直接公开的指标
-| 收集 coreDns/kubeDns 直接公开的指标
-| 收集 coreDns/kubeDns 直接公开的指标
+| 直接收集 coreDns/kubeDns 暴露的指标
+| 直接收集 coreDns/kubeDns 暴露的指标
+| 直接收集 coreDns/kubeDns 暴露的指标
 
 | kube-api-server
-| 收集 kube-api-server 直接公开的指标
-| 收集 kube-appi-server 直接公开的指标
-| 收集 kube-api-server 直接公开的指标
+| 直接收集 kube-api-server 暴露的指标
+| 直接收集 kube-appi-server 暴露的指标
+| 直接收集 kube-api-server 暴露的指标
 |===
 
-* RKE2 集群默认部署 ingress-nginx，并将其视为内部 Kubernetes 组件。
+* 对于 RKE2 集群，Traefik 默认部署并被视为内部 Kubernetes 组件。
 
-=== 名词解释
+[#_terminology]
+=== 术语
 
-* *kube-scheduler*：内部 Kubernetes 组件，该组件使用 pod 规范中的信息来决定在哪个节点上运行 pod。
-* *kube-controller-manager*：负责节点管理（检测节点是否失败）、pod 复制，以及端点创建的内部 Kubernetes 组件。
-* *etcd*：Kubernetes 内部组件，它是 Kubernetes 用于持久存储所有集群信息的分布式键/值存储。
-* *kube-proxy*：内部 Kubernetes 组件，用于监控 API server 的 pod/service 更改以保持网络最新状态。
-* *kubelet*：内部 Kubernetes 组件，用于为 pod 监视节点上的 API server 并确保这些 pod 能运行。
-* *ingress-nginx*：用于 Kubernetes 的 Ingress controller，使用 NGINX 作为反向代理和负载均衡器。
-* *coreDns/kubeDns*：负责 DNS 的内部 Kubernetes 组件。
-* *kube-api-server*：负责为其他 master 组件公开 API 的主要内部 Kubernetes 组件。
+* *kube-scheduler:*内部 Kubernetes 组件，使用 pod 规格中的信息来决定在哪个节点上运行 pod。
+* *kube-controller-manager:*内部 Kubernetes 组件，负责节点管理（检测节点是否失败）、 pod 复制和端点创建。
+* *etcd:*Kubernetes 内部组件，是分布式键值存储，Kubernetes 用于持久存储所有集群信息。
+* *kube-proxy:*Kubernetes 内部组件，监视 API 服务器以获取 pod/service 的变化，以保持网络的最新状态。
+* *kubelet:*Kubernetes 的内部组件，负责监视 API 服务器上节点的 pod，并确保它们正在运行。
+* *Traefik:*Kubernetes 的 Ingress 控制器，可以用作反向代理和负载均衡器。
+* *coreDns/kubeDns:*负责DNS的Kubernetes内部组件。
+* *kube-api-server:*主要的Kubernetes内部组件，负责为其他主组件暴露API。

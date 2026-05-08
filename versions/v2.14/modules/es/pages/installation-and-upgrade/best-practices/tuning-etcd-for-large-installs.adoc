@@ -1,0 +1,45 @@
+= Ajuste de etcd para grandes instalaciones
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-06
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/tune-etcd-for-large-installs.adoc 
+:product-path: installation-and-upgrade/best-practices/tuning-etcd-for-large-installs.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+Cuando se utiliza Rancher para gestionar {xref-install-reqs}[una gran infraestructura], se recomienda aumentar el espacio de claves para etcd, que por defecto es de 2 GB. La configuración máxima es de 8 GB y el host debe tener suficiente RAM para mantener todo el conjunto de datos en memoria. Al aumentar este valor, también se debe aumentar el tamaño del host. El tamaño del espacio de claves también se puede ajustar en instalaciones más pequeñas si se anticipa una alta tasa de cambios en los pods durante el intervalo de recolección de basura.
+
+El conjunto de datos de etcd se limpia automáticamente en un intervalo de cinco minutos por Kubernetes. Existen situaciones, por ejemplo, durante un despliegue inestable, en las que se pueden escribir suficientes eventos en etcd y borrarse antes de que la recolección de basura intervenga, provocando que el espacio de claves se llene. Si se observan `mvcc: database space exceeded` errores en los registros de etcd o en los registros del servidor API de Kubernetes, se debe considerar aumentar el tamaño del espacio de claves. Esto se puede lograr configurando el ajuste https://etcd.io/docs/v3.5/op-guide/maintenance/#space-quota[quota-backend-bytes] en los servidores etcd.
+
+[#_example_this_snippet_of_the_rke2_k3s_config_yaml_file_increases_the_keyspace_size_to_5gb]
+== Ejemplo: Este fragmento del archivo config.yaml de RKE2/K3s aumenta el tamaño del espacio de claves a 5 GB.
+
+[,yaml]
+.config.yaml de RKE2/K3s
+----
+etcd-arg:
+  - "quota-backend-bytes=5368709120"
+----
+
+[#_scaling_etcd_disk_performance]
+== Escalado del rendimiento del disco de etcd
+
+Puedes seguir las recomendaciones de https://etcd.io/docs/v3.5/tuning/#disk[la documentación de etcd] sobre cómo ajustar la prioridad del disco en el host.
+
+Además, para reducir la contención de IO en los discos para etcd, puedes usar un dispositivo dedicado para el directorio de datos y wal. Según las mejores prácticas de etcd, las configuraciones de matriz redundante de discos independientes en espejo son innecesarias porque etcd replica los datos entre los nodos del clúster. Puedes usar configuraciones de matriz redundante de discos independientes en striping para aumentar los IOPS disponibles.
+
+Para implementar esta solución en un clúster RKE2/K3s, los directorios `/var/lib/etcd/data` y `/var/lib/etcd/wal` necesitarán tener discos montados y formateados en el host subyacente. En la directiva `extra_args` del servicio `etcd`, debes incluir el directorio `wal_dir`. Sin especificar el `wal_dir`, el proceso etcd intentará manipular el `wal` subyacente con permisos insuficientes.
+
+[,yaml]
+.config.yaml de RKE2/K3s
+----
+etcd-arg:
+  - "data-dir=/var/lib/etcd/data"
+  - "wal-dir=/var/lib/etcd/wal"
+----

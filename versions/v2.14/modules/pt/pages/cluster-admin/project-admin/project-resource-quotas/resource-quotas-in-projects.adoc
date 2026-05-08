@@ -1,0 +1,78 @@
+= Como as cotas de recursos funcionam em {rancher-product-name} projetos
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-08
+:page-revdate: {revdate}
+:community-path: guias-de-instruções/guia-para-usuários-avançados/gerenciar-projetos/gerenciar-cotas-de-recursos-do-projeto/sobre-cotas-de-recursos-do-projeto.adoc 
+:product-path: cluster-admin/project-admin/project-resource-quotas/resource-quotas-in-projects.adoc
+
+As cotas de recursos no Rancher incluem a mesma funcionalidade da https://kubernetes.io/docs/concepts/policy/resource-quotas/[versão nativa do Kubernetes]. No entanto, no Rancher, as cotas de recursos foram ampliadas para que você possa aplicá-las a projetos.
+
+Em uma implantação padrão do Kubernetes, as cotas de recursos são aplicadas a namespaces individuais. No entanto, você não pode aplicar a cota aos seus namespaces simultaneamente com uma única ação. Em vez disso, a cota de recursos deve ser aplicada várias vezes.
+
+No diagrama a seguir, um administrador do Kubernetes está tentando impor uma cota de recursos sem o Rancher. O administrador deseja aplicar uma cota de recursos que define o mesmo limite de CPU e memória para cada namespace em seu cluster (`Namespace 1-4`). No entanto, na versão base do Kubernetes, cada namespace requer uma cota de recursos única. O administrador tem que criar quatro cotas de recursos diferentes que têm as mesmas especificações configuradas (`Resource Quota 1-4`) e aplicá-las individualmente.
+
+^Kubernetes Base: Cotas de Recursos Únicas Sendo Aplicadas a Cada Namespace^
+
+image::kubernetes-resource-quota.svg[Native Kubernetes Resource Quota Implementation]
+
+As cotas de recursos são um pouco diferentes no Rancher. No Rancher, você aplica uma cota de recursos ao projeto, e então a cota se propaga para cada namespace, após o que o Kubernetes impõe seus limites usando a versão nativa das cotas de recursos. Se você quiser mudar a cota para um namespace específico, pode substituí-la.
+
+A cota de recursos inclui dois limites, que você define ao criar ou editar um projeto:
++++<a id="project-limits">++++++</a>+++
+
+* *Limites do Projeto:*
++
+Este conjunto de valores configura um limite total para cada recurso especificado compartilhado entre todos os namespaces no projeto.
+
+* *Limites Padrão do Namespace:*
++
+Este conjunto de valores configura o limite de cota padrão disponível para cada namespace para cada recurso especificado.
+  Quando um namespace é criado no projeto sem substituições, esse limite é automaticamente vinculado ao namespace e aplicado.
+
+No diagrama a seguir, um administrador do Rancher deseja aplicar uma cota de recursos que define o mesmo limite de CPU e memória para cada namespace em seu projeto (`Namespace 1-4`). No entanto, no Rancher, o administrador pode definir uma cota de recursos para o projeto (`Project Resource Quota`) em vez de namespaces individuais. Essa cota inclui limites de recursos tanto para todo o projeto (`Project Limit`) quanto para namespaces individuais (`Namespace Default Limit`). O Rancher então propaga as `Namespace Default Limit` cotas para cada namespace (`Namespace Resource Quota`) quando são criados.
+
+^Rancher: Cotas de Recursos Propagando para Cada Namespace^
+
+image::rancher-resource-quota.png[Implementação de Cota de Recursos do Rancher]
+
+Vamos destacar algumas funcionalidades mais sutis para namespaces criados *_dentro_* da interface do Rancher. Se uma cota for excluída no nível do projeto, ela também será removida de todos os namespaces contidos dentro desse projeto, apesar de quaisquer substituições que possam existir. Além disso, atualizar um limite padrão de namespace existente para uma cota no nível do projeto não resultará na propagação desse valor para namespaces existentes no projeto; o valor atualizado será aplicado apenas a namespaces recém-criados nesse projeto. Para atualizar um limite padrão de namespace para namespaces existentes, você pode excluir e, em seguida, recriar a cota no nível do projeto com o novo valor padrão. Isso resultará na aplicação do novo valor padrão a todos os namespaces existentes no projeto.
+
+Antes de criar um namespace em um projeto, o Rancher compara as quantidades de recursos disponíveis do projeto e os recursos solicitados, independentemente de virem dos limites padrão ou substituídos.
+Se os recursos solicitados excederem a capacidade restante no projeto para esses recursos, o Rancher atribuirá ao namespace a capacidade restante para esse recurso.
+
+No entanto, este não é o caso com namespaces criados *_fora_* da interface do Rancher. Para namespaces criados via `kubectl`, o Rancher atribuirá uma cota de recursos que tem um valor *zero* para qualquer recurso que solicitou mais capacidade do que o que resta no projeto.
+
+Para criar um namespace em um projeto existente via `kubectl`, use a anotação `field.cattle.io/projectId`. Para substituir o limite de cota solicitado padrão, use a anotação `field.cattle.io/resourceQuota`.
+
+Observe que o Rancher só substituirá os limites para recursos que estão definidos na cota do projeto.
+
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    field.cattle.io/projectId: [your-cluster-ID]:[your-project-ID]
+    field.cattle.io/resourceQuota: '{"limit":{"limitsCpu":"100m", "configMaps": "50"}}'
+  name: my-ns
+----
+
+Neste exemplo, se a cota do projeto não incluir configMaps em sua lista de recursos, o Rancher ignorará `configMaps` nesta substituição.
+
+Os usuários são aconselhados a usar o mapa `extended` para configurar limites personalizados adicionais para recursos que não estão integrados ao projeto, para todos os namespaces do projeto, ou a criar objetos `ResourceQuota` dedicados em namespaces específicos para o mesmo, apenas para esses namespaces. As cotas de recursos são objetos nativos do Kubernetes, e o Rancher ignorará cotas definidas pelo usuário em namespaces pertencentes a um projeto com cota, dando assim mais controle aos usuários.
+
+A tabela a seguir explica as principais diferenças entre os dois tipos de cota.
+
+|===
+| Cotas de Recursos do Rancher | Kubernetes Resource Quotas
+
+| Aplica-se a projetos e namespaces.
+| Aplica-se apenas a namespaces.
+
+| Cria um pool de recursos para todos os namespaces em um projeto.
+| Aplica limites de recursos estáticos a namespaces individuais.
+
+| Aplica cotas de recursos a namespaces por meio de propagação.
+| Aplica-se apenas ao namespace designado.
+|===

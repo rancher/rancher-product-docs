@@ -1,36 +1,76 @@
-= {rancher-product-name} Agent
+= {rancher-product-name} 代理
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+endif::[]
+:revdate: 2026-05-05
 :page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/launch-kubernetes-with-rancher/about-rancher-agents.adoc 
+:product-path: cluster-deployment/about-rancher-agents.adoc
+ifeval::["{build-type}" != "community"]
+:xref-hosted-k8s-clusters: xref:cluster-deployment/hosted-kubernetes/hosted-kubernetes.adoc
+:xref-rancher-architecture: xref:about-rancher/architecture/architecture.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-hosted-k8s-clusters: xref:如何指南/新用户指南/在Rancher中设置Kubernetes集群/从托管的Kubernetes提供商处设置集群/index.adoc
+:xref-rancher-architecture: xref:reference-guides/rancher-manager-architecture/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
 
-Rancher 管理的集群上部署了两种不同的 Agent 资源：
+在 Rancher 管理的集群中部署了两种不同的代理资源：
 
 * <<_cattle_cluster_agent,cattle-cluster-agent>>
-* <<_cattle_node_agent,cattle-node-agent>>
+* <<_rancher_system_agent,rancher-system-agent>>
 
-有关 Rancher Server 如何配置集群并与集群通信的概述，请参阅xref:about-rancher/architecture/architecture.adoc[产品架构]。
+有关 Rancher 服务器如何配置集群及其与集群的通信的概念概述，请参阅 {xref-rancher-architecture}[架构]。
 
+[#_cattle_cluster_agent]
 == cattle-cluster-agent
 
-`cattle-cluster-agent` 用于连接 xref:cluster-deployment/launch-kubernetes-with-rancher.adoc[Rancher 启动的 Kubernetes] 集群的 Kubernetes API。`cattle-cluster-agent` 使用 Deployment 资源进行部署。
+`cattle-cluster-agent` 用于连接到 \link:[Rancher 启动的 Kubernetes] 集群的 Kubernetes API。`cattle-cluster-agent` 是使用部署资源部署的。
 
-== cattle-node-agent
+[#_rancher_system_agent]
+== rancher-system-agent
 
-`cattle-node-agent` 用于在执行集群操作时与 xref:cluster-deployment/launch-kubernetes-with-rancher.adoc[Rancher 启动的 Kubernetes] 集群中的节点进行交互。集群操作包括升级 Kubernetes 版本和创建/恢复 etcd 快照。`cattle-node-agent` 使用 DaemonSet 资源进行部署，以确保能在每个节点上运行。当 `cattle-cluster-agent` 不可用时，`cattle-node-agent` 可以作为备选方案，用来连接 xref:cluster-deployment/launch-kubernetes-with-rancher.adoc[Rancher 启动的 Kubernetes] 集群的 Kubernetes API。
+`rancher-system-agent` 是一个守护程序，用于在执行集群生命周期操作时管理 Rancher 配置的 RKE2/K3s Kubernetes 集群中的节点。集群操作的示例包括升级 Kubernetes 版本和创建/恢复 etcd 快照。`rancher-system-agent` 旨在将计划应用于 Rancher 系统，并可以支持本地和远程计划。
 
+[#_requests]
+== 请求
+
+`cattle-cluster-agent` pod 不定义默认的处理器和内存请求值。作为基线，我们建议将处理器请求设置为 `50m`，内存请求设置为 `100Mi`。然而，重要的是您要适当地评估您的用例，并为您的集群分配正确的资源以满足您的需求。
+
+要通过 UI 配置 RKE2/K3s 集群的请求值：
+
+. 当您 {xref-launch-k8s-with-rancher}[创建] 或编辑现有集群时，请转到 *集群配置*。
+. 选择 *集群代理* 子部分。
+. 根据需要使用 *处理器保留* 和 *内存保留* 字段配置您的请求值。
+
+如果您更喜欢通过 YAML 配置，请将以下代码片段添加到您的 RKE2/K3s 配置文件中：
+
+[source,yaml]
+----
+spec:
+  clusterAgentDeploymentCustomization:
+    overrideResourceRequirements:
+      requests:
+        cpu: 50m
+        memory: 100Mi
+----
+
+[#_scheduling_rules]
 == 调度规则
 
-`cattle-cluster-agent` 使用一组固定的容忍度，或基于应用于 control plane 节点的污点动态添加的容忍度。这种结构允许link:https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions[基于污点进行驱逐]为 `cattle-cluster-agent` 正常工作。
+`cattle-cluster-agent` 使用固定的容忍设置，或根据应用于控制平面节点的污点动态添加的容忍。该结构允许 https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions[基于污点的驱逐] 正常应用于 `cattle-cluster-agent`。
 
-如果集群中存在 control plane 节点，则默认容忍度将替换为与 control plane 节点的污点匹配的容忍度。默认的容忍度如下。
+如果集群中存在控制平面节点，默认的容忍将被与控制平面节点上的污点匹配的容忍替换。默认的容忍设置如下所述。
 
 |===
-| 组件 | nodeAffinity nodeSelectorTerms | nodeSelector | 容忍度
+| 组件 | 节点亲和性节点选择器条件 | nodeSelector | 容忍
 
 | `cattle-cluster-agent`
 | `beta.kubernetes.io/os:NotIn:windows`
 | none
-| *注意*：这些是默认容忍度，并将替换为与 controlplane 节点的污点匹配的容忍度。 +
+| *注意：*这些是默认的容忍设置，将被与应用于控制平面节点的污点匹配的容忍设置替换。 +
  +
 `effect:NoSchedule` +
 `key:node-role.kubernetes.io/controlplane` +
@@ -44,20 +84,16 @@ Rancher 管理的集群上部署了两种不同的 Agent 资源：
 `key:node-role.kubernetes.io/master` +
 `operator:Exists`
 
-| `cattle-node-agent`
-| `beta.kubernetes.io/os:NotIn:windows`
-| none
-| `operator:Exists`
 |===
 
-`cattle-cluster-agent` Deployment 使用 `preferredDuringSchedulingIgnoredDuringExecution` 的首选调度规则，倾向于在具有 `controlplane` 节点的节点上进行调度。当集群中没有可见的 controlplane 节点时（通常是使用xref:cluster-deployment/hosted-kubernetes/hosted-kubernetes.adoc[提供商托管的 Kubernetes 的集群]），你可以在节点上添加 `cattle.io/cluster-agent=true` 标签，从而优先将 `cattle-cluster-agent` pod 调度到该节点。
+`cattle-cluster-agent` 部署采用了 `preferredDuringSchedulingIgnoredDuringExecution` 的优先调度规则，倾向于调度到带有 `controlplane` 标签的节点上。当集群中没有可见的控制平面节点时（通常在使用 {xref-hosted-k8s-clusters}[来自托管 Kubernetes 提供商的集群] 时是这种情况），您可以在节点上添加标签 `cattle.io/cluster-agent=true`，以优先将 `cattle-cluster-agent` pod 调度到该节点。
 
-有关调度规则的更多信息，请参阅 https://kubernetes.io/docs/concepts/configuration/assign-pod-node/[Kubernetes：将 Pod 分配给节点]。
+请参见 https://kubernetes.io/docs/concepts/configuration/assign-pod-node/[Kubernetes: 将 Pods 分配到节点] 以获取有关调度规则的更多信息。
 
 `preferredDuringSchedulingIgnoredDuringExecution` 配置如下表所示：
 
 |===
-| 权重 | 表达式
+| 权重 | 表达式：
 
 | 100
 | `node-role.kubernetes.io/controlplane:In:"true"`
@@ -68,6 +104,6 @@ Rancher 管理的集群上部署了两种不同的 Agent 资源：
 | 100
 | `node-role.kubernetes.io/master:In:"true"`
 
-| 1
+| 1 
 | `cattle.io/cluster-agent:In:"true"`
 |===

@@ -1,0 +1,262 @@
+= Criando um cluster Amazon EC2
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-19
+:page-revdate: {revdate}
+:community-path: procedimentos/guias-para-novos-usuários/lançar-kubernetes-com-rancher/utilizar-novos-nós-em-um-provedor-infra/criar-um-cluster-amazon-ec2.adoc 
+:product-path: cluster-deployment/infra-providers/aws/aws.adoc
+:description: Aprenda os pré-requisitos e os passos necessários para criar um cluster Amazon EC2 usando o Rancher
+ifeval::["{build-type}" != "community"]
+:url-rke2-landing-page: https://documentation.suse.com/cloudnative/rke2/
+:url-k3s-landing-page: https://documentation.suse.com/cloudnative/k3s/
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+:xref-aws-machine-configuration: xref:cluster-deployment/infra-providers/aws/machine-configuration.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-landing-page: https://docs.rke2.io/
+:url-k3s-landing-page: https://docs.k3s.io/
+:xref-rke2-config: xref:guias-de-referência/configuração-do-cluster/configuração-do-servidor-rancher/configuração-do-cluster-rke2.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:procedimentos/guias-para-novos-usuários/lançar-kubernetes-com-rancher/utilizar-novos-nós-em-um-provedor-infra/index.adoc
+:xref-set-up-cloud-providers: xref:guias-de-procedimentos/guias-para-novos-usuários/clusters-kubernetes-no-rancher/configurar-provedores-de-nuvem/index.adoc
+:xref-k3s-config: xref:guias-de-referência/configuração-do-cluster/configuração-do-servidor-rancher/configuração-do-cluster-k3s.adoc
+:xref-aws-machine-configuration: xref:guias-de-referência/configuração-do-cluster/configuração-do-cluster-downstream/configuração-da-máquina/amazon-ec2.adoc
+endif::[]
+
+Nesta seção, você aprenderá como implantar um {url-rke2-landing-page}[RKE2] ou {url-k3s-landing-page}[K3s] cluster Kubernetes na Amazon EC2.
+
+Primeiro, você configura suas credenciais de nuvem EC2 no Rancher.
+
+Em seguida, você cria um cluster EC2 no Rancher e, ao configurar o novo cluster, define os pools de máquinas para ele. Cada pool de máquinas tem um papel Kubernetes de etcd, controlplane ou worker. O Rancher instala o Kubernetes nos novos nós e configura cada nó com o papel Kubernetes definido pelo pool de máquinas.
+
+[#_prerequisites]
+== Pré-requisitos
+
+* *Chave de Acesso e Chave Secreta da AWS EC2* que serão usadas para criar as instâncias. Veja https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html#Using_CreateAccessKey[Documentação da Amazon: Criando Chaves de Acesso] como criar uma Chave de Acesso e Chave Secreta.
+* *Política IAM criada* para adicionar ao usuário da Chave de Acesso e Chave Secreta. Veja https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create.html#access_policies_create-start[Documentação da Amazon: Criando Políticas IAM (Console)] como criar uma política IAM. Veja nossas três políticas JSON de exemplo abaixo:
+ ** <<_example_iam_policy,Exemplo de Política IAM>>
+ ** <<_example_iam_policy_with_passrole,Exemplo de Política IAM com PassRole>> (necessário se você quiser usar {xref-set-up-cloud-providers}[Provedor de Nuvem Kubernetes] ou quiser passar um Perfil IAM para uma instância)
+ ** <<_example_iam_policy_to_allow_encrypted_ebs_volumes,Exemplo de Política IAM para permitir volumes EBS criptografados>>
+* *Política IAM adicionada como Permissão* ao usuário. Veja https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users_change-permissions.html#users_change_permissions-add-console[Documentação da Amazon: Adicionando Permissões a um Usuário (Console)] como anexá-la a um usuário.
+* *Sub-rede somente IPv4, somente IPv6 ou dual-stack e/ou VPC* onde os nós podem ser provisionados e atribuídos endereços IPv4 e/ou IPv6. Veja https://docs.aws.amazon.com/vpc/latest/userguide/vpc-migrate-ipv6.html[Documentação da Amazon: suporte a IPv6 para sua VPC].
+
+[#_creating_an_ec2_cluster]
+== Criando um cluster EC2
+
+Os passos para criar um cluster diferem com base na sua versão do Rancher.
+
+[#_create_your_cloud_credentials]
+=== Crie suas credenciais de nuvem
+
+Se você já possui um conjunto de credenciais de nuvem para usar, pule esta seção.
+
+. Clique em *☰ > Gerenciamento de Cluster*.
+. Clique em *Credenciais de Nuvem*.
+. Clique em *Criar*.
+. Clique em *Amazon*.
+. Digite um nome para a credencial de nuvem.
+. No campo *Região Padrão*, selecione a região da AWS onde seus nós do cluster estarão localizados.
+. Digite sua *Chave de Acesso* e *Chave Secreta* da AWS EC2.
+. Clique em *Criar*.
+
+*Resultado:* Você criou as credenciais de nuvem que são usadas para provisionar nós em seu cluster.
+
+[#_create_your_cluster]
+=== Crie seu cluster
+
+. Clique em *☰ > Gerenciamento de Cluster*.
+. Na página *Clusters*, clique em *Criar*.
+. Ative o interruptor para *RKE2/K3s*.
+. Click *Amazon EC2*.
+. Selecione uma *Credencial de Nuvem*, se houver mais de uma. Caso contrário, está pré-selecionada.
+. Digite um *Nome do Cluster*.
+. Crie um pool de máquinas para cada função do Kubernetes. Consulte as {xref-infra-providers}#_funções_dos_nós[melhores práticas] para recomendações sobre atribuições e contagens de funções.
+ .. Para cada pool de máquinas, defina a configuração da máquina. Consulte {xref-aws-machine-configuration}[a referência de configuração da máquina EC2] para informações sobre opções de configuração.
+. Use a *Configuração do Cluster* para escolher a versão do Kubernetes a ser instalada, qual provedor de rede usar e se deseja habilitar a isolação de rede do projeto. Para ajuda na configuração do cluster, consulte as referências de configuração do cluster {xref-rke2-config}[RKE2] e {xref-k3s-config}[K3s].
+. Use *Funções de Membro* para configurar a autorização de usuários para o cluster. Clique em *Adicionar Membro* para adicionar usuários que podem acessar o cluster. Use o menu suspenso *Função* para definir permissões para cada usuário.
+. Clique em *Criar*.
+
+*Resultado:*
+
+Seu cluster foi criado e atribuído ao estado de *Provisionamento*. O Rancher está configurando seu cluster.
+
+Você pode acessar seu cluster após seu estado ser atualizado para *Ativo*.
+
+Clusters *Ativos* são atribuídos a dois projetos:
+
+* `Default`, contendo o namespace `default`
+* `System`, contendo os namespaces `cattle-system`, `traefik`, `kube-public` e `kube-system`
+
+[#_optional_next_steps]
+=== Próximos passos opcionais.
+
+Após criar seu cluster, você pode acessá-lo através da interface do Rancher. Como uma boa prática, recomendamos configurar essas maneiras alternativas de acessar seu cluster:
+
+* *Acesse seu cluster com a CLI kubectl:* Siga {xref-access-cluster-kubectl}#_acessando_clusters_com_kubectl_da_sua_estação_de_trabalho[estas etapas] para acessar clusters com kubectl na sua estação de trabalho. Neste caso, você será autenticado através do proxy de autenticação do servidor Rancher, e então o Rancher o conectará ao cluster downstream. Este método permite que você gerencie o cluster sem a interface do Rancher.
+* *Acesse seu cluster com a CLI kubectl, usando o endpoint do cluster autorizado:* Siga {xref-access-cluster-kubectl}#_autenticando_diretamente_com_um_cluster_downstream[estas etapas] para acessar seu cluster com kubectl diretamente, sem autenticar através do Rancher. Recomendamos configurar este método alternativo para acessar seu cluster, para que, caso você não consiga se conectar ao Rancher, ainda possa acessar o cluster.
+
+[#_iam_policies]
+== Políticas IAM
+
+[#_example_iam_policy]
+=== Exemplo de Política IAM
+
+[,json]
+----
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:Describe*",
+                "ec2:ImportKeyPair",
+                "ec2:CreateKeyPair",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteKeyPair",
+                "ec2:ModifyInstanceMetadataOptions"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "VisualEditor1",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:RunInstances"
+            ],
+            "Resource": [
+                "arn:aws:ec2:REGION::image/ami-*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:placement-group/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:volume/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:subnet/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:key-pair/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:network-interface/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:security-group/*"
+            ]
+        },
+        {
+            "Sid": "VisualEditor2",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:RebootInstances",
+                "ec2:TerminateInstances",
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*"
+        }
+    ]
+}
+----
+
+[#_example_iam_policy_with_passrole]
+=== Exemplo de Política IAM com PassRole
+
+[,json]
+----
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:Describe*",
+                "ec2:ImportKeyPair",
+                "ec2:CreateKeyPair",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteKeyPair",
+                "ec2:ModifyInstanceMetadataOptions"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "VisualEditor1",
+            "Effect": "Allow",
+            "Action": [
+                "iam:PassRole",
+                "ec2:RunInstances"
+            ],
+            "Resource": [
+                "arn:aws:ec2:REGION::image/ami-*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:placement-group/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:volume/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:subnet/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:key-pair/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:network-interface/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:security-group/*",
+                "arn:aws:iam::AWS_ACCOUNT_ID:role/YOUR_ROLE_NAME"
+            ]
+        },
+        {
+            "Sid": "VisualEditor2",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:RebootInstances",
+                "ec2:TerminateInstances",
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*"
+        }
+    ]
+}
+----
+
+[#_example_iam_policy_to_allow_encrypted_ebs_volumes]
+=== Exemplo de Política IAM para permitir volumes EBS criptografados
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:Encrypt",
+        "kms:DescribeKey",
+        "kms:CreateGrant",
+        "ec2:DetachVolume",
+        "ec2:AttachVolume",
+        "ec2:DeleteSnapshot",
+        "ec2:DeleteTags",
+        "ec2:CreateTags",
+        "ec2:CreateVolume",
+        "ec2:DeleteVolume",
+        "ec2:CreateSnapshot"
+      ],
+      "Resource": [
+        "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:volume/*",
+        "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*",
+        "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:snapshot/*",
+        "arn:aws:kms:REGION:AWS_ACCOUNT_ID:key/KMS_KEY_ID"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeSnapshots"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+----

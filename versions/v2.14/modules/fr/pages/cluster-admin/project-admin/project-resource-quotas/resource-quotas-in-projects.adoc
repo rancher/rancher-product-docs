@@ -1,0 +1,78 @@
+= Comment fonctionnent les quotas de ressources dans {rancher-product-name} les projets
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-08
+:page-revdate: {revdate}
+:community-path: procédure-guides/guides-utilisateur-avancés/gestion-des-projets/gérer-les-quotas-de-ressources-des-projets/a-propos-des-quotas-de-ressources-des-projets.adoc 
+:product-path: cluster-admin/project-admin/project-resource-quotas/resource-quotas-in-projects.adoc
+
+Les quotas de ressources dans Rancher incluent la même fonctionnalité que la https://kubernetes.io/docs/concepts/policy/resource-quotas/[version native de Kubernetes]. Cependant, dans Rancher, les quotas de ressources ont été étendus afin que vous puissiez les appliquer aux projets.
+
+Dans un déploiement Kubernetes standard, les quotas de ressources sont appliqués à des espaces de noms individuels. Cependant, vous ne pouvez pas appliquer le quota à vos espaces de noms simultanément avec une seule action. Au lieu de cela, le quota de ressources doit être appliqué plusieurs fois.
+
+Dans le diagramme suivant, un administrateur Kubernetes essaie d'appliquer un quota de ressources sans Rancher. L'administrateur souhaite appliquer un quota de ressources qui fixe la même limite d'UC et de mémoire à chaque espace de noms de son cluster (`Namespace 1-4`). Cependant, dans la version de base de Kubernetes, chaque espace de noms nécessite un quota de ressources unique. L'administrateur doit créer quatre quotas de ressources différents ayant les mêmes spécifications configurées (`Resource Quota 1-4`) et les appliquer individuellement.
+
+^Kubernetes de base{nbsp}: Quotas de ressources uniques appliqués à chaque espace de noms^
+
+image::kubernetes-resource-quota.svg[Implémentation du quota de ressources Kubernetes natif]
+
+Les quotas de ressources sont un peu différents dans Rancher. Dans Rancher, vous appliquez un quota de ressources au projet, puis le quota se propage à chaque espace de noms, après quoi Kubernetes applique vos limites en utilisant la version native des quotas de ressources. Si vous souhaitez modifier le quota pour un espace de noms spécifique, vous pouvez le remplacer.
+
+Le quota de ressources comprend deux limites, que vous définissez lors de la création ou de la modification d'un projet{nbsp}:
++++<a id="project-limits">++++++</a>+++
+
+* *Limites du projet :*
++
+Cet ensemble de valeurs configure une limite totale pour chaque ressource spécifiée partagée entre tous les espaces de noms du projet.
+
+* *Limites par défaut de l'espace de noms :*
++
+Cet ensemble de valeurs configure la limite de quota par défaut disponible pour chaque espace de noms pour chaque ressource spécifiée.
+  Lorsqu'un espace de noms est créé dans le projet sans remplacements, cette limite est automatiquement liée à l'espace de noms et appliquée.
+
+Dans le diagramme suivant, un administrateur Rancher souhaite appliquer un quota de ressources qui fixe la même limite d'UC et de mémoire pour chaque espace de noms dans son projet (`Namespace 1-4`). Cependant, dans Rancher, l'administrateur peut définir un quota de ressources pour le projet (`Project Resource Quota`) plutôt que pour des espaces de noms individuels. Ce quota inclut des limites de ressources pour l'ensemble du projet (`Project Limit`) et pour les espaces de noms individuels (`Namespace Default Limit`). Rancher propage ensuite les `Namespace Default Limit` quotas à chaque espace de noms (`Namespace Resource Quota`) lors de leur création.
+
+^Rancher{nbsp}: Quotas de ressources se propageant à chaque espace de noms^
+
+image::rancher-resource-quota.png[Implémentation du quota de ressources Rancher]
+
+Mettons en avant quelques fonctionnalités plus nuancées pour les espaces de noms créés *_dans_* l'interface utilisateur de Rancher. Si un quota est supprimé au niveau du projet, il sera également supprimé de tous les espaces de noms contenus dans ce projet, malgré les remplacements qui peuvent exister. De plus, la mise à jour d'une limite par défaut d'espace de noms existante pour un quota au niveau du projet ne fera pas en sorte que cette valeur soit propagée aux espaces de noms existants dans le projet{nbsp}; la valeur mise à jour ne sera appliquée qu'aux nouveaux espaces de noms créés dans ce projet. Pour mettre à jour une limite par défaut d'espace de noms pour des espaces de noms existants, vous pouvez supprimer et recréer ensuite le quota au niveau du projet avec la nouvelle valeur par défaut. Cela entraînera l'application de la nouvelle valeur par défaut à tous les espaces de noms existants dans le projet.
+
+Avant de créer un espace de noms dans un projet, Rancher compare les montants des ressources disponibles du projet et des ressources demandées, peu importe qu'elles proviennent des limites par défaut ou des remplacements.
+Si les ressources demandées dépassent la capacité restante dans le projet pour ces ressources, Rancher attribuera à l'espace de noms la capacité restante pour cette ressource.
+
+Cependant, ce n'est pas le cas pour les espaces de noms créés *_en dehors_* de l'interface utilisateur de Rancher. Pour les espaces de noms créés via `kubectl`, Rancher attribuera un quota de ressources qui a un montant de *zéro* pour toute ressource ayant demandé plus de capacité que ce qui reste dans le projet.
+
+Pour créer un espace de noms dans un projet existant via `kubectl`, utilisez l'annotation `field.cattle.io/projectId`. Pour remplacer la limite de quota demandée par défaut, utilisez l'annotation `field.cattle.io/resourceQuota`.
+
+Notez que Rancher ne remplacera les limites que pour les ressources qui sont définies sur le quota du projet.
+
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    field.cattle.io/projectId: [your-cluster-ID]:[your-project-ID]
+    field.cattle.io/resourceQuota: '{"limit":{"limitsCpu":"100m", "configMaps": "50"}}'
+  name: my-ns
+----
+
+Dans cet exemple, si le quota du projet n'inclut pas les configMaps dans sa liste de ressources, alors Rancher ignorera `configMaps` dans ce remplacement.
+
+Il est conseillé aux utilisateurs d'utiliser soit la carte `extended` pour configurer des limites personnalisées supplémentaires pour les ressources non intégrées dans le projet, pour tous les espaces de noms du projet, soit de créer des objets `ResourceQuota` dédiés dans des espaces de noms spécifiques pour cela, uniquement pour ces espaces de noms. Les quotas de ressources sont des objets Kubernetes natifs, et Rancher ignorera les quotas définis par l'utilisateur dans les espaces de noms appartenant à un projet avec un quota, offrant ainsi aux utilisateurs un meilleur contrôle.
+
+Le tableau suivant explique les principales différences entre les deux types de quotas.
+
+|===
+| Quotas de ressources Rancher | Quotas de ressources Kubernetes
+
+| S'applique aux projets et aux espaces de noms.
+| S'applique uniquement aux espaces de noms.
+
+| Crée un pool de ressources pour tous les espaces de noms dans un projet.
+| Applique des limites de ressources statiques aux espaces de noms individuels.
+
+| Applique des quotas de ressources aux espaces de noms par propagation.
+| S'applique uniquement à l'espace de noms assigné.
+|===

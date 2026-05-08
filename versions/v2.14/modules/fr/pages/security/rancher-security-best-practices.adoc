@@ -1,0 +1,172 @@
+= {rancher-product-name} Meilleures pratiques de sécurité
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-15
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-security/rancher-security-best-practices.adoc 
+:product-path: security/rancher-security-best-practices.adoc
+ifeval::["{build-type}" != "community"]
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+:xref-project-resource-quotas: xref:cluster-admin/project-admin/project-resource-quotas/project-resource-quotas.adoc
+:xref-users-and-groups: xref:rancher-admin/users/authn-and-authz/manage-users-and-groups.adoc
+:xref-l4-l7-lb: xref:cluster-admin/kubernetes-resources/load-balancer-and-ingress-controller/layer-4-and-layer-7-load-balancing.adoc
+:xref-bootstrap-password: xref:installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+:xref-project-resource-quotas: xref:how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/index.adoc
+:xref-users-and-groups: xref:procédure/guide-utilisateur-nouveau/autorisations-d-authentification-et-configuration-globale/configuration-d-authentification/gerer-utilisateurs-et-groupes.adoc
+:xref-l4-l7-lb: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/load-balancer-and-ingress-controller/layer-4-and-layer-7-load-balancing.adoc
+:xref-bootstrap-password: xref:getting-started/installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+
+[#_restrict_public_access_to_version_and_rancherversion_path]
+== Restreindre l'accès public aux chemins /version et /rancherversion
+
+L'instance Rancher en amont (locale) fournit des informations sur la version de Rancher qu'elle exécute et la version de Go qui a été utilisée pour la construire. Ces informations sont accessibles via le chemin `/version`, qui est utilisé pour des tâches telles que l'automatisation des mises à jour de version ou la confirmation qu'un déploiement a réussi. L'instance en amont fournit également des informations sur la version de Rancher accessibles via le chemin `/rancherversion`.
+
+Les adversaires peuvent abuser de ces informations pour identifier la version de Rancher en cours d'exécution et la croiser avec des bogues potentiels à exploiter. Si votre instance Rancher en amont est disponible publiquement sur le web, utilisez une passerelle de périmètre de sécurité de couche 7 pour bloquer `/version` et `/rancherversion`.
+
+Voir https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/05-Enumerate_Infrastructure_and_Application_Admin_Interfaces.html[OWASP Web Application Security Testing - Énumérer les interfaces administratives d'infrastructure et d'application] pour plus d'informations sur la protection de votre serveur.
+
+[#_session_management]
+== Gestion de session
+
+Certains environnements peuvent nécessiter des contrôles de sécurité supplémentaires pour la gestion des sessions. Par exemple, vous pouvez vouloir limiter le nombre de sessions actives simultanées des utilisateurs ou restreindre les géolocalisations à partir desquelles ces sessions peuvent être initiées. De telles fonctionnalités ne sont pas prises en charge par Rancher par défaut.
+
+Si vous avez besoin de telles fonctionnalités, combinez les passerelles de périmètre de sécurité de couche 7 avec {xref-authn-authz}#_external_vs_local_authentication[les fournisseurs d'authentification externes].
+
+[#_use_external_load_balancers_to_protect_vulnerable_ports]
+== Utilisez des équilibreurs de charge externes pour protéger les ports vulnérables
+
+Vous devez protéger les ports suivants derrière un {xref-l4-l7-lb}#_layer_4_load_balancer[équilibreur de charge externe] qui a le déchargement SSL activé{nbsp}:
+
+* *K3s:* Port 6443, utilisé par l'API Kubernetes.
+* *RKE2:* Port 6443, utilisé par l'API Kubernetes, et port 9345, utilisé pour l'enregistrement des nœuds.
+
+Ces ports ont des certificats TLS SAN qui listent les adresses IP publiques des nœuds. Un attaquant pourrait utiliser ces informations pour obtenir un accès non autorisé ou surveiller l'activité sur le cluster. Protéger ces ports aide à atténuer le risque que les adresses IP publiques des nœuds soient divulguées à des attaquants potentiels.
+
+[#_rancher_username_policy]
+=== Stratégie de nom d'utilisateur Rancher
+
+Par défaut, Kubernetes ne fournit pas de mécanismes d'application pour les stratégies de nom d'utilisateur de base. Dans Rancher, cela signifie que toute application des formats de nom d'utilisateur, des conventions de nommage ou des stratégies de base est censée être gérée par les stratégies du fournisseur d'identité externe, si de telles stratégies existent.
+
+Dans Rancher, `admin` est le nom d'utilisateur par défaut pour l'utilisateur Administrateur, comme souligné {xref-bootstrap-password}[ici]
+
+Exemples de stratégies de base potentielles incluent{nbsp}:
+
+* Exiger que les noms d'utilisateur suivent une convention organisationnelle (par exemple, `firstname.lastname`)
+* Appliquer des exigences de longueur minimale ou maximale
+* Interdire certains caractères spéciaux
+* Prévenir l'usurpation d'identité en interdisant les noms réservés (par exemple, `admin`, `root`)
+
+Sans ces contrôles au niveau du fournisseur d'identité, il existe un risque de pratiques de nom d'utilisateur incohérentes ou non sécurisées, ce qui peut compliquer les audits d'accès et entraîner des tentatives d'escalade de privilèges.
+
+[IMPORTANT]
+====
+Rancher applique actuellement uniquement une {xref-users-and-groups}#_longueur_minimale_de_mot_de_passe[longueur minimale de mot de passe].
+====
+
+*Recommandation:* Nous conseillons fortement aux clients{nbsp}:
+
+* De revoir et de configurer les stratégies de nom d'utilisateur de base directement dans leurs fournisseurs d'identité externes (par exemple, LDAP, Active Directory, SAML ou OIDC).
+* De s'assurer que ces stratégies sont alignées avec les exigences de sécurité et de conformité de l'organisation.
+* D'auditer régulièrement les comptes utilisateurs pour détecter les incohérences de nommage ou les violations de stratégie.
+
+Pour plus d'informations, reportez-vous aux documents suivants :
+
+* https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html[Feuille de triche OWASP{nbsp}: Authentification]
+* https://owasp.org/www-project-top-ten/2017/A2_2017-Broken_Authentication[Gestion des identités OWASP]
+
+[#_waf_rules]
+=== Règles WAF
+
+Rancher est conçu pour prendre en charge un large éventail de scénarios de déploiement, y compris des environnements où les clients peuvent automatiser de manière programmatique la création ou le provisionnement d'un grand nombre de clusters. Imposer des limites strictes au niveau de l'application au sein de Rancher pourrait interférer avec des charges de travail légitimes nécessitant une mise à l'échelle dynamique.
+
+Par exemple :
+
+* Les pipelines CI/CD peuvent créer et détruire des clusters fréquemment.
+* Les portails en libre-service pourraient provisionner des clusters à la demande pour les développeurs.
+* Les environnements de test peuvent générer un volume élevé d'appels API.
+
+*Risque:* Sans une limitation de taux appropriée, des adversaires pourraient exploiter des points de terminaison non authentifiés ou authentifiés pour{nbsp}:
+
+* Épuiser les ressources (Déni de Service).
+* Augmenter les coûts de stockage.
+* Dégrader les performances pour les utilisateurs légitimes.
+
+*Recommandation:* La manière la plus efficace de réduire ce risque est de mettre en œuvre une limitation de taux et une protection contre les abus au niveau de l'infrastructure ou du pare-feu d'application Web (WAF). Cette approche permet d'ajuster les seuils en fonction de l'utilisation et des caractéristiques de mise à l'échelle attendues pour chaque environnement. Quelques exemples de contrôles peuvent être{nbsp}:
+
+* Configurer un pare-feu d'application Web ou une passerelle API pour appliquer des limites de taux sur des opérations sensibles, telles que la création et le provisionnement de clusters.
+* Définir des seuils basés sur les attentes de charge de travail de base (par exemple, nombre maximal de requêtes par minute par client).
+* Surveiller les journaux et alerter sur les anomalies pour détecter d'éventuels abus.
+* Appliquer un quota de ressources, qui est une fonctionnalité de Rancher limitant les ressources disponibles pour un projet ou un espace de noms.
+
+Pour plus d'informations, reportez-vous aux documents suivants :
+
+* {xref-project-resource-quotas}[Quotas de ressources de projet]
+* https://owasp.org/API-Security/editions/2023/en/0xa4-lack-of-resources-rate-limiting/[OWASP API Security Top 10 - API4:2019 - Manque de ressources et limitation de taux]
+* https://cheatsheetseries.owasp.org/cheatsheets/Rate_Limiting_Cheat_Sheet.html[Feuille de triche OWASP{nbsp}: Limitation de taux]
+
+[#_rancher_username_policy_1]
+=== Stratégie de nom d'utilisateur Rancher
+
+Par défaut, Kubernetes ne fournit pas de mécanismes d'application pour les stratégies de nom d'utilisateur de base. Dans Rancher, cela signifie que toute application des formats de nom d'utilisateur, des conventions de nommage ou des stratégies de base est censée être gérée par les stratégies du fournisseur d'identité externe, si de telles stratégies existent.
+
+Dans Rancher, `admin` est le nom d'utilisateur par défaut pour l'utilisateur Administrateur, comme souligné {xref-bootstrap-password}[ici]
+
+Exemples de stratégies de base potentielles incluent{nbsp}:
+
+* Exiger que les noms d'utilisateur suivent une convention organisationnelle (par exemple, `firstname.lastname`)
+* Appliquer des exigences de longueur minimale ou maximale
+* Interdire certains caractères spéciaux
+* Prévenir l'usurpation d'identité en interdisant les noms réservés (par exemple, `admin`, `root`)
+
+Sans ces contrôles au niveau du fournisseur d'identité, il existe un risque de pratiques de nom d'utilisateur incohérentes ou non sécurisées, ce qui peut compliquer les audits d'accès et entraîner des tentatives d'escalade de privilèges.
+
+[IMPORTANT]
+====
+Rancher applique actuellement uniquement une {xref-users-and-groups}#_longueur_minimale_de_mot_de_passe[longueur minimale de mot de passe].
+====
+
+*Recommandation:* Nous conseillons fortement aux clients{nbsp}:
+
+* De revoir et de configurer les stratégies de nom d'utilisateur de base directement dans leurs fournisseurs d'identité externes (par exemple, LDAP, Active Directory, SAML ou OIDC).
+* De s'assurer que ces stratégies sont alignées avec les exigences de sécurité et de conformité de l'organisation.
+* D'auditer régulièrement les comptes utilisateurs pour détecter les incohérences de nommage ou les violations de stratégie.
+
+Pour plus d'informations, reportez-vous aux documents suivants :
+
+* https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html[Feuille de triche OWASP{nbsp}: Authentification]
+* https://owasp.org/www-project-top-ten/2017/A2_2017-Broken_Authentication[Gestion des identités OWASP]
+
+[#_waf_rules_1]
+=== Règles WAF
+
+Rancher est conçu pour prendre en charge un large éventail de scénarios de déploiement, y compris des environnements où les clients peuvent automatiser de manière programmatique la création ou le provisionnement d'un grand nombre de clusters. Imposer des limites strictes au niveau de l'application au sein de Rancher pourrait interférer avec des charges de travail légitimes nécessitant une mise à l'échelle dynamique.
+
+Par exemple :
+
+* Les pipelines CI/CD peuvent créer et détruire des clusters fréquemment.
+* Les portails en libre-service pourraient provisionner des clusters à la demande pour les développeurs.
+* Les environnements de test peuvent générer un volume élevé d'appels API.
+
+*Risque:* Sans une limitation de taux appropriée, des adversaires pourraient exploiter des points de terminaison non authentifiés ou authentifiés pour{nbsp}:
+
+* Épuiser les ressources (Déni de Service).
+* Augmenter les coûts de stockage.
+* Dégrader les performances pour les utilisateurs légitimes.
+
+*Recommandation:* La manière la plus efficace de réduire ce risque est de mettre en œuvre une limitation de taux et une protection contre les abus au niveau de l'infrastructure ou du pare-feu d'application Web (WAF). Cette approche permet d'ajuster les seuils en fonction de l'utilisation et des caractéristiques de mise à l'échelle attendues pour chaque environnement. Quelques exemples de contrôles peuvent être{nbsp}:
+
+* Configurer un pare-feu d'application Web ou une passerelle API pour appliquer des limites de taux sur des opérations sensibles, telles que la création et le provisionnement de clusters.
+* Définir des seuils basés sur les attentes de charge de travail de base (par exemple, nombre maximal de requêtes par minute par client).
+* Surveiller les journaux et alerter sur les anomalies pour détecter d'éventuels abus.
+* Appliquer un quota de ressources, qui est une fonctionnalité de Rancher limitant les ressources disponibles pour un projet ou un espace de noms.
+
+Pour plus d'informations, reportez-vous aux documents suivants :
+
+* {xref-project-resource-quotas}[Quotas de ressources de projet]
+* https://owasp.org/API-Security/editions/2023/en/0xa4-lack-of-resources-rate-limiting/[OWASP API Security Top 10 - API4:2019 - Manque de ressources et limitation de taux]
+* https://cheatsheetseries.owasp.org/cheatsheets/Rate_Limiting_Cheat_Sheet.html[OWASP Aide-mémoire{nbsp}: Limitation de taux]

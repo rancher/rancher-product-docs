@@ -1,0 +1,165 @@
+= Configurando um Cluster Kubernetes de Alta Disponibilidade {k3s-product-name} para {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-cluster-setup/k3s-for-rancher.adoc 
+:product-path: installation-and-upgrade/install-kubernetes/k3s-for-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-arch-rec: xref:about-rancher/architecture/recommendations.adoc
+:xref-ha-k3s: xref:installation-and-upgrade/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-arch-rec: xref:reference-guides/rancher-manager-architecture/architecture-recommendations.adoc
+:xref-ha-k3s: xref:how-to-guides/new-user-guides/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+endif::[]
+
+Esta seção descreve como instalar um cluster Kubernetes de acordo com as {xref-arch-rec}#_environment_for_kubernetes_installations[melhores práticas para o ambiente do servidor Rancher.]
+
+Para sistemas sem acesso direto à internet, consulte as instruções de instalação em air gap.
+
+[TIP]
+.Dica de Instalação em Um Único Nó:
+====
+
+Em um cluster Kubernetes de um único nó, o servidor Rancher não possui alta disponibilidade, o que é importante para executar o Rancher em produção. No entanto, instalar o Rancher em um cluster de um único nó pode ser útil se você quiser economizar recursos usando um único nó a curto prazo, enquanto preserva um caminho de migração para alta disponibilidade.
+
+Para configurar um cluster K3s de um único nó, execute o comando de instalação do servidor Rancher em apenas um nó em vez de dois nós.
+
+Em ambas as configurações de um único nó, o Rancher pode ser instalado com Helm no cluster Kubernetes da mesma forma que seria instalado em qualquer outro cluster.
+====
+
+
+[#_prerequisites]
+== Pré-requisitos
+
+Estas instruções assumem que você configurou dois nós, um balanceador de carga, um registro DNS e um banco de dados MySQL externo, conforme descrito na {xref-ha-k3s}[esta seção.]
+
+O Rancher precisa ser instalado em uma versão suportada do Kubernetes. Para descobrir quais versões do Kubernetes são suportadas para sua versão do Rancher, consulte a https://rancher.com/support-maintenance-terms/[Matriz de Suporte do Rancher].
+
+Para especificar a versão do K3s (Kubernetes), use a variável de ambiente INSTALL_K3S_VERSION (por exemplo, `INSTALL_K3S_VERSION="v1.24.10+k3s1"`) ao executar o script de instalação do K3s.
+
+[#_installing_kubernetes]
+== Instalando o Kubernetes
+
+[#_1_install_kubernetes_and_set_up_the_k3s_product_name_server]
+=== 1. Instale o Kubernetes e Configure o {k3s-product-name} Servidor
+
+Ao executar o comando para iniciar o servidor API do K3s Kubernetes, você passará uma opção para usar o datastore externo que você configurou anteriormente.
+
+. Conecte-se a um dos nós Linux que você preparou para executar o servidor Rancher.
+. No nó Linux, execute este comando para iniciar o servidor K3s e conectá-lo ao datastore externo:
++
+----
+ curl -sfL https://get.k3s.io |  INSTALL_K3S_VERSION=<VERSION> sh -s - server \
+   --datastore-endpoint="<DATASTORE_ENDPOINT>"
+----
++
+Onde `<DATASTORE_ENDPOINT>` é o URI de conexão para seu datastore. Por exemplo, `mysql://username:password@tcp(hostname:3306)/database-name` se você estiver usando MySQL. Datastores válidos incluem etcd, MySQL, PostgreSQL ou SQLite (padrão).
++
+
+[NOTE]
+====
+O endpoint do datastore também pode ser passado usando a variável de ambiente `$K3S_DATASTORE_ENDPOINT`.
+====
+
+
+. Obtenha o token do nó principal do servidor:
++
+----
+ cat /var/lib/rancher/k3s/server/token
+----
+
+. Execute o comando no seu segundo nó do servidor K3s:
++
+----
+   curl -sfL https://get.k3s.io |  INSTALL_K3S_VERSION=<VERSION> sh -s - server \
+     --datastore-endpoint="<DATASTORE_ENDPOINT>" \
+     --token "<MAIN_SERVER_NODE_TOKEN>"
+----
+
+[#_2_confirm_that_k3s_product_name_is_running]
+=== 2. Confirme que {k3s-product-name} está em execução
+
+Para confirmar que o K3s foi configurado com sucesso, execute o seguinte comando em qualquer um dos nós do servidor K3s:
+
+----
+sudo k3s kubectl get nodes
+----
+
+Então você deve ver dois nós com o papel de mestre:
+
+----
+ubuntu@ip-172-31-60-194:~$ sudo k3s kubectl get nodes
+NAME               STATUS   ROLES    AGE    VERSION
+ip-172-31-60-194   Ready    master   44m    v1.17.2+k3s1
+ip-172-31-63-88    Ready    master   6m8s   v1.17.2+k3s1
+----
+
+Então teste a saúde dos pods do cluster:
+
+----
+sudo k3s kubectl get pods --all-namespaces
+----
+
+*Resultado:* Você configurou com sucesso um cluster Kubernetes K3s.
+
+[#_3_save_and_start_using_the_kubeconfig_file]
+=== 3. Salve e comece a usar o arquivo kubeconfig
+
+Quando você instalou o K3s em cada nó do servidor Rancher, um arquivo `kubeconfig` foi criado no nó em `/etc/rancher/k3s/k3s.yaml`. Este arquivo contém credenciais para acesso total ao cluster, e você deve salvar este arquivo em um local seguro.
+
+Para usar este arquivo `kubeconfig`,
+
+. Instale https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl,], uma ferramenta de linha de comando do Kubernetes.
+. Copie o arquivo em `/etc/rancher/k3s/k3s.yaml` e salve-o no diretório `~/.kube/config` em sua máquina local.
+. No arquivo kubeconfig, a diretiva `server` é definida como localhost. Configure o servidor como o DNS do seu balanceador de carga, referindo-se à porta 6443. (O servidor da API do Kubernetes será acessado na porta 6443, enquanto o servidor Rancher será acessado nas portas 80 e 443.) Aqui está um exemplo `k3s.yaml`:
+
+[,yml]
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*Resultado:* Agora você pode usar `kubectl` para gerenciar seu cluster K3s. Se você tiver mais de um arquivo kubeconfig, pode especificar qual deseja usar passando o caminho para o arquivo ao usar `kubectl`:
+
+----
+kubectl --kubeconfig ~/.kube/config/k3s.yaml get pods --all-namespaces
+----
+
+Para mais informações sobre o arquivo `kubeconfig`, consulte a https://rancher.com/docs/k3s/latest/en/cluster-access/[documentação do K3s] ou a https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[documentação oficial do Kubernetes] sobre como organizar o acesso ao cluster usando arquivos `kubeconfig`.
+
+[#_4_check_the_health_of_your_cluster_pods]
+=== 4. Verifique a saúde dos seus pods de cluster
+
+Agora que você configurou o arquivo `kubeconfig`, pode usar `kubectl` para acessar o cluster a partir de sua máquina local.
+
+Verifique se todos os pods e contêineres necessários estão saudáveis e prontos para continuar:
+
+----
+ubuntu@ip-172-31-60-194:~$ sudo kubectl get pods --all-namespaces
+NAMESPACE       NAME                                      READY   STATUS    RESTARTS   AGE
+kube-system     metrics-server-6d684c7b5-bw59k            1/1     Running   0          8d
+kube-system     local-path-provisioner-58fb86bdfd-fmkvd   1/1     Running   0          8d
+kube-system     coredns-d798c9dd-ljjnf                    1/1     Running   0          8d
+----
+
+*Resultado:* Você confirmou que pode acessar o cluster com `kubectl` e que o cluster K3s está funcionando com sucesso. Agora o servidor de gerenciamento Rancher pode ser instalado no cluster.

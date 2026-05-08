@@ -1,0 +1,312 @@
+= Layer-7 NGINXロードバランサーでTLS終了を行うDockerによるインストール
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-27
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/configure-layer-7-nginx-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/configure-layer-7-nginx-load-balancer.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-air-gap: xref:installation-and-upgrade/other-installation-methods/air-gapped/air-gapped.adoc
+:xref-enable-api-audit-log: xref:observability/logging/enable-api-audit-log.adoc
+:xref-certificate-troubleshooting: xref:installation-and-upgrade/troubleshooting/certificate-troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-air-gap: xref:getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/index.adoc
+:xref-enable-api-audit-log: xref:how-to-guides/advanced-user-guides/enable-api-audit-log.adoc
+:xref-certificate-troubleshooting: xref:getting-started/installation-and-upgrade/other-installation-methods/rancher-on-a-single-node-with-docker/certificate-troubleshooting.adoc
+endif::[]
+
+Rancherサーバーコンテナではなく、ロードバランサーでTLS/SSLを終了する特別な要件がある開発およびテスト環境の場合、Rancherをデプロイし、それと連携して動作するようにロードバランサーを構成します。
+
+インフラストラクチャ内でTLS終了を集中管理したい場合、レイヤー7ロードバランサーは有益です。レイヤー7のロードバランシングは、レイヤー4のロードバランサーが関与できないクッキーなどのHTTP属性に基づいて、ロードバランサーが意思決定を行う能力も提供します。
+
+このインストール手順では、単一のコンテナを使用してRancherをデプロイする方法を説明し、次にレイヤー7 NGINXロードバランサーのサンプル構成を提供します。
+
+[#_requirements_for_os_docker_hardware_and_networking]
+== OS、Docker、ハードウェア、およびネットワーキングの要件
+
+ノードが一般的な{xref-install-reqs}[インストール要件]を満たしていることを確認してください。
+
+[#_installation_outline]
+== インストール概要
+
+[#_1_provision_linux_host]
+== 1.Linuxホストのプロビジョニング
+
+Rancherサーバーを起動するために、私たちの{xref-install-reqs}[要件]に従って単一のLinuxホストをプロビジョニングします。
+
+[#_2_choose_an_ssl_option_and_install_rancher]
+== 2.SSLオプションを選択し、Rancherをインストールする
+
+セキュリティ上の理由から、Rancherを使用する際にはSSL（セキュアソケットレイヤー）が必要です。SSLは、ログインやクラスターとの対話など、すべてのRancherネットワーク通信を保護します。
+
+[NOTE]
+.あなたは..したいですか？
+====
+
+* エアギャップインストールを完了しますか？
+* Rancher APIでのすべてのトランザクションを記録しますか？
+
+続行する前に、下記の<<_advanced_options,高度なオプション>>を確認してください。
+====
+
+
+次のオプションから選択します。
+
+.オプションA-Bring Your Own Certificate：自己署名
+[%collapsible]
+======
+通信を暗号化するために自己署名証明書を使用することを選択した場合、ロードバランサー（後で行います）とRancherコンテナに証明書をインストールする必要があります。Dockerコマンドを実行して、証明書を指定した状態でRancherをデプロイします。
+
+[NOTE]
+.前提条件:
+====
+
+自己署名証明書を作成します。
+
+* 証明書ファイルはPEM形式でなければなりません。
+====
+
+
+*自己署名証明書を使用してRancherをインストールするには:*
+
+. RancherをデプロイするためのDockerコマンドを実行する際は、DockerをCA証明書ファイルに向けてください。
++
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v /etc/your_certificate_directory/cacerts.pem:/etc/rancher/ssl/cacerts.pem \
+  rancher/rancher:latest
+----
++
+======
+オプションB - Bring Your Own Certificate：認識されたCAによって署名された
+[%collapsible]
+======
+クラスターが公開されている場合は、認識されたCAによって署名された証明書を使用するのが最良です。
+
+[NOTE]
+.前提条件:
+====
+
+* 証明書ファイルはPEM形式でなければなりません。
+====
+
+
+*認識されたCAによって署名された証明書を使用してRancherをインストールするには:*
+
+認識されたCAによって署名された証明書を使用する場合、Rancherコンテナに証明書をインストールする必要はありません。デフォルトのCA証明書が生成されて保存されていないことを確認する必要があります。これは、`--no-cacerts`パラメータをコンテナに渡すことで実行できます。
+
+. 次のコマンドを入力してください。
++
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  rancher/rancher:latest --no-cacerts
+----
++
+======
+
+[#_3_configure_load_balancer]
+== 3.ロードバランサーを構成する
+
+Rancherコンテナの前にロードバランサーを使用する場合、コンテナがポート80またはポート443からのポート通信をリダイレクトする必要はありません。`X-Forwarded-Proto: https`ヘッダーを渡すことで、このリダイレクトは無効になります。
+
+ロードバランサーまたはプロキシは、次のことをサポートするように構成する必要があります：
+
+* *WebSocket*接続
+* *SPDY* / *HTTP/2*プロトコル
+* 次のヘッダーを渡す/設定する：
++
+|===
+| ヘッダ | 値 | 説明
+
+| `Host`
+| Rancherに到達するために使用されるホスト名。
+| クライアントによって要求されたサーバーを識別するため。
+
+| `X-Forwarded-Proto`
+| `https`
+| クライアントがロードバランサーまたはプロキシに接続するために使用したプロトコルを識別するため。*注意:*このヘッダーが存在する場合、`rancher/rancher`はHTTPをHTTPSにリダイレクトしません。
+
+| `X-Forwarded-Port`
+| Rancherに到達するために使用されるポート。
+| クライアントがロードバランサーまたはプロキシに接続するために使用したプロトコルを特定するため。
+
+| `X-Forwarded-For`
+| クライアント接続のIP。
+| クライアントの発信IPアドレスを特定するため。
+|===
+
+[#_example_nginx_configuration]
+=== NGINXの設定例
+
+このNGINXの設定はNGINX 1.14でテストされています。
+
+[NOTE]
+====
+
+このNGINXの設定はあくまで例であり、あなたの環境に適さない場合があります。完全なドキュメントについては、 https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/[NGINXロードバランシング - HTTPロードバランシング]を参照してください。
+====
+
+
+* `rancher-server`をRancherコンテナを実行しているノードのIPアドレスまたはホスト名に置き換えてください。
+* `FQDN`の両方の出現をRancherのDNS名に置き換えてください。
+* `/certs/fullchain.pem`と`/certs/privkey.pem`をそれぞれサーバー証明書とサーバー証明書キーの場所に置き換えてください。
+
+----
+worker_processes 4;
+worker_rlimit_nofile 40000;
+
+events {
+    worker_connections 8192;
+}
+
+http {
+    upstream rancher {
+        server rancher-server:80;
+    }
+
+    map $http_upgrade $connection_upgrade {
+        default Upgrade;
+        ''      close;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name FQDN;
+        ssl_certificate /certs/fullchain.pem;
+        ssl_certificate_key /certs/privkey.pem;
+
+        location / {
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port $server_port;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_pass http://rancher;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            # This allows the ability for the execute shell window to remain open for up to 15 minutes. Without this parameter, the default is 1 minute and will automatically close.
+            proxy_read_timeout 900s;
+            proxy_buffering off;
+        }
+    }
+
+    server {
+        listen 80;
+        server_name FQDN;
+        return 301 https://$server_name$request_uri;
+    }
+}
+----
+
+{blank}
+
+[#_whats_next]
+== 次は何ですか？
+
+* *推奨:*シングルノードxref:[バックアップ]とxref:[リストア]を確認してください。今すぐバックアップする必要のあるデータはありませんが、定期的なRancherの使用後にバックアップを作成することをお勧めします。
+* Kubernetesクラスターを作成します: {xref-cluster-deployment}[Kubernetesクラスターのプロビジョニング]。
+
+{blank}
+
+[#_faq_and_troubleshooting]
+== FAQとトラブルシューティング
+
+証明書のトラブルシューティングに関するヘルプについては、{xref-certificate-troubleshooting}[このセクション]を参照してください。
+
+[#_advanced_options]
+== 詳細オプション
+
+[#_api_auditing]
+=== API監査
+
+Rancher APIとのすべてのトランザクションを記録したい場合は、インストールコマンドに以下のフラグを追加して{xref-enable-api-audit-log}[API監査]機能を有効にしてください。
+
+ -e AUDIT_LEVEL=1 \
+ -e AUDIT_LOG_ENABLED=true \
+ -e AUDIT_LOG_PATH=/var/log/auditlog/rancher-api-audit.log \
+ -e AUDIT_LOG_MAXAGE=20 \
+ -e AUDIT_LOG_MAXBACKUP=20 \
+ -e AUDIT_LOG_MAXSIZE=100 \
+
+[#_air_gap]
+=== エアギャップ
+
+このページを訪れて{xref-air-gap}[エアギャップインストール]を完了する場合は、選択したオプションでインストールコマンドを実行する際に、プライベートレジストリのURLをサーバータグの前に追加する必要があります。プライベートレジストリのURLを`<REGISTRY.DOMAIN.COM:PORT>`に追加し、`rancher/rancher:latest`の前に配置してください。
+
+*例:*
+
+  <REGISTRY.DOMAIN.COM:PORT>/rancher/rancher:latest
+
+[#_persistent_data]
+=== 永続データ
+
+Rancherはetcdをデータストアとして使用します。RancherがDockerでインストールされると、組み込みのetcdが使用されます。永続データはコンテナ内の次のパスにあります: `/var/lib/rancher`。
+
+この場所にホストボリュームをバインドマウントして、実行中のホスト上のデータを保持できます:
+
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v /opt/rancher:/var/lib/rancher \
+  --privileged \
+  rancher/rancher:latest
+----
+
+この操作にはxref:#_privileged_access_for_rancher[特権アクセス]が必要です。
+
+このレイヤー7のNGINX設定は、NGINXバージョン1.13（メインライン）および1.14（安定版）でテストされています。
+
+[NOTE]
+====
+
+このNGINXの設定はあくまで例であり、あなたの環境に適さない場合があります。完全なドキュメントについては、 https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/[NGINX負荷分散 - TCPおよびUDPロードバランサー]を参照してください。
+====
+
+
+----
+upstream rancher {
+    server rancher-server:80;
+}
+
+map $http_upgrade $connection_upgrade {
+    default Upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name rancher.yourdomain.com;
+    ssl_certificate /etc/your_certificate_directory/fullchain.pem;
+    ssl_certificate_key /etc/your_certificate_directory/privkey.pem;
+
+    location / {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://rancher;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        # This allows the ability for the execute shell window to remain open for up to 15 minutes. Without this parameter, the default is 1 minute and will automatically close.
+        proxy_read_timeout 900s;
+        proxy_buffering off;
+    }
+}
+
+server {
+    listen 80;
+    server_name rancher.yourdomain.com;
+    return 301 https://$server_name$request_uri;
+}
+----
+
+{blank}

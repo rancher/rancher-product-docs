@@ -1,0 +1,274 @@
+= Configuration de la sauvegarde
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: reference-guides/backup-restore-configuration/backup-configuration.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+ifeval::["{build-type}" != "community"]
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-migrate-cluster: xref:guides-pratiques/nouveaux-guides-utilisateurs/sauvegarde-restauration-et-récupération-en-cas-de-sinistre/migrer-rancher-vers-un-nouveau-cluster.adoc
+:xref-backup-cluster: xref:procédure-guides/nouveaux-utilisateurs-guides/sauvegarde-restauration-et-récupération-après-sinistre/sauvegarde-rancher.adoc
+endif::[]
+
+La *sauvegarde : La page Créer* vous permet de configurer un planning, d'activer le chiffrement et de spécifier l'emplacement de stockage pour vos sauvegardes.
+
+Vous devez d'abord {xref-backup-cluster}[installer] l'opérateur `rancher-backup`. Après cela, vous pouvez accéder à la *sauvegarde : La page Créer* :
+
+[#_schedule]
+== Planification
+
+Sélectionnez la première option pour effectuer une sauvegarde unique, ou sélectionnez la deuxième option pour planifier des sauvegardes récurrentes. Sélectionner *Sauvegardes Récurrentes* vous permet de configurer les deux champs suivants{nbsp}:
+
+* *Planification*{nbsp}: Ce champ accepte
+ ** Des https://en.wikipedia.org/wiki/Cron[expressions cron standard], telles que `"0 * * * *"`
+ ** Des descripteurs, tels que `"@midnight"` ou `"@every 1h30m"`
+* *Nombre de rétention* : Cette valeur spécifie combien de fichiers de sauvegarde doivent être conservés. Si le nombre de fichiers dépasse le nombre de rétention donné, les fichiers les plus anciens seront supprimés. La valeur par défaut est 10.
+
+|===
+| Nom de la Directive YAML | Description
+
+| `schedule`
+| Fournissez la chaîne cron pour planifier des sauvegardes récurrentes.
+
+| `retentionCount`
+| Fournissez le nombre de fichiers de sauvegarde à conserver.
+|===
+
+[#_resourceset]
+== ResourceSet
+
+Bien que vous puissiez créer vos propres Ensembles de Ressources pour sauvegarder des applications personnalisées, deux Ensembles de Ressources spécifiquement pour sauvegarder Rancher sont officiellement maintenus et créés par défaut par l'opérateur `rancher-backup`. Nous les appelons `rancher-resource-set-basic` et `rancher-resource-set-full`.  La différence entre eux réside dans le fait qu'ils incluent ou non des secrets dans les sauvegardes. 
+
+`rancher-resource-set-basic` n'inclut aucun secret dans les fichiers de sauvegarde pour protéger les informations confidentielles. Vous êtes responsable de l'enregistrement de tous les secrets et de leur redéploiement en toute sécurité. 
+
+`rancher-resource-set-full` inclut tous les secrets essentiels dans les fichiers de sauvegarde pour garantir que Rancher continue de fonctionner correctement après une restauration ou une migration. Pour éviter de stocker des informations sensibles en texte clair, nous vous conseillons fortement d'activer le chiffrement avec une clé forte.
+
+|===
+| Nom de la Directive YAML | Description
+
+| `resourceSetName`
+|  Fournissez le nom du ResourceSet pour définir quelles ressources seront incluses dans cette sauvegarde.
+|===
+
+[#_encryption]
+== Chiffrement
+
+Le rancher-backup collecte des ressources en effectuant des appels au kube-apiserver. Les objets retournés par l'apiserver sont déchiffrés, donc même si https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/[le chiffrement au repos] est activé, même les objets chiffrés collectés par la sauvegarde seront en texte clair.
+
+Pour éviter de les stocker en texte clair, vous pouvez utiliser le même fichier `EncryptionConfiguration` qui a été utilisé pour le chiffrement au repos, pour chiffrer certaines ressources dans votre sauvegarde.
+
+[NOTE]
+.Important :
+====
+
+Lors du chiffrement des objets dans la sauvegarde, vous devez conserver le fichier `EncryptionConfiguration` pour une utilisation future, car il ne sera pas sauvegardé par l'opérateur rancher-backup.
+
+Par exemple, lors de {xref-migrate-cluster}[la migration de Rancher vers un nouveau cluster], le fichier est utilisé pour recréer le secret dans le nouveau cluster.
+====
+
+
+L'opérateur consomme le `EncryptionConfiguration` en tant que Secret Kubernetes dans l'espace de noms `cattle-resources-system` sous la clé nommée `encryption-provider-config.yaml` dans les données du secret.
+
+Pour le `EncryptionConfiguration`, vous pouvez utiliser le https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#understanding-the-encryption-at-rest-configuration[fichier d'exemple fourni dans la documentation Kubernetes.]
+
+Pour garantir que la clé correcte est utilisée dans le secret, le fichier de configuration de chiffrement doit être nommé `encryption-provider-config.yaml`. La commande ci-dessous utilise le drapeau `--from-file` pour créer le secret avec le nom de clé correct.
+
+Enregistrez le `EncryptionConfiguration` dans un fichier appelé `encryption-provider-config.yaml` et exécutez cette commande{nbsp}:
+
+[,bash]
+----
+kubectl create secret generic encryptionconfig \
+  --from-file=./encryption-provider-config.yaml \
+  -n cattle-resources-system
+----
+
+Cela garantira que le secret contient une clé nommée `encryption-provider-config.yaml`, et l'opérateur utilisera cette clé pour obtenir la configuration de chiffrement.
+
+Le menu déroulant `Encryption Config Secret` filtrera et listera uniquement les Secrets qui ont cette clé exacte.
+
+image::backup_restore/backup/encryption.png[]
+
+Dans la commande d'exemple ci-dessus, le nom `encryptionconfig` peut être modifié selon vos besoins.
+
+|===
+| Nom de la Directive YAML | Description
+
+| `encryptionConfigSecretName`
+| Fournissez le nom du Secret dans l'espace de noms `cattle-resources-system`, qui contient le fichier de configuration de chiffrement.
+|===
+
+[#_storage_location]
+== Storage Location (Emplacement de stockage)
+
+Si le StorageLocation est spécifié dans la sauvegarde, l'opérateur récupérera l'emplacement de sauvegarde de ce bucket S3 particulier. S'il n'est pas spécifié, l'opérateur essaiera de trouver ce fichier dans le magasin S3 par défaut au niveau de l'opérateur, et dans le magasin PVC au niveau de l'opérateur. L'emplacement de stockage par défaut est configuré lors du déploiement de l'opérateur `rancher-backup`.
+
+Sélectionner la première option stocke cette sauvegarde dans l'emplacement de stockage configuré lors de l'installation du chart rancher-backup. La deuxième option vous permet de configurer un fournisseur de stockage compatible S3 différent pour stocker la sauvegarde.
+
+[#_s3]
+=== S3
+
+[CAUTION]
+====
+
+Si vous utilisez une cible de sauvegarde S3, assurez-vous que chaque cluster a son propre bucket ou dossier. Rancher récupère les informations sur les instantanés à partir de tout instantané disponible répertorié dans le bucket S3 ou le dossier configuré pour ce cluster.
+====
+
+
+L'emplacement de stockage S3 contient les champs de configuration suivants{nbsp}:
+
+. *Secret d'identification* (optionnel){nbsp}: Si vous avez besoin d'une clé d'accès AWS ou d'une clé secrète pour accéder à un bucket S3, {xref-secrets}[créez un secret] en utilisant vos identifiants, avec des clés et des directives nommées `accessKey` et `secretKey`. Le secret peut être dans n'importe quel espace de noms. Un exemple de secret est <<_example_credentialsecret,ici>>. Cette directive est inutile si les nœuds exécutant votre opérateur sont dans EC2 et ont reçu <<_iam_permissions_for_ec2_nodes_to_access_s3,des autorisations IAM pour accéder à S3>>. Le menu déroulant *Secret d'identification* répertorie les secrets dans tous les espaces de noms.
+. *Nom du bucket*{nbsp}: Le nom du bucket S3 où les fichiers de sauvegarde seront stockés.
+. *Région* (optionnel){nbsp}: La https://aws.amazon.com/about-aws/global-infrastructure/regions_az/[région] AWS où se trouve le bucket S3. Ce champ n'est pas nécessaire pour configurer MinIO.
+. *Dossier* (optionnel){nbsp}: Le nom du dossier dans le bucket S3 où les fichiers de sauvegarde seront stockés. Les dossiers imbriqués (par exemple, `rancher/cluster1`) ne sont pas pris en charge. Si ce champ est laissé vide, le comportement par défaut est de stocker les fichiers de sauvegarde dans le dossier [Root] du bucket S3.
+. *Point de terminaison*{nbsp}: Le https://docs.aws.amazon.com/general/latest/gr/s3.html[point de terminaison] qui est utilisé pour accéder à S3 dans la région de votre bucket.
+. *Point de terminaison CA* (optionnel){nbsp}: Ceci doit être le certificat CA encodé en Base64. Pour un exemple, référez-vous à la <<_example_s3_storage_configuration,configuration d'exemple compatible S3>>.
+. *Ignorer les vérifications TLS* (optionnel){nbsp}: Définir sur vrai si vous n'utilisez pas TLS.
+
+[#_yaml_directive_fields]
+==== Champs de directive YAML
+
+|===
+| Nom de la Directive YAML | Description | Requis
+
+| `credentialSecretName`
+| Si vous avez besoin d'une clé d'accès AWS ou d'une clé secrète pour accéder à un bucket S3, {xref-secrets}[créez un secret] en utilisant vos identifiants, avec des clés et des directives nommées `accessKey` et `secretKey`. Le secret peut être dans n'importe quel espace de noms. Un exemple de secret est <<_example_credentialsecret,ici>>. Cette directive est inutile si les nœuds exécutant votre opérateur sont dans EC2 et ont reçu <<_iam_permissions_for_ec2_nodes_to_access_s3,des autorisations IAM pour accéder à S3>>.
+|
+
+| `credentialSecretNamespace`
+| L'espace de noms du secret contenant les identifiants pour accéder à S3. Cette directive est inutile si les nœuds exécutant votre opérateur sont dans EC2 et configurés avec des autorisations IAM qui leur permettent d'accéder à S3, comme décrit dans <<_iam_permissions_for_ec2_nodes_to_access_s3,cette section.>>
+|
+
+| `bucketName`
+| Le nom du bucket S3 où les fichiers de sauvegarde seront stockés.
+| ✓
+
+| `folder`
+| Le nom du dossier dans le bucket S3 où les fichiers de sauvegarde seront stockés. Les dossiers imbriqués (par exemple, `rancher/cluster1`) ne sont pas pris en charge. Si ce champ est laissé vide, le comportement par défaut est de stocker les fichiers de sauvegarde dans le dossier [Root] du bucket S3.
+|
+
+| `region`
+| La https://aws.amazon.com/about-aws/global-infrastructure/regions_az/[région] AWS où se trouve le bucket S3.
+| ✓
+
+| `endpoint`
+| Le https://docs.aws.amazon.com/general/latest/gr/s3.html[point de terminaison] qui est utilisé pour accéder à S3 dans la région de votre bucket.
+| ✓
+
+| `endpointCA`
+| Ceci doit être le certificat CA encodé en Base64. Pour un exemple, référez-vous à la <<_example_s3_storage_configuration,configuration d'exemple compatible S3>>.
+|
+
+| `insecureTLSSkipVerify`
+| Définir sur vrai si vous n'utilisez pas TLS.
+|
+|===
+
+[#_example_s3_storage_configuration]
+=== Exemple de configuration de stockage S3.
+
+[,yaml]
+----
+s3:
+  credentialSecretName: s3-creds
+  credentialSecretNamespace: default
+  bucketName: rancher-backups
+  folder: rancher
+  region: us-west-2
+  endpoint: s3.us-west-2.amazonaws.com
+----
+
+[#_example_minio_configuration]
+=== Exemple de configuration MinIO.
+
+[,yaml]
+----
+s3:
+  credentialSecretName: minio-creds
+  bucketName: rancherbackups
+  endpoint: minio.35.202.130.254.xip.io
+  endpointCA: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURHakNDQWdLZ0F3SUJBZ0lKQUtpWFZpNEpBb0J5TUEwR0NTcUdTSWIzRFFFQkN3VUFNQkl4RURBT0JnTlYKQkFNTUIzUmxjM1F0WTJFd0hoY05NakF3T0RNd01UZ3lOVFE1V2hjTk1qQXhNREk1TVRneU5UUTVXakFTTVJBdwpEZ1lEVlFRRERBZDBaWE4wTFdOaE1JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBTUlJQkNnS0NBUUVBCjA4dnV3Q2Y0SEhtR2Q2azVNTmozRW5NOG00T2RpS3czSGszd1NlOUlXQkwyVzY5WDZxenBhN2I2M3U2L05mMnkKSnZWNDVqeXplRFB6bFJycjlpbEpWaVZ1NFNqWlFjdG9jWmFCaVNsL0xDbEFDdkFaUlYvKzN0TFVTZSs1ZDY0QQpWcUhDQlZObU5xM3E3aVY0TE1aSVpRc3N6K0FxaU1Sd0pOMVVKQTZ6V0tUc2Yzc3ByQ0J2dWxJWmZsVXVETVAyCnRCTCt6cXZEc0pDdWlhNEEvU2JNT29tVmM2WnNtTGkwMjdub3dGRld3MnRpSkM5d0xMRE14NnJoVHQ4a3VvVHYKQXJpUjB4WktiRU45L1Uzb011eUVKbHZyck9YS2ZuUDUwbk8ycGNaQnZCb3pUTStYZnRvQ1d5UnhKUmI5cFNTRApKQjlmUEFtLzNZcFpMMGRKY2sxR1h3SURBUUFCbzNNd2NUQWRCZ05WSFE0RUZnUVU5NHU4WXlMdmE2MTJnT1pyCm44QnlFQ2NucVFjd1FnWURWUjBqQkRzd09ZQVU5NHU4WXlMdmE2MTJnT1pybjhCeUVDY25xUWVoRnFRVU1CSXgKRURBT0JnTlZCQU1NQjNSbGMzUXRZMkdDQ1FDb2wxWXVDUUtBY2pBTUJnTlZIUk1FQlRBREFRSC9NQTBHQ1NxRwpTSWIzRFFFQkN3VUFBNElCQVFER1JRZ1RtdzdVNXRQRHA5Q2psOXlLRW9Vd2pYWWM2UlAwdm1GSHpubXJ3dUVLCjFrTkVJNzhBTUw1MEpuS29CY0ljVDNEeGQ3TGdIbTNCRE5mVVh2anArNnZqaXhJYXR2UWhsSFNVaWIyZjJsSTkKVEMxNzVyNCtROFkzelc1RlFXSDdLK08vY3pJTGh5ei93aHRDUlFkQ29lS1dXZkFiby8wd0VSejZzNkhkVFJzNwpHcWlGNWZtWGp6S0lOcTBjMHRyZ0xtalNKd1hwSnU0ZnNGOEcyZUh4b2pOKzdJQ1FuSkg5cGRIRVpUQUtOL2ppCnIvem04RlZtd1kvdTBndEZneWVQY1ZWbXBqRm03Y0ZOSkc4Y2ZYd0QzcEFwVjhVOGNocTZGeFBHTkVvWFZnclMKY1VRMklaU0RJd1FFY3FvSzFKSGdCUWw2RXBaUVpWMW1DRklrdFBwSQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0t
+----
+
+[#_example_credentialsecret]
+=== Exemple de credentialSecret
+
+[,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+type: Opaque
+data:
+  accessKey: <base64-encoded access key>
+  secretKey: <base64-encoded secret key>
+----
+
+[NOTE]
+====
+
+Pour éviter les problèmes d'encodage, le `credentialSecret` peut être créé avec la commande ci-dessous, en mettant à jour les valeurs pour `accessKey` et `secretKey`.
+
+[,bash]
+----
+kubectl create secret generic s3-creds \
+  --from-literal=accessKey=<access key> \
+  --from-literal=secretKey=<secret key>
+----
+====
+
+
+[#_iam_permissions_for_ec2_nodes_to_access_s3]
+=== Permissions IAM pour les nœuds EC2 pour accéder à S3
+
+Il existe deux façons de configurer l'opérateur `rancher-backup` pour utiliser S3 comme emplacement de stockage de sauvegarde.
+
+Une façon est de configurer le `credentialSecretName` dans la ressource personnalisée de sauvegarde, qui fait référence aux identifiants AWS ayant accès à S3.
+
+Si les nœuds du cluster sont dans Amazon EC2, l'accès S3 peut également être configuré en attribuant des permissions IAM aux nœuds EC2 afin qu'ils puissent accéder à S3.
+
+Pour permettre à un nœud d'accéder à S3, suivez les instructions dans la https://aws.amazon.com/premiumsupport/knowledge-center/ec2-instance-access-s3-bucket/[documentation AWS] pour créer un rôle IAM pour EC2. Lorsque vous ajoutez une stratégie personnalisée au rôle, ajoutez les permissions suivantes et remplacez le `Resource` par le nom de votre bucket{nbsp}:
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+     "Resource": [
+        "arn:aws:s3:::rancher-backups"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:PutObjectAcl"
+      ],
+      "Resource": [
+         "arn:aws:s3:::rancher-backups/*"
+      ]
+    }
+  ]
+}
+----
+
+Après la création du rôle et l'attachement du profil d'instance correspondant à votre/vos instance(s) EC2, la directive `credentialSecretName` peut être laissée vide dans la ressource personnalisée de sauvegarde.
+
+[#_examples]
+== Exemples
+
+Pour des exemples de ressources personnalisées de sauvegarde, référez-vous à xref:./examples.adoc#_backup[cette page.]

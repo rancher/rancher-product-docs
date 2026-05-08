@@ -1,0 +1,130 @@
+= Provisionamiento de Clústeres de Kubernetes en VMware vSphere
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-19
+:page-revdate: {revdate}
+:community-path: instrucciones/guías-para-nuevos-usuarios/lanzar-kubernetes-con-rancher/utilizar-nodos-nuevos-en-un-proveedor-de-infraestructura/vsphere/provisionar-clusters-de-kubernetes-en-vsphere.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/provision-kubernetes-clusters-in-vsphere.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:url-rke2-landing-page: https://documentation.suse.com/cloudnative/rke2/
+:url-k3s-landing-page: https://documentation.suse.com/cloudnative/k3s/
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc
+:xref-cloud-provider-vsphere: xref:cluster-deployment/set-up-cloud-providers/configure-in-tree-vsphere.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+:xref-vsphere-node-template-config: xref:cluster-deployment/infra-providers/vsphere/node-template-configuration.adoc
+:xref-vsphere-create-credentials: xref:cluster-deployment/infra-providers/vsphere/create-credentials.adoc
+:xref-persistent-storage-examples: xref:cluster-admin/manage-clusters/persistent-storage/examples/examples.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-landing-page: https://docs.rke2.io/
+:url-k3s-landing-page: https://docs.k3s.io/
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc
+:xref-rke2-config: xref:guías-de-referencia/configuración-del-cluster/configuración-del-servidor-rancher/configuración-del-cluster-rke2.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:guías-de-cómo/nuevas-guías-para-usuarios/lanzar-kubernetes-con-rancher/utilizar-nodos-nuevos-en-un-proveedor-de-infraestructura/index.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:guías-de-cómo/nuevas-guías-para-usuarios/configuración-de-clusters-de-kubernetes-en-rancher/configurar-proveedores-de-nube/configurar-vsphere-fuera-del-arbol.adoc
+:xref-cloud-provider-vsphere: xref:guías-de-cómo/nuevas-guías-para-usuarios/configuración-de-clusters-de-kubernetes-en-rancher/configurar-proveedores-de-nube/configurar-vsphere-en-el-arbol.adoc
+:xref-k3s-config: xref:guías-de-referencia/configuración-del-cluster/configuración-del-servidor-rancher/configuración-del-cluster-k3s.adoc
+:xref-vsphere-node-template-config: xref:guías-de-referencia/configuración-del-clúster/configuración-del-clúster-descendente/configuración-de-plantilla-de-nodo/vsphere.adoc
+:xref-vsphere-create-credentials: xref:guías-de-cómo/nuevas-guías-para-usuarios/lanzar-kubernetes-con-rancher/utilizar-nodos-nuevos-en-un-proveedor-de-infraestructura/vsphere/crear-credenciales.adoc
+:xref-persistent-storage-examples: xref:guías-de-cómo/nuevas-guías-para-usuarios/gestionar-clusters/ejemplos-de-provisionamiento-de-almacenamiento/index.adoc
+endif::[]
+
+En esta sección, aprenderás a utilizar Rancher para desplegar un {url-rke2-landing-page}[RKE2] o {url-k3s-landing-page}[K3s] clúster de Kubernetes en VMware vSphere.
+
+Primero, configuras tus credenciales de nube de vSphere en Rancher.
+
+Luego, creas un clúster de vSphere en Rancher, y al configurar el nuevo clúster, defines grupos de máquinas para él. Cada grupo de máquinas tiene un rol de Kubernetes de etcd, controlplane o worker. Rancher instala Kubernetes en los nuevos nodos y configura cada nodo con el rol de Kubernetes definido por el grupo de máquinas.
+
+* <<_preparation_in_vmware_vsphere,Preparación en vSphere>>
+* <<_creating_a_vmware_vsphere_cluster,Creando un Clúster de vSphere>>
+
+[#_preparation_in_vmware_vsphere]
+== Preparación en VMware vSphere
+
+Esta sección describe los requisitos para configurar vSphere de manera que Rancher pueda aprovisionar VMs y clústeres.
+
+[#_create_credentials_in_vmware_vsphere]
+=== Crear Credenciales en VMware vSphere
+
+Antes de proceder a crear un clúster, debes asegurarte de que tienes un usuario de vSphere con permisos suficientes.
+
+Consulta esta {xref-vsphere-create-credentials}[guía de instrucciones] para obtener instrucciones sobre cómo crear un usuario en vSphere con los permisos requeridos. Estos pasos resultan en un nombre de usuario y una contraseña que deberás proporcionar a Rancher, lo que permite a Rancher aprovisionar recursos en vSphere.
+
+[#_network_permissions]
+=== Permisos de Red
+
+Se debe asegurar que los hosts que ejecutan el servidor Rancher puedan establecer las siguientes conexiones de red:
+
+* Hacia la API de vSphere en el servidor vCenter (normalmente puerto 443/TCP).
+* Hacia la API del Host (puerto 443/TCP) en todos los hosts ESXi utilizados para instanciar máquinas virtuales para los clústeres (_solo requerido al usar el método de creación ISO_).
+* Hacia el puerto 22/TCP y 2376/TCP en las VMs creadas
+
+Consulta {xref-node-reqs}#_networking_requirements[Requisitos de Red de Nodos] para una lista detallada de los requisitos de puertos aplicables para crear nodos en un proveedor de infraestructura.
+
+[#_valid_esxi_license_for_vmware_vsphere_api_access]
+=== Licencia ESXi válida para el acceso a la API de VMware vSphere
+
+La licencia gratuita de ESXi no soporta el acceso a la API. Los servidores de vSphere deben tener una licencia ESXi válida o de evaluación.
+
+[#_vm_vm_affinity_rules_for_clusters_with_drs]
+=== Reglas de Afinidad VM-VM para Clústeres con DRS
+
+Si tienes un clúster con DRS habilitado, se recomienda configurar https://docs.vmware.com/en/VMware-vSphere/6.5/com.vmware.vsphere.resmgmt.doc/GUID-7297C302-378F-4AF2-9BD6-6EDB1E0A850A.html[Reglas de Afinidad VM-VM]. Estas reglas permiten que las VMs asignadas a los roles etcd y control-plane operen en hosts ESXi separados cuando están asignadas a diferentes grupos de nodos. Esta práctica asegura que la falla de una única máquina física no afecte la disponibilidad de esos planos.
+
+[#_creating_a_vmware_vsphere_cluster]
+== Creando un Clúster de VMware vSphere
+
+[#_1_create_your_cloud_credentials]
+=== 1. Crea tus credenciales de nube
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Haz clic en *Credenciales de Nube*.
+. Haga clic en *Crear*.
+. Haz clic en *VMware vSphere*.
+. Introduce tus credenciales de vSphere. Para ayuda, consulta *Acceso a la Cuenta* en la {xref-vsphere-node-template-config}[referencia de configuración de plantilla de nodo.]
+. Haga clic en *Crear*.
+
+**Resultado:** Has creado las credenciales de la nube que se utilizan para aprovisionar nodos en tu clúster.
+
+[#_2_create_your_cluster]
+=== 2. Crea tu clúster
+
+Utiliza Rancher para crear un clúster de Kubernetes en vSphere.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, haz clic en *Crear*.
+. Haz clic en *VMware vSphere*.
+. Introduce un *Nombre del Clúster* y utiliza tus credenciales de nube de vSphere.
+. Crea un grupo de máquinas para cada rol de Kubernetes. Consulta las {xref-infra-providers}#_roles_de_nodo[mejores prácticas] para recomendaciones sobre asignaciones y conteos de roles.
+.. Para cada grupo de máquinas, define la configuración de la máquina.
+. Utiliza la *Configuración del Clúster* para elegir la versión de Kubernetes que deseas instalar, qué proveedor de red utilizar y si deseas habilitar el aislamiento de red del proyecto.  Para ayuda configurando el clúster, consulta las {xref-rke2-config}[referencias de configuración de clúster RKE2] y {xref-k3s-config}[K3s].
+. Utiliza *Roles de Miembro* para configurar la autorización de usuarios para el clúster. Haz clic en *Añadir Miembro* para agregar usuarios que puedan acceder al clúster. Utiliza el menú desplegable *Rol* para establecer permisos para cada usuario.
+. Si deseas aprovisionar dinámicamente almacenamiento persistente u otra infraestructura más adelante, necesitarás habilitar el proveedor de nube vSphere modificando el archivo YAML del clúster. Para más detalles, consulta {xref-cloud-provider-vsphere}[la documentación del proveedor de nube vSphere en árbol] y {xref-cloud-provider-vsphere-out-of-tree}[la documentación del proveedor de nube vSphere fuera de árbol].
+. Revisa tus opciones para confirmar que son correctas. Luego haz clic en *Crear*.
+
+*Resultado:*
+
+Tu clúster ha sido creado y se le ha asignado un estado de *Aprovisionamiento*. Rancher está configurando tu clúster.
+
+Puedes acceder a tu clúster una vez que su estado se actualice a *Activo*.
+
+Los clústeres *Activos* tienen asignados dos proyectos:
+
+* `Default`, que contiene el espacio de nombres `default`
+* `System`, que contiene los espacios de nombres `cattle-system`, `traefik`, `kube-public` y `kube-system`
+
+[#_optional_next_steps]
+== Pasos siguientes opcionales
+
+Después de crear tu clúster, puedes acceder a él a través de la interfaz de usuario de Rancher. Como mejor práctica, recomendamos configurar estas formas alternativas de acceder a tu clúster:
+
+* *Accede a tu clúster con la CLI de kubectl:* Sigue {xref-access-cluster-kubectl}#_accediendo_a_clústeres_con_kubectl_desde_tu_estación_de_trabajo[estos pasos] para acceder a clústeres con kubectl en tu estación de trabajo. En este caso, serás autenticado a través del proxy de autenticación del servidor de Rancher, luego Rancher te conectará al clúster descendente. Este método te permite gestionar el clúster sin la interfaz de usuario de Rancher.
+* *Accede a tu clúster con la CLI de kubectl, utilizando el punto final autorizado del clúster:* Sigue {xref-access-cluster-kubectl}#_autenticando_directamente_con_un_clúster_descendente[estos pasos] para acceder a tu clúster con kubectl directamente, sin autenticarte a través de Rancher. Recomendamos configurar este método alternativo para acceder a tu clúster, de modo que en caso de que no puedas conectarte a Rancher, aún puedas acceder al clúster.
+* *Provisión de almacenamiento:* Para un ejemplo de cómo aprovisionar almacenamiento en vSphere utilizando Rancher, consulta {xref-persistent-storage-examples}[esta sección]. Para aprovisionar almacenamiento de forma dinámica en vSphere, el proveedor de vSphere debe estar habilitado. Para más detalles, consulta {xref-cloud-provider-vsphere}[la documentación del proveedor de nube vSphere en árbol] y {xref-cloud-provider-vsphere-out-of-tree}[la documentación del proveedor de nube vSphere fuera de árbol].

@@ -1,0 +1,232 @@
+= ダウンストリームクラスターでのAPI監査ログの有効化
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-22
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-api-audit-log-in-downstream-clusters.adoc 
+:product-path: observability/logging/enable-api-audit-log-in-downstream-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-configmaps: xref:cluster-admin/kubernetes-resources/configmaps.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rke2-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/rke2-cluster-configuration.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-configmaps: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/configmaps.adoc
+:xref-k3s-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/k3s-cluster-configuration.adoc
+endif::[]
+
+Kubernetesの監査は、クラスターに関するセキュリティ関連の時系列記録を提供します。Kube-apiserverは監査を実行します。リクエストは、その実行の各段階でイベントを生成し、それは特定のポリシーに従って前処理され、バックエンドに書き込まれます。ポリシーは何が記録されるかを決定し、バックエンドは記録を永続化します。
+
+CIS（Center for Internet Security）Kubernetesベンチマークコントロールへの準拠の一環として、監査ログを構成することを検討するかもしれません。
+
+構成の詳細については、 https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/[公式Kubernetesドキュメント]を参照してください。
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[pass]
+<h2><a id="_method_1_recommended_set_audit_policy_file_in_machineglobalconfig_or_machineselectorconfig"></a>方法1（推奨）：Set `audit-policy-file` in `machineGlobalConfig` or `machineSelectorConfig`</h2>
+
+`audit-policy-file`を設定ファイルに設定するには、`machineGlobalConfig`または`machineSelectorConfig`のいずれかを使用できます。
+
+`machineGlobalConfig`を使用する場合、Rancherはファイルを`/var/lib/rancher/rke2/etc/config-files/audit-policy-file`のパスに*すべてのノード*（コントロールプレーンとワーカーノードの両方）に配信し、RKE2サーバーに適切なオプションを設定します。これは、監査ポリシーが変更されたときに不要なワーカーノードの再調整を引き起こす可能性があります。
+
+ワーカーノードの再調整を避けるため、ラベルセレクターを使用して`machineSelectorConfig`をコントロールプレーンノードのみに対象とします。これにより、監査ポリシーファイルがコントロールプレーンノードのみに配信されることが保証されます。
+
+`machineGlobalConfig`を使用した例：
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      audit-policy-file: |
+        apiVersion: audit.k8s.io/v1
+        kind: Policy
+        rules:
+          - level: RequestResponse
+            resources:
+              - group: ""
+                resources:
+                  - pods
+----
+
+`machineSelectorConfig`を使用した例（ワーカーノードの再調整を避けるために推奨）：
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          audit-policy-file: |
+            apiVersion: audit.k8s.io/v1
+            kind: Policy
+            rules:
+              - level: RequestResponse
+                resources:
+                  - group: ""
+                    resources:
+                      - pods
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+[pass]
+<h2><a id="_method_2_use_the_directives_machineselectorfiles_and_machineglobalconfig"></a>方法2：ディレクティブ`machineSelectorFiles`と`machineGlobalConfig`を使用します。</h2>
+
+[NOTE]
+====
+
+この機能はRancher v2.7.2以降で利用可能です。
+====
+
+
+`machineSelectorFiles`を使用して監査ポリシーファイルをコントロールプレーンノードに配信し、`machineGlobalConfig`を使用してkube-apiserverのオプションを設定できます。
+
+前提条件として、監査ポリシーのソースとなる{xref-secrets}[シークレット]または{xref-configmaps}[コンフィグマップ]を作成する必要があります。
+
+シークレットまたはコンフィグマップは、以下の要件を満たす必要があります：
+
+. それは、Clusterオブジェクトが存在する`fleet-default`ネームスペースにある必要があります。
+. ターゲットクラスターが使用できるようにするアノテーション`rke.cattle.io/object-authorized-for-clusters: <cluster-name1>,<cluster-name2>`を必ず備えていなければなりません。
+
+[TIP]
+====
+
+Rancher Dashboardは、シークレットまたはコンフィグマップを作成するための使いやすいフォームを提供します。
+====
+
+
+例:
+
+[,yaml]
+----
+apiVersion: v1
+data:
+  audit-policy: >-
+    IyBMb2cgYWxsIHJlcXVlc3RzIGF0IHRoZSBNZXRhZGF0YSBsZXZlbC4KYXBpVmVyc2lvbjogYXVkaXQuazhzLmlvL3YxCmtpbmQ6IFBvbGljeQpydWxlczoKLSBsZXZlbDogTWV0YWRhdGE=
+kind: Secret
+metadata:
+  annotations:
+    rke.cattle.io/object-authorized-for-clusters: cluster1
+  name: <name1>
+  namespace: fleet-default
+----
+
+YAMLでクラスターを編集し、`machineSelectorFiles`および`machineGlobalConfig`ディレクティブを利用することで、監査ログを有効にして構成します。
+
+例:
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - audit-policy-file=<customized-path>/dev-audit-policy.yaml
+        - audit-log-path=<customized-path>/dev-audit.logs
+    machineSelectorFiles:
+      - fileSources:
+          - configMap:
+              name: ''
+            secret:
+              items:
+                - key: audit-policy
+                  path: <customized-path>/dev-audit-policy.yaml
+              name: dev-audit-policy
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+クラスター構成に関する詳細情報は、{xref-rke2-config}[RKE2クラスター構成リファレンス]ページを参照してください。
+--
+
+K3s::
++
+--
+
+[NOTE]
+====
+
+この機能はRancher v2.7.2以降で利用可能です。
+====
+
+
+`machineSelectorFiles`を使用して監査ポリシーファイルをコントロールプレーンノードに配信し、`machineGlobalConfig`を使用してkube-apiserverのオプションを設定できます。
+
+前提条件として、監査ポリシーのソースとなる{xref-secrets}[シークレット]または{xref-configmaps}[コンフィグマップ]を作成する必要があります。
+
+シークレットまたはコンフィグマップは、以下の要件を満たす必要があります：
+
+. それは、Clusterオブジェクトが存在する`fleet-default`ネームスペースにある必要があります。
+. ターゲットクラスターが使用できるようにするアノテーション`rke.cattle.io/object-authorized-for-clusters: <cluster-name1>,<cluster-name2>`を必ず備えていなければなりません。
+
+[TIP]
+====
+
+Rancher Dashboardは、{xref-secrets}[シークレット]または{xref-configmaps}[コンフィグマップ]を作成するための使いやすいフォームを提供します。
+====
+
+
+例:
+
+[,yaml]
+----
+apiVersion: v1
+data:
+  audit-policy: >-
+    IyBMb2cgYWxsIHJlcXVlc3RzIGF0IHRoZSBNZXRhZGF0YSBsZXZlbC4KYXBpVmVyc2lvbjogYXVkaXQuazhzLmlvL3YxCmtpbmQ6IFBvbGljeQpydWxlczoKLSBsZXZlbDogTWV0YWRhdGE=
+kind: Secret
+metadata:
+  annotations:
+    rke.cattle.io/object-authorized-for-clusters: cluster1
+  name: <name1>
+  namespace: fleet-default
+----
+
+YAMLでクラスターを編集し、`machineSelectorFiles`および`machineGlobalConfig`ディレクティブを利用することで、監査ログを有効にして設定します。
+
+例:
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - audit-policy-file=<customized-path>/dev-audit-policy.yaml
+        - audit-log-path=<customized-path>/dev-audit.logs
+    machineSelectorFiles:
+      - fileSources:
+          - configMap:
+              name: ''
+            secret:
+              items:
+                - key: audit-policy
+                  path: <customized-path>/dev-audit-policy.yaml
+              name: dev-audit-policy
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+クラスター設定に関する詳細情報は、{xref-k3s-config}[K3sクラスター設定リファレンス]ページを参照してください。
+--
+======

@@ -1,0 +1,94 @@
+= プロキシの背後で{fleet-product-name}を使用する。
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/fleet/use-fleet-behind-a-proxy.adoc 
+:product-path: integrations/fleet/use-fleet-behind-a-proxy.adoc
+
+このセクションでは、パブリックIPを持つRancherサーバーと、パブリックIPを持たないKubernetesクラスターをプロキシを使用するように設定した環境でFleetを有効にする方法を学びます。
+
+Rancherは、登録されたダウンストリームクラスターとの接続を確立しません。ダウンストリームクラスターにデプロイされたRancherエージェントは、Rancherとの接続を確立できる必要があります。
+
+プロキシの背後でFleetを機能させるには、ダウンストリームクラスターのために*エージェント環境変数*を設定する必要があります。これらはクラスター単位の設定オプションです。
+
+Rancher UIを通じて、登録されたクラスターやカスタムクラスターを含む任意のクラスタータイプのためにこれらの環境変数を設定できます。変数は、既存のクラスターを編集する際や新しいクラスターをプロビジョニングする際に追加できます。
+
+パブリックダウンストリームクラスターの場合、<<_setting_environment_variables_in_the_rancher_ui,Rancher UIで必要な環境変数を設定するだけで十分です。>>
+
+プライベートノードまたはプライベートクラスターの場合、環境変数はノード自体に設定する必要があります。その後、環境変数は通常、カスタムクラスターをプロビジョニングする際やプライベートクラスターを登録する際にRancher UIから設定されます。K3s KubernetesクラスターのUbuntuノードで環境変数を設定する方法の例については、<<_setting_environment_variables_on_private_nodes,このセクションを参照してください。>>
+
+[#_required_environment_variables]
+== 必要な環境変数
+
+プロキシのためにFleetエージェント環境変数を追加する際は、`<PROXY_IP>`をあなたのプライベートプロキシIPに置き換えてください。
+
+[CAUTION]
+====
+`NO_PROXY`環境変数は標準化されておらず、値の受け入れられる形式はアプリケーションによって異なる場合があります。Rancherの`NO_PROXY`変数を構成する際、値はGolangが期待する形式に従う必要があります。
+
+具体的には、値はIPアドレス、CIDR表記、ドメイン名、または特別なDNSラベル（例：`*`）のみを含むカンマ区切りの文字列である必要があります。期待される値の形式の完全な説明については、 https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config[**上流のGolangドキュメント**]を参照してください。
+====
+
+|===
+| 変数名 | 値
+
+| `HTTP_PROXY`
+| \http://<PROXY_IP>:8888
+
+| `HTTPS_PROXY`
+| \https://<PROXY_IP>:8888
+
+| `NO_PROXY`
+| 127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+|===
+
+[#_setting_environment_variables_in_the_rancher_ui]
+== Rancher UIでの環境変数の設定
+
+既存のクラスターに環境変数を追加するには：
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2/K3s::
++
+--
+. *☰ > クラスター管理*をクリックします。
+. 環境変数を追加したいクラスターに移動し、*⋮ > 設定を編集*をクリックします。
+. *クラスター設定*の下にある*エージェント環境変数*をクリックします。
+. *[追加]* をクリックします。
+. <<_required_environment_variables,必要な環境変数を入力してください。>>
+. ［*保存*］をクリックします。
+--
+
+RKE::
++
+--
+. *☰ > クラスター管理*をクリックします。
+. 環境変数を追加したいクラスターに移動し、*⋮ > 設定を編集*をクリックします。
+. *詳細オプション*をクリックします。
+. 「*環境変数を追加する*」をクリックしてください。
+. <<_required_environment_variables,必要な環境変数を入力してください。>>
+. ［*保存*］をクリックします。
+--
+======
+
+*結果:*Fleet agentはプロキシの背後で動作します。
+
+[#_setting_environment_variables_on_private_nodes]
+== プライベートノードにおける環境変数の設定
+
+プライベートノードおよびプライベートクラスターの場合、プロキシ環境変数はノード自体に設定する必要があり、Rancher UIからも構成する必要があります。
+
+この例は、K3s Kubernetesクラスター内のUbuntuノードで環境変数がどのように設定されるかを示しています。
+
+----
+ssh -o ForwardAgent=yes ubuntu@<public_proxy_ip>
+ssh <k3s_ip>
+export proxy_private_ip=<private_proxy_ip>
+export HTTP_PROXY=http://${proxy_private_ip}:8888
+export HTTPS_PROXY=http://${proxy_private_ip}:8888
+export NO_PROXY=127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+----

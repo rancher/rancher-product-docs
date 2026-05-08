@@ -1,0 +1,113 @@
+= Instalando {rancher-product-name} en un entorno VMware vSphere
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/on-premises-rancher-in-vsphere.adoc 
+:product-path: installation-and-upgrade/best-practices/rancher-on-vsphere.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+Esta guía describe una arquitectura de referencia para instalar Rancher en un clúster de Kubernetes RKE en un entorno VMware vSphere. También describe las mejores prácticas estándar de vSphere según lo documentado por VMware.
+
+.Descripción general de la solución
+image::rancher-on-prem-vsphere.svg[Descripción general de la solución]
+
+[#_1_load_balancer_considerations]
+== 1. Consideraciones del balanceador de carga
+
+Se requiere un balanceador de carga para dirigir el tráfico a las cargas de trabajo de Rancher que residen en los nodos RKE.
+
+[#_leverage_fault_tolerance_and_high_availability]
+=== Aprovechar la Tolerancia a Fallos y la Alta Disponibilidad
+
+Aprovechar el uso de un balanceador de carga externo (hardware o software) que tenga funcionalidad de alta disponibilidad inherente (F5, NSX-T, Keepalived, etc.).
+
+[#_back_up_load_balancer_configuration]
+=== Hacer una copia de seguridad de la configuración del balanceador de carga
+
+En caso de una actividad de recuperación ante desastres, la disponibilidad de la configuración del balanceador de carga acelerará el proceso de recuperación.
+
+[#_configure_health_checks]
+=== Configurar Comprobaciones de Salud
+
+Configurar el balanceador de carga para marcar automáticamente los nodos como no disponibles si falla una comprobación de salud. Por ejemplo, NGINX puede facilitar esto con:
+
+`max_fails=3 fail_timeout=5s`
+
+[#_leverage_an_external_load_balancer]
+=== Aprovechar un Balanceador de Carga Externo
+
+Evitar implementar un balanceador de carga de software dentro del clúster de gestión.
+
+[#_secure_access_to_rancher]
+=== Asegurar el Acceso a Rancher
+
+Configurar reglas de Firewall / ACL apropiadas para exponer solo el acceso a Rancher
+
+[#_2_vm_considerations]
+== 2. Consideraciones de VM
+
+[#_size_the_vms_according_to_rancher_documentation]
+=== Dimensionar las VM según la Documentación de Rancher
+
+Ver {xref-install-reqs}[Requisitos para la instalación].
+
+[#_leverage_vm_templates_to_construct_the_environment]
+=== Aprovechar las plantillas de VM para construir el entorno
+
+Para facilitar la consistencia de las máquinas virtuales desplegadas en el entorno, considere el uso de "imagen dorada" en forma de plantillas de VM. Packer se puede utilizar para lograr esto, añadiendo mayores opciones de personalización.
+
+[#_leverage_drs_anti_affinity_rules_where_possible_to_separate_rancher_cluster_nodes_across_esxi_hosts]
+=== Aprovechar las reglas de anti-afinidad de DRS (donde sea posible) para separar los nodos del clúster de Rancher entre hosts de ESXi
+
+Hacer esto asegurará que las máquinas virtuales de los nodos se distribuyan entre múltiples hosts de ESXi, previniendo un único punto de fallo a nivel de host.
+
+[#_leverage_drs_anti_affinity_rules_where_possible_to_separate_rancher_cluster_nodes_across_datastores]
+=== Aprovechar las reglas de anti-afinidad de DRS (donde sea posible) para separar los nodos del clúster de Rancher entre almacenes de datos
+
+Hacer esto asegurará que las máquinas virtuales de los nodos se distribuyan entre múltiples almacenes de datos, previniendo un único punto de fallo a nivel de almacén de datos.
+
+[#_configure_vms_as_appropriate_for_kubernetes]
+=== Configurar las máquinas virtuales según sea apropiado para Kubernetes
+
+Es importante seguir las mejores prácticas de K8s y etcd al desplegar sus nodos, incluyendo deshabilitar el intercambio, verificar que tiene conectividad de red completa entre todas las máquinas en el clúster, utilizando nombres de host únicos, direcciones MAC y product_uuids para cada nodo.
+
+[#_3_network_considerations]
+== 3. Consideraciones de red
+
+[#_leverage_low_latency_high_bandwidth_connectivity_between_etcd_nodes]
+=== Aprovechar la conectividad de baja latencia y de alto ancho de banda entre los nodos de ETCD
+
+Desplegar miembros de etcd dentro de un único centro de datos donde sea posible para evitar sobrecargas de latencia y reducir la probabilidad de particionamiento de red. Para la mayoría de las configuraciones, las conexiones de 1Gb serán suficientes. Para clústeres grandes, las conexiones de 10Gb pueden reducir el tiempo necesario para restaurar desde una copia de seguridad.
+
+[#_consistent_ip_addressing_for_vms]
+=== Asignación consistente de direcciones IP para las máquinas virtuales
+
+Cada nodo utilizado debe tener una IP estática configurada. En caso de DHCP, cada nodo debe tener una reserva DHCP para asegurarse de que el nodo obtenga la misma IP asignada.
+
+[#_4_storage_considerations]
+== 4. Consideraciones de almacenamiento
+
+[#_leverage_ssd_drives_for_etcd_nodes]
+=== Aprovechar unidades SSD para los nodos de ETCD
+
+ETCD es muy sensible a la latencia de escritura. Por lo tanto, aprovecha los discos SSD siempre que sea posible.
+
+[#_5_backups_and_disaster_recovery]
+== 5. Copias de seguridad y recuperación ante desastres
+
+[#_perform_regular_management_cluster_backups]
+=== Realiza copias de seguridad regulares del clúster de gestión
+
+Rancher almacena sus datos en el almacén de datos ETCD del clúster de Kubernetes en el que reside. Al igual que con cualquier clúster de Kubernetes, realiza copias de seguridad frecuentes y probadas de este clúster.
+
+[#_back_up_rancher_cluster_node_vms]
+=== Realiza copias de seguridad de las máquinas virtuales de los nodos del clúster de Rancher
+
+Incorpora las máquinas virtuales del nodo de gestión de Rancher dentro de una directiva estándar de copias de seguridad de máquinas virtuales.

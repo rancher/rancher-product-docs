@@ -1,0 +1,758 @@
+= Cluster Autoscaler com Grupos de Auto Scaling do AWS EC2
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+ifeval::["{build-type}" != "community"]
+:xref-port-reqs: xref:installation-and-upgrade/requirements/port-requirements.adoc
+:xref-cloud-provider-amazon: xref:cluster-deployment/set-up-cloud-providers/amazon.adoc
+:xref-production-checklist: xref:cluster-deployment/production-checklist/production-checklist.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-port-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/port-requirements.adoc
+:xref-cloud-provider-amazon: xref:procedimentos/novos-guias-de-usuário/configuração-de-clusters-kubernetes-no-rancher-setup/configuração-de-provedores-de-nuvem/amazon.adoc
+:xref-production-checklist: xref:procedimentos/novos-guias-de-usuário/configuração-de-clusters-kubernetes-no-rancher-setup/lista-de-verificação-para-clusters-prontos-para-produção/index.adoc
+endif::[]
+
+Este guia mostrará como instalar e usar https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/[Kubernetes cluster-autoscaler] em clusters personalizados do Rancher usando Grupos de Auto Scaling do AWS EC2.
+
+Vamos instalar um cluster personalizado RKE2 do Rancher com um número fixo de nós com os papéis etcd e controlplane, e um número variável de nós com o papel de worker, gerenciado por `cluster-autoscaler`.
+
+[#_prerequisites]
+== Pré-requisitos
+
+Estes elementos são necessários para seguir este guia:
+
+* O servidor Rancher está em funcionamento
+* Você tem um usuário do AWS EC2 com permissões adequadas para criar máquinas virtuais, grupos de auto scaling e perfis e papéis IAM
+
+[#_1_create_a_custom_cluster]
+=== 1. Criar um Cluster Personalizado
+
+No servidor Rancher, devemos criar um cluster k8s personalizado. Consulte https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/[aqui] para verificar a compatibilidade de versões.
+
+Certifique-se de que o nome do cloud_provider esteja definido como `amazonec2`. Uma vez que o cluster é criado, precisamos obter:
+
+* clusterID: `c-xxxxx` será usado na tag da instância EC2 `kubernetes.io/cluster/<clusterID>`
+* clusterName: será usado na tag da instância EC2 `k8s.io/cluster-autoscaler/<clusterName>`
+* nodeCommand: será adicionado nos dados do usuário da instância EC2 para incluir novos nós no cluster
++
+[,sh]
+----
+  sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:<RANCHER_VERSION> --server https://<RANCHER_URL> --token <RANCHER_TOKEN> --ca-checksum <RANCHER_CHECKSUM> <roles>
+----
+
+[#_2_configure_the_cloud_provider]
+=== 2. Configurar o Provedor de Nuvem
+
+No AWS EC2, devemos criar alguns objetos para configurar nosso sistema. Definimos três grupos distintos e perfis IAM para configurar na AWS.
+
+. Grupo de Auto Scaling: Nós que farão parte do Grupo de Auto Scaling EC2 (ASG). O ASG será utilizado por `cluster-autoscaler` para escalar para cima e para baixo.
+ ** Perfil IAM: Requerido pelos nós k8s onde o cluster-autoscaler estará em execução. É recomendado para nós mestres do Kubernetes. Esse perfil é chamado `K8sAutoscalerProfile`.
+
++
+[,json]
+----
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Action": [
+                   "autoscaling:DescribeAutoScalingGroups",
+                   "autoscaling:DescribeAutoScalingInstances",
+                   "autoscaling:DescribeLaunchConfigurations",
+                   "autoscaling:SetDesiredCapacity",
+                   "autoscaling:TerminateInstanceInAutoScalingGroup",
+                   "autoscaling:DescribeTags",
+                   "autoscaling:DescribeLaunchConfigurations",
+                   "ec2:DescribeLaunchTemplateVersions"
+               ],
+               "Resource": [
+                   "*"
+               ]
+           }
+       ]
+   }
+----
+. Grupo mestre: Nós que farão parte do etcd do Kubernetes e/ou planos de controle. Isso estará fora do ASG.
+ ** Perfil IAM: Requerido pela integração do cloud_provider do Kubernetes. Opcionalmente, `AWS_ACCESS_KEY` e `AWS_SECRET_KEY` podem ser usados em vez de https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/aws/README.md#using-aws-credentials[using-aws-credentials.] Esse perfil é chamado `K8sMasterProfile`.
+
++
+[,json]
+----
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Action": [
+                   "autoscaling:DescribeAutoScalingGroups",
+                   "autoscaling:DescribeLaunchConfigurations",
+                   "autoscaling:DescribeTags",
+                   "ec2:DescribeInstances",
+                   "ec2:DescribeRegions",
+                   "ec2:DescribeRouteTables",
+                   "ec2:DescribeSecurityGroups",
+                   "ec2:DescribeSubnets",
+                   "ec2:DescribeVolumes",
+                   "ec2:CreateSecurityGroup",
+                   "ec2:CreateTags",
+                   "ec2:CreateVolume",
+                   "ec2:ModifyInstanceAttribute",
+                   "ec2:ModifyVolume",
+                   "ec2:AttachVolume",
+                   "ec2:AuthorizeSecurityGroupIngress",
+                   "ec2:CreateRoute",
+                   "ec2:DeleteRoute",
+                   "ec2:DeleteSecurityGroup",
+                   "ec2:DeleteVolume",
+                   "ec2:DetachVolume",
+                   "ec2:RevokeSecurityGroupIngress",
+                   "ec2:DescribeVpcs",
+                   "elasticloadbalancing:AddTags",
+                   "elasticloadbalancing:AttachLoadBalancerToSubnets",
+                   "elasticloadbalancing:ApplySecurityGroupsToLoadBalancer",
+                   "elasticloadbalancing:CreateLoadBalancer",
+                   "elasticloadbalancing:CreateLoadBalancerPolicy",
+                   "elasticloadbalancing:CreateLoadBalancerListeners",
+                   "elasticloadbalancing:ConfigureHealthCheck",
+                   "elasticloadbalancing:DeleteLoadBalancer",
+                   "elasticloadbalancing:DeleteLoadBalancerListeners",
+                   "elasticloadbalancing:DescribeLoadBalancers",
+                   "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                   "elasticloadbalancing:DetachLoadBalancerFromSubnets",
+                   "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                   "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                   "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                   "elasticloadbalancing:SetLoadBalancerPoliciesForBackendServer",
+                   "elasticloadbalancing:AddTags",
+                   "elasticloadbalancing:CreateListener",
+                   "elasticloadbalancing:CreateTargetGroup",
+                   "elasticloadbalancing:DeleteListener",
+                   "elasticloadbalancing:DeleteTargetGroup",
+                   "elasticloadbalancing:DescribeListeners",
+                   "elasticloadbalancing:DescribeLoadBalancerPolicies",
+                   "elasticloadbalancing:DescribeTargetGroups",
+                   "elasticloadbalancing:DescribeTargetHealth",
+                   "elasticloadbalancing:ModifyListener",
+                   "elasticloadbalancing:ModifyTargetGroup",
+                   "elasticloadbalancing:RegisterTargets",
+                   "elasticloadbalancing:SetLoadBalancerPoliciesOfListener",
+                   "iam:CreateServiceLinkedRole",
+                   "ecr:GetAuthorizationToken",
+                   "ecr:BatchCheckLayerAvailability",
+                   "ecr:GetDownloadUrlForLayer",
+                   "ecr:GetRepositoryPolicy",
+                   "ecr:DescribeRepositories",
+                   "ecr:ListImages",
+                   "ecr:BatchGetImage",
+                   "kms:DescribeKey"
+               ],
+               "Resource": [
+                   "*"
+               ]
+           }
+       ]
+   }
+----
+ ** Função IAM: `K8sMasterRole: [K8sMasterProfile,K8sAutoscalerProfile]`.
+ ** Grupo de Segurança: `K8sMasterSg`. More info at {xref-port-reqs}#_downstream_kubernetes_cluster_nodes[RKE2 ports (custom nodes tab)]
+ ** Tags:
+`kubernetes.io/cluster/<clusterID>: owned`
+ ** Dados do usuário: `K8sMasterUserData` Ubuntu 18.04(ami-0e11cbb34015ff725), instala o Docker e adiciona o nó etcd+controlplane ao cluster K8s.
++
+[,sh]
+----
+#!/bin/bash -x
+
+cat <<EOF > /etc/sysctl.d/90-kubelet.conf
+vm.overcommit_memory = 1
+vm.panic_on_oom = 0
+kernel.panic = 10
+kernel.panic_on_oops = 1
+kernel.keys.root_maxkeys = 1000000
+kernel.keys.root_maxbytes = 25000000
+EOF
+sysctl -p /etc/sysctl.d/90-kubelet.conf
+
+curl -sL https://releases.rancher.com/install-docker/19.03.sh | sh
+sudo usermod -aG docker ubuntu
+
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/local-ipv4)
+PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/public-ipv4)
+K8S_ROLES="--etcd --controlplane"
+
+sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:<RANCHER_VERSION> --server https://<RANCHER_URL> --token <RANCHER_TOKEN> --ca-checksum <RANCHER_CA_CHECKSUM> --address ${PUBLIC_IP} --internal-address ${PRIVATE_IP} ${K8S_ROLES}
+----
+. Grupo de nós trabalhadores: Nós trabalhadores que farão parte do k8s. Nós trabalhadores serão escalados pelo cluster-autoscaler usando o ASG.
+ ** Perfil IAM: Fornece integração do nó trabalhador com o provedor de nuvem.
+  Esse perfil é chamado `K8sWorkerProfile`.
+
++
+[,json]
+----
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Action": [
+                   "ec2:DescribeInstances",
+                   "ec2:DescribeRegions",
+                   "ecr:GetAuthorizationToken",
+                   "ecr:BatchCheckLayerAvailability",
+                   "ecr:GetDownloadUrlForLayer",
+                   "ecr:GetRepositoryPolicy",
+                   "ecr:DescribeRepositories",
+                   "ecr:ListImages",
+                   "ecr:BatchGetImage"
+               ],
+               "Resource": "*"
+           }
+       ]
+   }
+----
+
+* Função IAM: `K8sWorkerRole: [K8sWorkerProfile]`.
+* Grupo de segurança: `K8sWorkerSg` More info at {xref-port-reqs}#_downstream_kubernetes_cluster_nodes[RKE2 ports (custom nodes tab)].
+* Tags:
+ ** `kubernetes.io/cluster/<clusterID>: owned`
+ ** `k8s.io/cluster-autoscaler/<clusterName>: true`
+ ** `k8s.io/cluster-autoscaler/enabled: true`
+* Dados do usuário: `K8sWorkerUserData` Ubuntu 18.04(ami-0e11cbb34015ff725), instala o Docker e adiciona o nó trabalhador ao cluster K8s.
++
+[,sh]
+----
+  #!/bin/bash -x
+
+  cat <<EOF > /etc/sysctl.d/90-kubelet.conf
+  vm.overcommit_memory = 1
+  vm.panic_on_oom = 0
+  kernel.panic = 10
+  kernel.panic_on_oops = 1
+  kernel.keys.root_maxkeys = 1000000
+  kernel.keys.root_maxbytes = 25000000
+  EOF
+  sysctl -p /etc/sysctl.d/90-kubelet.conf
+
+  curl -sL https://releases.rancher.com/install-docker/19.03.sh | sh
+  sudo usermod -aG docker ubuntu
+
+  TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/local-ipv4)
+  PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/public-ipv4)
+  K8S_ROLES="--worker"
+
+  sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:<RANCHER_VERSION> --server https://<RANCHER_URL> --token <RANCHER_TOKEN> --ca-checksum <RANCHER_CA_CHECKCSUM> --address ${PUBLIC_IP} --internal-address ${PRIVATE_IP} ${K8S_ROLES}
+----
+
+Mais informações estão em {xref-cloud-provider-amazon}[clusters RKE2 na AWS] e https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/aws/README.md[Cluster Autoscaler na AWS].
+
+[#_3_deploy_nodes]
+=== 3. Implantar Nós
+
+Uma vez que configuramos a AWS, vamos criar VMs para inicializar nosso cluster:
+
+* mestre (etcd+plano de controle): Dependendo das suas necessidades, implante três instâncias mestres com o tamanho adequado. Mais informações estão em {xref-production-checklist}[as recomendações para clusters prontos para produção.]
+ ** Função IAM: `K8sMasterRole`
+ ** Grupo de segurança: `K8sMasterSg`
+ ** Tags:
+  *** `kubernetes.io/cluster/<clusterID>: owned`
+ ** Dados do usuário: `K8sMasterUserData`
+* trabalhador: Defina um ASG no EC2 com as seguintes configurações:
+ ** Nome: `K8sWorkerAsg`
+ ** Função IAM: `K8sWorkerRole`
+ ** Grupo de segurança: `K8sWorkerSg`
+ ** Tags:
+  *** `kubernetes.io/cluster/<clusterID>: owned`
+  *** `k8s.io/cluster-autoscaler/<clusterName>: true`
+  *** `k8s.io/cluster-autoscaler/enabled: true`
+ ** Dados do usuário: `K8sWorkerUserData`
+ ** Instâncias:
+  *** mínimo: 2
+  *** desejado: 2
+  *** máximo: 10
+
+Uma vez que as VMs estejam implantadas, você deve ter um cluster personalizado do Rancher em funcionamento com três nós mestres e dois nós trabalhadores.
+
+[#_4_install_cluster_autoscaler]
+=== 4. Instalar Cluster-autoscaler
+
+Neste ponto, devemos ter o cluster do Rancher em funcionamento. Vamos instalar o cluster-autoscaler nos nós mestres e no namespace `kube-system`, seguindo a recomendação do cluster-autoscaler.
+
+[#_parameters]
+==== Parâmetros
+
+Esta tabela mostra os parâmetros do cluster-autoscaler para ajuste fino:
+
+|===
+| Parâmetro | Default | Descrição
+
+| cluster-name
+| -
+| Nome do cluster com escalonamento automático, se disponível
+
+| address
+| :8085
+| O endereço para expor as métricas do Prometheus
+
+| kubernetes
+| -
+| Localização do mestre do Kubernetes. Deixe em branco para o padrão
+
+| kubeconfig
+| -
+| Caminho para o arquivo kubeconfig com informações de autorização e localização do mestre
+
+| cloud-config
+| -
+| O caminho para o arquivo de configuração do provedor de nuvem.  String vazia para nenhum arquivo de configuração
+
+| namespace
+| "kube-system"
+| Namespace no qual o cluster-autoscaler é executado
+
+| escalonamento-para-baixo-habilitado
+| true
+| O CA deve reduzir o tamanho do cluster?
+
+| scale-down-delay-after-add
+| "10m"
+| Quanto tempo após o aumento de escala a avaliação de redução de escala é retomada
+
+| scale-down-delay-after-delete
+| 0
+| Quanto tempo após a exclusão do nó a avaliação de redução de escala é retomada, padrão é scanInterval
+
+| scale-down-delay-after-failure
+| "3m"
+| Quanto tempo após a falha de redução de escala a avaliação de redução de escala é retomada
+
+| scale-down-unneeded-time
+| "10m"
+| Quanto tempo um nó deve ser desnecessário antes de ser elegível para redução de escala
+
+| scale-down-unready-time
+| "20m"
+| Quanto tempo um nó não pronto deve permanecer sem uso antes de ser elegível para redução de escala
+
+| scale-down-utilization-threshold
+| 50%
+| Soma da CPU ou memória de todos os pods em execução no nó dividida pelo recurso alocável correspondente do nó, abaixo do qual um nó pode ser considerado para redução de escala
+
+| scale-down-gpu-utilization-threshold
+| 50%
+| Soma dos pedidos de GPU de todos os pods em execução no nó dividida pelo recurso alocável do nó, abaixo do qual um nó pode ser considerado para redução de escala
+
+| scale-down-non-empty-candidates-count
+| 30
+| Número máximo de nós não vazios considerados em uma iteração como candidatos para redução de escala com drenagem
+
+| scale-down-candidates-pool-ratio
+| 10%
+| Uma proporção de nós que são considerados como candidatos adicionais não vazios para redução de escala quando alguns candidatos da iteração anterior não são mais válidos
+
+| scale-down-candidates-pool-min-count
+| 50
+| Número mínimo de nós que são considerados como candidatos adicionais não vazios para redução de escala quando alguns candidatos da iteração anterior não são mais válidos
+
+| node-deletion-delay-timeout
+| "2m"
+| Tempo máximo que o CA aguarda para remover anotações delay-deletion.cluster-autoscaler.kubernetes.io/ antes de excluir o nó
+
+| scan-interval
+| "10s"
+| Com que frequência o cluster é reavaliado para aumentar ou diminuir a escala
+
+| max-nodes-total
+| 0
+| Número máximo de nós em todos os grupos de nós. O escalador automático de cluster não aumentará o cluster além desse número
+
+| cores-total
+| "0:320000"
+| Número mínimo e máximo de kernels no cluster, no formato `<min>:<max>.` O escalador automático de cluster não aumentará o cluster além desses números
+
+| memory-total
+| "0:6400000"
+| Número mínimo e máximo de gigabytes de memória no cluster, no formato `<min>:<max>.` O escalador automático de cluster não aumentará o cluster além desses números
+
+| provedor-nuvem
+| -
+| Tipo de provedor de nuvem
+
+| max-bulk-soft-taint-count
+| 10
+| Número máximo de nós que podem ser tainted/untainted com PreferNoSchedule ao mesmo tempo. Defina como 0 para desativar esse tainting.
+
+| max-bulk-soft-taint-time
+| "3s"
+| Duração máxima de tainting/untainting em nós com PreferNoSchedule ao mesmo tempo
+
+| max-empty-bulk-delete
+| 10
+| Número máximo de nós vazios que podem ser excluídos ao mesmo tempo
+
+| max-graceful-termination-sec
+| 600
+| Número máximo de segundos que o CA aguarda pela terminação do pod ao tentar reduzir a escala de um nó
+
+| max-total-unready-percentage
+| 45
+| Porcentagem máxima de nós não prontos no cluster.  Após isso ser excedido, o CA interrompe as operações
+
+| ok-total-unready-count
+| 3
+| Número de nós não prontos permitidos, independentemente da porcentagem máxima de nós não prontos
+
+| scale-up-from-zero
+| true
+| O CA deve escalar quando não há nós prontos
+
+| max-node-provision-time
+| "15m"
+| Tempo máximo que o CA espera para que o nó seja provisionado
+
+| nós
+| -
+| define o tamanho mínimo, máximo e outros dados de configuração para um grupo de nós em um formato aceito pelo provedor de nuvem. Pode ser usado várias vezes. Formato: `<min>:<max>:<other...>`
+
+| node-group-auto-discovery
+| -
+| Uma ou mais definição(ões) de descoberta automática do grupo de nós. Uma definição é expressa `<name of discoverer>:[<key>[=<value>]]`
+
+| estimator
+| "binpacking"
+| Tipo de estimador de recursos a ser usado na escalada. Valores disponíveis: ["binpacking"]
+
+| expansor
+| "random"
+| Tipo de expansor do grupo de nós a ser usado na escalada. Valores disponíveis: `["random","most-pods","least-waste","price","priority"]`
+
+| ignore-daemonsets-utilization
+| falso
+| O CA deve ignorar os pods DaemonSet ao calcular a utilização de recursos para redução de escala
+
+| ignore-mirror-pods-utilization
+| falso
+| O CA deve ignorar os pods Mirror ao calcular a utilização de recursos para redução de escala
+
+| write-status-configmap
+| true
+| O CA deve escrever informações de status em um configmap
+
+| máxima-inatividade
+| "10m"
+| Tempo máximo desde a última atividade registrada do escalador automático antes do reinício automático
+
+| max-failing-time
+| "15m"
+| Tempo máximo desde a última execução bem-sucedida do escalador automático antes do reinício automático
+
+| balance-similar-node-groups
+| falso
+| Detectar grupos de nós semelhantes e equilibrar o número de nós entre eles
+
+| node-autoprovisioning-enabled
+| falso
+| O CA deve autoprovisionar grupos de nós quando necessário
+
+| max-autoprovisioned-node-group-count
+| 15
+| O número máximo de grupos autoprovisionados no cluster
+
+| unremovable-node-recheck-timeout
+| "5m"
+| O tempo limite antes de verificarmos novamente um nó que não pôde ser removido antes
+
+| expendable-pods-priority-cutoff
+| -10
+| Pods com prioridade abaixo do limite serão descartáveis. Eles podem ser eliminados sem qualquer consideração durante a redução de escala e não causam aumento de escala. Pods com prioridade nula (PodPriority desativado) são não descartáveis
+
+| regional
+| falso
+| O cluster é regional
+
+| new-pod-scale-up-delay
+| "0s"
+| Pods com menos idade do que isso não serão considerados para aumento de escala
+
+| ignorar-taint
+| -
+| Especifica um taint a ser ignorado nos templates de nó ao considerar escalar um grupo de nós
+
+| balancing-ignore-label
+| -
+| Especifica um rótulo a ser ignorado além do conjunto básico e do conjunto de rótulos do provedor de nuvem ao comparar se dois grupos de nós são semelhantes
+
+| aws-use-static-instance-list
+| falso
+| O CA deve buscar tipos de instância em tempo de execução ou usar uma lista estática. Apenas AWS
+
+| perfilamento
+| falso
+| O endpoint debug/pprof está habilitado
+|===
+
+[#_deployment]
+==== Implantação
+
+Com base no exemplo https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/aws/examples/cluster-autoscaler-run-on-control-plane.yaml[cluster-autoscaler-run-on-control-plane.yaml], criamos nosso próprio `cluster-autoscaler-deployment.yaml` para usar a configuração preferida de https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/aws#auto-discovery-setup[configuração de auto-discovery], atualizando tolerâncias, nodeSelector, versão da imagem e configuração de comando:
+
+[,yml]
+----
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+  name: cluster-autoscaler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-autoscaler
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+rules:
+  - apiGroups: [""]
+    resources: ["events", "endpoints"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    resourceNames: ["cluster-autoscaler"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["watch", "list", "get", "update"]
+  - apiGroups: [""]
+    resources:
+      - "pods"
+      - "services"
+      - "replicationcontrollers"
+      - "persistentvolumeclaims"
+      - "persistentvolumes"
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["extensions"]
+    resources: ["replicasets", "daemonsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "replicasets", "daemonsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csinodes"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["batch", "extensions"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resourceNames: ["cluster-autoscaler"]
+    resources: ["leases"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create","list","watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cluster-autoscaler-status", "cluster-autoscaler-priority-expander"]
+    verbs: ["delete", "get", "update", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-autoscaler
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: cluster-autoscaler
+    namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: cluster-autoscaler
+    namespace: kube-system
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8085'
+    spec:
+      serviceAccountName: cluster-autoscaler
+      tolerations:
+        - effect: NoSchedule
+          operator: "Equal"
+          value: "true"
+          key: node-role.kubernetes.io/controlplane
+      nodeSelector:
+        node-role.kubernetes.io/controlplane: "true"
+      containers:
+        - image: eu.gcr.io/k8s-artifacts-prod/autoscaling/cluster-autoscaler:<VERSION>
+          name: cluster-autoscaler
+          resources:
+            limits:
+              cpu: 100m
+              memory: 300Mi
+            requests:
+              cpu: 100m
+              memory: 300Mi
+          command:
+            - ./cluster-autoscaler
+            - --v=4
+            - --stderrthreshold=info
+            - --cloud-provider=aws
+            - --skip-nodes-with-local-storage=false
+            - --expander=least-waste
+            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/<clusterName>
+          volumeMounts:
+            - name: ssl-certs
+              mountPath: /etc/ssl/certs/ca-certificates.crt
+              readOnly: true
+          imagePullPolicy: "Always"
+      volumes:
+        - name: ssl-certs
+          hostPath:
+            path: "/etc/ssl/certs/ca-certificates.crt"
+----
+
+Uma vez que o arquivo de manifesto esteja preparado, implante-o no cluster Kubernetes (a interface do Rancher pode ser usada em vez disso):
+
+[,sh]
+----
+kubectl -n kube-system apply -f cluster-autoscaler-deployment.yaml
+----
+
+[NOTE]
+====
+
+A implantação do cluster-autoscaler também pode ser configurada usando https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/aws#manual-configuration[configuração manual]
+====
+
+
+[#_testing]
+== qualidade
+
+Neste ponto, devemos ter um escalador de cluster em funcionamento em nosso cluster personalizado do Rancher. O escalador de cluster deve gerenciar `K8sWorkerAsg` ASG para escalar para cima e para baixo entre 2 e 10 nós, quando uma das seguintes condições for verdadeira:
+
+* Existem pods que falharam ao rodar no cluster devido a recursos insuficientes. Nesse caso, o cluster é escalado para cima.
+* Existem nós no cluster que estão subutilizados por um período prolongado e seus pods podem ser alocados em outros nós existentes. Nesse caso, o cluster é escalado para baixo.
+
+[#_generating_load]
+=== Gerando Carga
+
+Preparamos um `test-deployment.yaml` apenas para gerar carga no cluster Kubernetes e verificar se o escalador de cluster está funcionando corretamente. A implantação de teste está solicitando 1000m de CPU e 1024Mi de memória por três réplicas. Ajuste os recursos solicitados e/ou a quantidade de réplicas para garantir que você esgote os recursos do cluster Kubernetes:
+
+[,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: hello-world
+  name: hello-world
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hello-world
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - image: rancher/hello-world
+        imagePullPolicy: Always
+        name: hello-world
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+          requests:
+            cpu: 1000m
+            memory: 1024Mi
+----
+
+Uma vez que a implantação de teste esteja preparada, implante-a no namespace padrão do cluster Kubernetes (a interface do Rancher pode ser usada em vez disso):
+
+----
+kubectl -n default apply -f test-deployment.yaml
+----
+
+[#_checking_scale]
+=== Verificando Escala
+
+Uma vez que os recursos do Kubernetes estejam esgotados, o escalador de cluster deve escalar para cima os nós de trabalho onde os pods não conseguiram ser agendados. Deve escalar para cima até que todos os pods sejam agendados. Você deve ver os novos nós no ASG e no cluster Kubernetes. Verifique os logs no pod do escalador de cluster `kube-system`.
+
+Uma vez que o aumento tenha sido verificado, vamos verificar a redução. Para fazer isso, reduza o número de réplicas na implantação de teste até liberar recursos suficientes do cluster Kubernetes para redução. Você deve ver nós desaparecerem no ASG e no cluster Kubernetes. Verifique os logs no pod do escalador de cluster `kube-system`.

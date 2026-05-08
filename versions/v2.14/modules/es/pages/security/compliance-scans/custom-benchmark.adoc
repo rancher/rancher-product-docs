@@ -1,0 +1,95 @@
+= Creación de una versión de benchmark personalizada para ejecutar un análisis en un clúster.
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/compliance-scans/custom-benchmark.adoc 
+:product-path: security/compliance-scans/custom-benchmark.adoc
+:experimental:
+
+Cada versión de benchmark define un conjunto de archivos de configuración de pruebas que definen las pruebas de cumplimiento que ejecutará la herramienta https://github.com/aquasecurity/kube-bench[kube-bench].
+La aplicación `rancher-compliance` instala algunas versiones de benchmark predeterminadas que se enumeran en el menú de la aplicación Compliance Benchmark.
+
+Pero podría haber algunas implementaciones de clúster de Kubernetes que requieran configuraciones personalizadas de las pruebas de benchmark. Por ejemplo, la vía a los archivos de configuración o certificados de Kubernetes podría ser diferente de la ubicación estándar donde los benchmarks CIS en sentido ascendente los buscan.
+
+Pero en los siguientes casos, puede ser necesaria una configuración o remediación personalizada:
+
+* Ubicaciones de archivos no estándar: Cuando los binarios de Kubernetes, los archivos de configuración o las rutas de certificados se desvían de los valores predeterminados del benchmark en sentido ascendente.
++
+Ejemplo: A diferencia de Kubernetes tradicional, K3s agrupa los componentes del plano de control en un solo binario. Por lo tanto, la presencia y configuración del `--anonymous-auth` debe verificarse en los registros de K3s (`journalctl`), no a través de comprobaciones de procesos `kube-apiserver` (`ps`).
+
+* Mitigaciones de riesgo alternativas: Si una configuración no cumple con una verificación pero tiene un control compensatorio igualmente efectivo con justificación. O simplemente no está preocupada por el requisito de verificación debido a su diseño.
++
+Ejemplo: Por defecto, K3s incrusta el servidor API dentro del proceso k3s. No existe un archivo de especificación del pod del servidor API, por lo que no es necesario verificar los permisos de dicho archivo.
+
+[#_1_prepare_the_custom_benchmark_version_configmap]
+== 1. Prepara el ConfigMap de la versión de benchmark personalizada
+
+Para crear una versión de benchmark personalizada, primero necesitas crear un ConfigMap que contenga los archivos de configuración de la versión de benchmark y subirlo a tu clúster de Kubernetes donde deseas ejecutar el escaneo.
+
+Para preparar un ConfigMap de versión de benchmark personalizada, supongamos que queremos añadir una versión de benchmark personalizada llamada `foo`.
+
+. Crea un directorio llamado `foo` y dentro de este directorio, coloca todos los archivos de configuración YAML que la herramienta https://github.com/aquasecurity/kube-bench[kube-bench] busca. Por ejemplo, aquí están los archivos YAML de configuración para una versión de benchmark genérica CIS 1.5 https://github.com/aquasecurity/kube-bench/tree/master/cfg/cis-1.5
+. Coloca el archivo completo `config.yaml`, que incluye todos los componentes que deben ser probados.
+. Añade el nombre de la versión del Benchmark a la sección `target_mapping` del `config.yaml`:
++
+[,yaml]
+----
+ target_mapping:
+   "foo":
+     - "master"
+     - "node"
+     - "controlplane"
+     - "etcd"
+     - "policies"
+----
+
+. Sube este directorio a tu Clúster de Kubernetes creando un ConfigMap:
++
+[,yaml]
+----
+ kubectl create configmap -n <namespace> foo --from-file=<path to directory foo>
+----
+
+[#_2_add_a_custom_benchmark_version_to_a_cluster]
+== 2. Añade una versión de benchmark personalizada a un clúster
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, ve al clúster donde deseas añadir un benchmark personalizado y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en *Cumplimiento > Versión de benchmark*.
+. Haga clic en *Crear*.
+. Introduce el *Nombre* y una descripción para tu versión de benchmark personalizada.
+. Elige el proveedor del clúster al que se aplica tu versión de benchmark.
+. Elige el ConfigMap que has subido del menú desplegable.
+. Añade los límites de versión mínima y máxima de Kubernetes aplicables, si los hay.
+. Haga clic en *Crear*.
+
+[#_3_create_a_new_profile_for_the_custom_benchmark_version]
+== 3. Crea un nuevo perfil para la versión de benchmark personalizada
+
+Para ejecutar un escaneo utilizando tu versión de benchmark personalizada, necesitas añadir un nuevo Perfil que apunte a esta versión de benchmark.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, ve al clúster donde deseas añadir un benchmark personalizado y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en *Cumplimiento > Escaneo*.
+. Haga clic en *Crear*.
+. Proporciona un *Nombre* y una descripción. En este ejemplo, lo llamamos `foo-profile`.
+. Elige la Versión del Benchmark del menú desplegable.
+. Haga clic en *Crear*.
+
+[#_4_run_a_scan_using_the_custom_benchmark_version]
+== 4. Ejecuta un Escaneo Usando la Versión de Benchmark Personalizada
+
+Una vez que se ha creado el nuevo perfil que apunta a tu versión de benchmark personalizada `foo`, puedes crear un nuevo escaneo para ejecutar las configuraciones de prueba personalizadas en la versión del benchmark.
+
+Para ejecutar un escaneo,
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, ve al clúster donde deseas añadir un benchmark personalizado y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en menu:CIS Benchmark[Escaneo].
+. Haga clic en *Crear*.
+. Elige el nuevo perfil de escaneo del clúster.
+. Haga clic en *Crear*.
+
+*Resultado:* Se genera un informe con los resultados del escaneo. Para ver los resultados, haz clic en el nombre del escaneo que aparece.

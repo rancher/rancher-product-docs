@@ -1,0 +1,178 @@
+= RK-API クイックスタートガイド
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: api/quickstart.adoc 
+:product-path: api/quickstart.adoc
+ifeval::["{build-type}" != "community"]
+:xref-api-reference: xref:api/reference.adoc
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-api-reference: xref:api/api-reference.adoc
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+endif::[]
+
+Kubernetes API を通じて Rancher のリソースにアクセスできます。このガイドは、Rancher ユーザーとしてこの API を使用するための手助けをします。
+
+. 左上隅で、*☰ > グローバル設定*をクリックします。
+. `server-url` フィールドのアドレスを見つけてコピーします。
+. {xref-user-api-keys}#_creating_an_api_key[作成] スコープなしの Rancher API キーを作成します。
+
+[WARNING]
+====
+
+スコープなしの Rancher API キーは、ユーザーがアクセスできるすべてのリソースへの無制限のアクセスを許可します。不正使用を防ぐために、このキーは安全に保管し、頻繁にローテーションする必要があります。
+====
+
+
+. `kubeconfig.yaml` ファイルを作成します。`$SERVER_URL` をサーバーの URL に、`$API_KEY` をあなたの Rancher API キーに置き換えます：
++
+[,yaml]
+----
+ apiVersion: v1
+ kind: Config
+ clusters:
+ - name: "rancher"
+   cluster:
+     server: "$SERVER_URL"
+
+ users:
+ - name: "rancher"
+   user:
+     token: "$API_KEY"
+
+ contexts:
+ - name: "rancher"
+   context:
+     user: "rancher"
+     cluster: "rancher"
+
+ current-context: "rancher"
+----
+
+このファイルは、kubectl や https://github.com/kubernetes/client-go[client-go] などの互換性のあるツールで使用できます。簡単なデモについては、<<_api_kubectl_example,kubectl の例>>を参照してください。
+
+より複雑な証明書設定の取り扱いに関する詳細は、<<_specifying_ca_certs,CA 証明書の指定>>を参照してください。
+
+利用可能な kubeconfig オプションに関する詳細は、 https://kubernetes.io/docs/tasks/access-application-cluster/configure-access-multiple-clusters/[アップストリームドキュメント]を参照してください。
+
+[#_api_kubectl_example]
+== API kubectl の例
+
+この例では、kubectl を使用してプロジェクトを作成し、その後削除する方法を示します。利用可能な他の Rancher リソースのリストについては、{xref-api-reference}[API リファレンス] ページを参照してください。
+
+[NOTE]
+====
+
+現在、すべての Rancher リソースが Rancher Kubernetes API を通じて利用できるわけではありません。
+====
+
+
+. KUBECONFIG 環境変数を、先ほど作成した kubeconfig ファイルに設定します：
+
+[,bash]
+----
+  export KUBECONFIG=$(pwd)/kubeconfig.yaml
+----
+
+. `kubectl explain` を使用して、プロジェクトの利用可能なフィールドやリソースの複雑なサブフィールドを表示します：
+
+[,bash]
+----
+  kubectl explain projects
+  kubectl explain projects.spec
+----
+
+すべてのリソースが詳細な出力を持っているわけではありません。
+
+. `project.yaml`という名前のファイルに次の内容を追加します:
+
+[,yaml]
+----
+  apiVersion: management.cattle.io/v3
+  kind: Project
+  metadata:
+    # name should be unique across all projects in every cluster
+    name: p-abc123
+    # generateName can be used instead of `name` to randomly generate a name.
+    # generateName: p-
+    # namespace should match spec.ClusterName.
+    namespace: local
+  spec:
+    # clusterName should match `metadata.Name` of the target cluster.
+    clusterName: local
+    description: Example Project
+    # displayName is the human-readable name and is visible from the UI.
+    displayName: Example
+----
+
+. プロジェクトを作成します:
+
+[,bash]
+----
+  kubectl create -f project.yaml
+----
+
+. プロジェクトを削除します:
+
+プロジェクトを削除する方法は、プロジェクトの作成方法によって異なります。
+
+*A.プロジェクトを作成する際に`name`を使用した場合*:
+
+ ```bash
+ kubectl delete -f project.yaml
+ ```
+
+*B.`generateName`*を使用した場合:
+
+....
+Replace `$PROJECT_NAME` with the randomly generated name of the project displayed by Kubectl after you created the project.
+
+```bash
+kubectl delete project $PROJECT_NAME -n local
+```
+....
+
+[#_specifying_ca_certs]
+== CA 証明書の指定
+
+ツールが Rancher の CA 証明書を認識できるようにするために、ほとんどのセットアップでは上記のテンプレートに追加の修正が必要です。
+
+. 左上隅で、*☰ > グローバル設定*をクリックします。
+. `ca-certs` フィールドの値を見つけてコピーします。
+. `rancher.crt`という名前のファイルにその値を保存します。
+
+[NOTE]
+====
+  Rancherインスタンスが別のサービスによってプロキシされている場合、そのサービスが使用している証明書を抽出し、ステップ5で示されているようにkubeconfigファイルに追加する必要があります。
+====
+
+
+. 次のコマンドは`rancher.crt`をbase64出力に変換し、すべての改行をトリムし、証明書でkubeconfigのクラスターを更新し、最後に`rancher.crt`ファイルを削除します:
+
+[,bash]
+----
+  export KUBECONFIG=$PATH_TO_RANCHER_KUBECONFIG
+  kubectl config set clusters.rancher.certificate-authority-data $(cat rancher.crt | base64 -i - | tr -d '\n')
+  rm rancher.crt
+----
+
+. （オプション）システムによって信頼されていない自己署名証明書を使用する場合、kubectl を使用して kubeconfig に insecure オプションを設定できます:
+
+[WARNING]
+====
+
+このオプションは、セキュリティリスクがあるため、本番環境では使用すべきではありません。
+====
+
+
+[,bash]
+----
+  export KUBECONFIG=$PATH_TO_RANCHER_KUBECONFIG
+  kubectl config set clusters.rancher.insecure-skip-tls-verify true
+----
+
+Rancherインスタンスが別のサービスによってプロキシされている場合、そのサービスが使用している証明書を抽出し、上記のようにkubeconfigファイルに追加する必要があります。

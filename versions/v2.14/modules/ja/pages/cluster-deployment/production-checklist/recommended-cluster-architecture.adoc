@@ -1,0 +1,122 @@
+= 推奨クラスターアーキテクチャ
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/checklist-for-production-ready-clusters/recommended-cluster-architecture.adoc 
+:product-path: cluster-deployment/production-checklist/recommended-cluster-architecture.adoc
+ifeval::["{build-type}" != "community"]
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-production-checklist-node-roles: xref:cluster-deployment/production-checklist/roles-for-nodes-in-kubernetes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/rancher管理クラスターのノード要件.adoc
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-production-checklist-node-roles: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/roles-for-nodes-in-kubernetes.adoc
+endif::[]
+
+ノードに割り当てることができる役割は、`etcd`、`controlplane`、`worker`の3つです。
+
+[#_separating_worker_nodes_from_nodes_with_other_roles]
+== ワーカーノードを他の役割を持つノードから分離する
+
+クラスターを設計する際には、2つのオプションがあります：
+
+* 各役割に専用のノードを使用する。これにより、指定された役割に必要なコンポーネントのリソースの可用性が確保されます。また、{xref-node-reqs}#_networking_requirements[ポート要件]に従って、各役割間のネットワークトラフィックが厳密に分離されます。
+* `etcd`および`controlplane`の役割を同じノードに割り当てます。これらのノードは、両方の役割のハードウェア要件を満たす必要があります。
+
+いずれの場合でも、`worker`の役割は`etcd`または`controlplane`の役割を持つノードに使用したり追加したりしてはいけません。
+
+したがって、各ノードは次のいずれかの役割構成を持つべきです：
+
+* `etcd`
+* `controlplane`
+* `etcd`と`controlplane`の両方
+* `worker`
+
+[#_recommended_number_of_nodes_with_each_role]
+== 各役割の推奨ノード数
+
+クラスターは次のようにするべきです：
+
+* 1つのノードを失っても生き残るために、役割`etcd`を持つノードを少なくとも3つ持つこと。この数を増やして、より高いノードの耐障害性を実現し、さらに良好な耐障害性を提供するために（可用性）ゾーンに分散させます。
+* マスターコンポーネントの高可用性のために、役割`controlplane`を持つノードを少なくとも2つ持つこと。
+* ノードに障害が発生した場合にワークロードの再スケジューリングを行うためには、役割`worker`を持つノードを少なくとも2つ用意する必要があります。
+
+各役割が何に使用されるかについての詳細は、{xref-production-checklist-node-roles}[Kubernetesにおけるノードの役割に関するセクション]を参照してください。
+
+[#_number_of_controlplane_nodes]
+=== コントロールプレーンノードの数
+
+`controlplane`の役割を持つノードを1つ以上追加することで、すべてのマスターコンポーネントが高可用性になります。
+
+[#_number_of_etcd_nodes]
+=== etcdノードの数
+
+クラスタの可用性を維持しながら一度に失うことができるノードの数は、`etcd`の役割が割り当てられたノードの数によって決まります。nメンバーのクラスタの場合、最小値は(n/2)+1です。したがって、1つの可用性ゾーンの喪失に耐えるために、地域内の3つの異なる可用性ゾーンに`etcd`ノードを作成することをお勧めします。2つのゾーンのみを使用する場合、ノードの過半数を失わないゾーンの喪失にしか耐えられません。
+
+|===
+| `etcd`の役割を持つノード | 過半数 | 障害耐性
+
+| 1
+| 1
+| 0
+
+| 2
+| 2
+| 0
+
+| 3
+| 2
+| *1*
+
+| 4
+| 3
+| 1
+
+| 5
+| 3
+| *2*
+
+| 6
+| 4
+| 2
+
+| 7
+| 4
+| *3*
+
+| 8
+| 5
+| 3
+
+| 9
+| 5
+| *4*
+|===
+
+リファレンス:
+
+* https://etcd.io/docs/v3.5/faq/#what-is-failure-tolerance[公式のetcdドキュメントによる最適なetcdクラスタサイズ]
+* https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/[公式のKubernetesドキュメントによるKubernetesのためのetcdクラスタの運用]
+
+[#_number_of_worker_nodes]
+=== ワーカーノードの数
+
+ノードに障害が発生した場合でもワークロードを再スケジューリングできるよう、役割`worker`を持つノードを1つ以上追加します。
+
+[#_why_production_requirements_are_different_for_the_rancher_cluster_and_the_clusters_running_your_applications]
+=== なぜRancherクラスタとアプリケーションを実行するクラスタの本番環境要件が異なるのか
+
+私たちの{xref-install-rancher}[Kubernetesインストール]の指示は、`worker`の役割専用のノードが存在しないため、運用準備完了のクラスタの定義を満たしていないことに気づいたかもしれません。しかし、あなたのRancherインストールにとって、この3ノードクラスタは有効です。なぜなら：
+
+* 1つの`etcd`ノードの障害に耐えることができます。
+* マスターコンポーネントの複数のインスタンスを持つために、複数の`controlplane`ノードを維持します。
+* このクラスター上にはRancher自体以外の他のワークロードを作成してはいけません。
+
+[#_references]
+== 参考資料
+
+* https://kubernetes.io/docs/concepts/overview/components/#master-components[Kubernetes: マスターコンポーネント]

@@ -1,0 +1,319 @@
+= 3.Kubernetesのインストール（Dockerインストールの場合はスキップ）
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-16
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/install-kubernetes.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/install-kubernetes.adoc
+ifeval::["{build-type}" != "community"]
+:url-rke2-install-ha: https://documentation.suse.com/cloudnative/rke2/latest/en/install/ha.html
+:url-rke2-containerd-reg-config: https://documentation.suse.com/cloudnative/rke2/latest/en/install/containerd_registry_configuration.html
+:url-rke2-install-airgap: https://documentation.suse.com/cloudnative/rke2/latest/en/install/airgap.html
+:url-rke2-cluster-access: https://documentation.suse.com/cloudnative/rke2/latest/en/cluster_access.html
+:xref-arch-rec: xref:about-rancher/architecture/recommendations.adoc
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-install-ha: https://docs.rke2.io/install/ha
+:url-rke2-containerd-reg-config: https://docs.rke2.io/install/private_registry
+:url-rke2-install-airgap: https://docs.rke2.io/install/airgap
+:url-rke2-cluster-access: https://docs.rke2.io/cluster_access
+:xref-arch-rec: xref:reference-guides/rancher-manager-architecture/architecture-recommendations.adoc
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+endif::[]
+
+[NOTE]
+====
+
+Dockerで単一ノードにRancherをインストールする場合は、このセクションをスキップしてください。
+====
+
+
+このセクションでは、Kubernetesクラスターをインストールする方法について説明します。これは、{xref-arch-rec}#_environment_for_kubernetes_installations[ランチャーサーバー環境のベストプラクティス]に従っています。このクラスターは、Rancherサーバーのみを実行するために専用である必要があります。
+
+Rancherは、ホスティングされたKubernetesプロバイダーを含む、任意のKubernetesクラスターにインストールできます。
+
+RKE2またはK3sでエアギャップされたKubernetesクラスターをセットアップする手順は以下の通りです。
+
+[tabs]
+======
+K3s::
++
+--
+このガイドでは、エアギャップされた環境でノードを作成し、バスティオンサーバーに安全なDockerプライベートレジストリがあると仮定しています。
+
+[pass]
+<h2><a id="_1_prepare_images_directory"></a>1.イメージディレクトリの準備</h2>
+
+実行するK3sのバージョンに対して、 https://github.com/k3s-io/k3s/releases[releases]ページからアーキテクチャ用のイメージtarファイルを取得してください。
+
+各ノードでK3sを開始する前に、tarファイルを`images`ディレクトリに配置してください。例えば：
+
+[,sh]
+----
+sudo mkdir -p /var/lib/rancher/k3s/agent/images/
+sudo cp ./k3s-airgap-images-$ARCH.tar /var/lib/rancher/k3s/agent/images/
+----
+
+[pass]
+<h2><a id="_2_create_registry_yaml"></a>2.レジストリYAMLの作成</h2>
+
+`/etc/rancher/k3s/registries.yaml`にregistries.yamlファイルを作成します。これにより、K3sがプライベートレジストリに接続するために必要な詳細が指定されます。
+
+registries.yamlファイルは、必要な情報を入力する前に次のようになります：
+
+[,yaml]
+----
+---
+mirrors:
+  customreg:
+    endpoint:
+      - "https://ip-to-server:5000"
+configs:
+  customreg:
+    auth:
+      username: xxxxxx # this is the registry username
+      password: xxxxxx # this is the registry password
+    tls:
+      cert_file: <path to the cert file used in the registry>
+      key_file:  <path to the key file used in the registry>
+      ca_file: <path to the ca file used in the registry>
+----
+
+なお、現時点ではK3sでは安全なレジストリのみがサポートされています（カスタムCAを使用したSSL）。
+
+K3sのプライベートレジストリ設定ファイルに関する詳細は、 https://rancher.com/docs/k3s/latest/en/installation/private-registry/[K3sのドキュメント]を参照してください。
+
+[pass]
+<h2><a id="_3_install_k3s"></a>3.K3sをインストールする</h2>
+
+Rancherは、サポートされているKubernetesバージョンにインストールする必要があります。ご利用の Rancher バージョンに対してサポートされている Kubernetes のバージョンを確認するには、 https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher サポートマトリックス] を参照してください。
+
+K3s（Kubernetes）バージョンを指定するには、K3sインストールスクリプトを実行する際にINSTALL_K3S_VERSION（例：`INSTALL_K3S_VERSION="v1.24.10+k3s1"`）環境変数を使用します。
+
+エアギャップイメージtarを取得するために使用したのと同じバージョンに一致させて、 https://github.com/k3s-io/k3s/releases[releases]ページからK3sのバイナリを取得してください。
+K3sインストールスクリプトを https://get.k3s.ioで取得してください。
+
+各ノードの`/usr/local/bin`にバイナリを配置してください。
+インストールスクリプトを各ノードの任意の場所に配置し、`install.sh`という名前を付けてください。
+
+各サーバーにK3sをインストールしてください：
+
+----
+INSTALL_K3S_SKIP_DOWNLOAD=true INSTALL_K3S_VERSION=<VERSION> ./install.sh
+----
+
+各エージェントにK3sをインストールしてください：
+
+----
+INSTALL_K3S_SKIP_DOWNLOAD=true INSTALL_K3S_VERSION=<VERSION> K3S_URL=https://<SERVER>:6443 K3S_TOKEN=<TOKEN> ./install.sh
+----
+
+ここで、`<SERVER>`はサーバーのIPまたは有効なDNSで、`<TOKEN>`は`/var/lib/rancher/k3s/server/node-token`で見つかるサーバーのノードトークンです。
+
+[NOTE]
+====
+
+K3sは、エアギャップ環境でのDNSの設定に役立つ可能性のあるkubelets用の`--resolv-conf`フラグも提供します。
+====
+
+[pass]
+<h2><a id="_4_save_and_start_using_the_kubeconfig_file"></a>4.kubeconfig ファイルを保存して使用を開始します。</h2>
+
+各 Rancher サーバーノードに K3s をインストールしたとき、ノードの `/etc/rancher/k3s/k3s.yaml` に `kubeconfig` ファイルが作成されました。このファイルには、クラスターへの完全なアクセス権のための資格情報が含まれており、このファイルは安全な場所に保存する必要があります。
+
+この `kubeconfig` ファイルを使用するには、
+
+. Kubernetes コマンドラインツール https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl,] をインストールします。
+. `/etc/rancher/k3s/k3s.yaml` にあるファイルをコピーし、ローカルマシンのディレクトリ `~/.kube/config` に保存します。
+. kubeconfig ファイルでは、`server` ディレクティブが localhost として定義されています。サーバーをロードバランサーの DNS として構成し、ポート 6443 を参照します。（Kubernetes API サーバーにはポート 6443 でアクセスされ、Rancher サーバーにはポート 80 および 443 でアクセスされます。）以下に`k3s.yaml`の例を示します。
+
+[,yaml]
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*結果:*これで `kubectl` を使用して K3s クラスターを管理できます。複数の kubeconfig ファイルがある場合は、`kubectl` を使用する際にファイルへのパスを渡すことで、使用するファイルを指定できます。
+
+----
+kubectl --kubeconfig ~/.kube/config/k3s.yaml get pods --all-namespaces
+----
+
+`kubeconfig`ファイルに関する詳細については、 https://rancher.com/docs/k3s/latest/en/cluster-access/[K3sのドキュメント]または https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[公式Kubernetesドキュメント]を参照して、`kubeconfig`ファイルを使用してクラスターアクセスを整理してください。
+
+[pass]
+<h2><a id="_note_on_upgrading"></a>アップグレードに関する注意事項</h2>
+
+エアギャップ環境をアップグレードするには、次の方法で実行できます:
+
+. K3sのアップグレード対象のバージョンに対する https://github.com/k3s-io/k3s/releases[releases]ページから新しいエアギャップイメージ（tarファイル）をダウンロードしてください。各ノードの`/var/lib/rancher/k3s/agent/images/`ディレクトリにtarファイルを配置してください。古いtarファイルを削除してください。
+. 各ノードの`/usr/local/bin`にある古いK3sバイナリをコピーして置き換えてください。インストールスクリプトを https://get.k3s.ioにコピーしてください（前回のリリース以降に変更されている可能性があるため）。同じ環境変数を使用して、過去に行ったのと同様にスクリプトを再度実行してください。
+. K3sサービスを再起動してください（インストーラーによって自動的に再起動されない場合）。
+--
+
+RKE2::
++
+--
+このガイドでは、エアギャップ環境でノードを作成し、バスティオンサーバーに安全なDockerプライベートレジストリがあると仮定しています。
+
+[pass]
+<h2><a id="_1_create_rke2_configuration"></a>1.RKE2設定を作成してください。</h2>
+
+`/etc/rancher/rke2/config.yaml`にconfig.yamlファイルを作成してください。これには、高可用性のRKE2クラスターを作成するために必要なすべての設定オプションが含まれます。
+
+最初のサーバーの最小構成は次のとおりです：
+
+----
+token: my-shared-secret
+tls-san:
+  - loadbalancer-dns-domain.com
+----
+
+他の各サーバーの構成ファイルには、同じトークンが含まれ、RKE2に最初のサーバーに接続するよう指示する必要があります：
+
+----
+server: https://ip-of-first-server:9345
+token: my-shared-secret
+tls-san:
+  - loadbalancer-dns-domain.com
+----
+
+詳細については、{url-rke2-install-ha}[RKE2ドキュメント]を参照してください。
+
+[NOTE]
+====
+
+RKE2は、エアギャップ環境でのDNSの設定に役立つ可能性のあるkubelets用の`resolv-conf`オプションも提供します。
+====
+
+[pass]
+<h2><a id="_2_create_registry_yaml"></a>2.レジストリYAMLの作成</h2>
+
+`/etc/rancher/rke2/registries.yaml`にregistries.yamlファイルを作成します。これにより、RKE2がプライベートレジストリに接続するために必要な詳細情報が提供されます。
+
+registries.yamlファイルは、必要な情報を入力する前に次のようになります：
+
+----
+---
+mirrors:
+  customreg:
+    endpoint:
+      - "https://ip-to-server:5000"
+configs:
+  customreg:
+    auth:
+      username: xxxxxx # this is the registry username
+      password: xxxxxx # this is the registry password
+    tls:
+      cert_file: <path to the cert file used in the registry>
+      key_file:  <path to the key file used in the registry>
+      ca_file: <path to the ca file used in the registry>
+----
+
+RKE2のプライベートレジストリ構成ファイルに関する詳細情報は、{url-rke2-containerd-reg-config}[RKE2ドキュメント]を参照してください。
+
+[pass]
+<h2><a id="_3_install_rke2"></a>3.RKE2をインストールします。</h2>
+
+Rancherは、サポートされているKubernetesバージョンにインストールする必要があります。ご利用のRancherバージョンに対してサポートされているKubernetesのバージョンを確認するには、 https://rancher.com/support-maintenance-terms/[サポートメンテナンス条件]を参照してください。
+
+リリースからインストールスクリプト、rke2、rke2-images、およびsha256sumアーカイブをダウンロードし、各サーバーのディレクトリにアップロードします。
+
+----
+mkdir /tmp/rke2-artifacts && cd /tmp/rke2-artifacts/
+wget https://github.com/rancher/rke2/releases/download/v1.21.5%2Brke2r2/rke2-images.linux-amd64.tar.zst
+wget https://github.com/rancher/rke2/releases/download/v1.21.5%2Brke2r2/rke2.linux-amd64.tar.gz
+wget https://github.com/rancher/rke2/releases/download/v1.21.5%2Brke2r2/sha256sum-amd64.txt
+curl -sfL https://get.rke2.io --output install.sh
+----
+
+次に、以下の例のように、各サーバーのディレクトリを使用してinstall.shを実行します。
+
+----
+INSTALL_RKE2_ARTIFACT_PATH=/tmp/rke2-artifacts sh install.sh
+----
+
+その後、すべてのサーバーでサービスを有効にして開始します。
+
+`
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+`
+
+詳細については、{url-rke2-install-airgap}[RKE2ドキュメント]を参照してください。
+
+[pass]
+<h2><a id="_4_save_and_start_using_the_kubeconfig_file"></a>4.kubeconfig ファイルを保存して使用を開始します。</h2>
+
+各 Rancher サーバーノードに RKE2 をインストールしたとき、ノードの `/etc/rancher/rke2/rke2.yaml` に `kubeconfig` ファイルが作成されました。このファイルには、クラスターへの完全なアクセス権のための資格情報が含まれており、このファイルは安全な場所に保存する必要があります。
+
+この `kubeconfig` ファイルを使用するには、
+
+. https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl]というKubernetesのコマンドラインツールをインストールします。
+. `/etc/rancher/rke2/rke2.yaml` にあるファイルをコピーし、ローカルマシンのディレクトリ `~/.kube/config` に保存します。
+. kubeconfig ファイルでは、`server` ディレクティブが localhost として定義されています。サーバーをロードバランサーの DNS として構成し、ポート 6443 を参照します。（Kubernetes API サーバーにはポート 6443 でアクセスされ、Rancher サーバーにはポート 80 および 443 でアクセスされます。）ここに例を示します：`rke2.yaml`
+
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*結果:*これで `kubectl` を使用して RKE2 クラスターを管理できます。複数の kubeconfig ファイルがある場合は、`kubectl` を使用する際にファイルへのパスを渡すことで、使用するファイルを指定できます。
+
+----
+kubectl --kubeconfig ~/.kube/config/rke2.yaml get pods --all-namespaces
+----
+
+`kubeconfig`ファイルの詳細については、{url-rke2-cluster-access}[RKE2 ドキュメント] または https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[公式 Kubernetes ドキュメント]（`kubeconfig`ファイルを使用したクラスターアクセスの整理について）を参照してください。
+
+[pass]
+<h2><a id="_note_on_upgrading"></a>アップグレードに関する注意事項</h2>
+
+エアギャップ環境をアップグレードするには、次の方法で実行できます:
+
+. アップグレードするRKE2のバージョンに対して、 https://github.com/rancher/rke2/releases[リリース]ページから新しいエアギャップアーティファクトおよびスクリプトをダウンロードします。
+. 同じ環境変数を使用して、過去に行ったのと同様にスクリプトを再度実行してください。
+. RKE2サービスを再起動します。
+--
+====== 
+
+[#_issues_or_errors]
+== 問題やエラーはありますか？
+
+{xref-install-upgrade-troubleshooting}[トラブルシューティング]ページを参照してください。

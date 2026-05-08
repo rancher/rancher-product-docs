@@ -1,0 +1,89 @@
+= Einrichten der Infrastruktur für einen hochverfügbaren {rke2-product-name} Kubernetes-Cluster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-30
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/ha-rke2-kubernetes-cluster.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/ha-rke2-kubernetes-cluster.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc
+endif::[]
+
+
+Dieses Tutorial soll Ihnen helfen, die zugrunde liegende Infrastruktur für einen Rancher-Management-Server bereitzustellen.
+
+Die empfohlene Infrastruktur für den ausschließlich Rancher-Kubernetes-Cluster variiert, je nachdem, ob Rancher auf einem RKE2-Kubernetes-Cluster, einem RKE-Kubernetes-Cluster oder einem einzelnen Docker-Container installiert wird.
+
+[NOTE]
+.Wichtig:
+====
+
+Diese Knoten müssen sich in derselben Region befinden. Sie können diese Server in separaten Verfügbarkeitszonen (Rechenzentren) platzieren.
+====
+
+
+Um den Rancher-Management-Server in einem hochverfügbaren RKE2-Cluster zu installieren, empfehlen wir, die folgende Infrastruktur einzurichten:
+
+* *Drei Linux-Knoten,* typischerweise virtuelle Maschinen, im Infrastruktur-Anbieter Ihrer Wahl.
+* *Ein Load Balancer* um den Datenverkehr zu den Knoten zu leiten.
+* *Ein DNS-Eintrag*, um eine URL dem Load Balancer zuzuordnen. Dies wird die Rancher-Server-URL, und Downstream-Kubernetes-Cluster müssen darauf zugreifen können.
+
+[#_1_set_up_linux_nodes]
+== 1. Linux-Knoten einrichten
+
+Stellen Sie sicher, dass Ihre Knoten die allgemeinen Installationsanforderungen für {xref-install-reqs}[Betriebssystem, Container-Laufzeit, Hardware und Netzwerk] erfüllen.
+
+Für ein Beispiel, wie man Linux-Knoten einrichtet, beziehen Sie sich auf dieses {xref-setup-ec2-nodes}[Tutorial] zur Einrichtung von Knoten als Instanzen in Amazon EC2.
+
+[#_2_set_up_the_load_balancer]
+== 2. Richten Sie den Lastausgleich ein
+
+Sie müssen auch einen Load Balancer einrichten, um den Datenverkehr an die Rancher-Replik auf allen Knoten zu leiten. Das wird verhindern, dass ein Ausfall eines einzelnen Knotens die Kommunikation mit dem Rancher-Managementserver unterbricht.
+
+[WARNING]
+====
+*Ingress-NGINX EOL:* Der Community-`ingress-nginx` Controller erreichte im März 2026 das Ende seines Lebenszyklus (EOL) und läuft in RKE2 v1.36 aus. Die von SUSE Rancher Prime bereitgestellten RKE2-Versionen werden weiterhin `ingress-nginx` Unterstützung und CVE-Fehlerbehebungen (8+) für den gesamten Lebenszyklus von RKE2 v1.32, v1.33, v1.34, v1.35 und v1.36 erhalten. Traefik ist der empfohlene Migrationspfad für SUSE Rancher RKE2-Umgebungen, es wird empfohlen, so schnell wie möglich zu migrieren. Siehe https://support.scc.suse.com/s/kb/Migrating-from-Ingress-NGINX-to-Traefik-in-a-Rancher-provisioned-RKE2-Cluster?language=en_US[Migrating from Ingress NGINX to Traefik in a Rancher provisioned RKE2 Cluster] für weitere Details.
+====
+
+Wenn Kubernetes in einem späteren Schritt eingerichtet wird, wird das RKE2-Tool einen Nginx Ingress-Controller bereitstellen. Dieser Controller wird an den Ports 80 und 443 der Arbeitsknoten überwachen und den Datenverkehr beantworten, der für bestimmte Hostnamen bestimmt ist.
+
+Wenn Rancher installiert ist (auch in einem späteren Schritt), erstellt das Rancher-System eine Ingress-Ressource. Dieses Ingress weist den Nginx Ingress-Controller an, den Datenverkehr zu überwachen, der für den Rancher-Hostnamen bestimmt ist. Der Nginx Ingress-Controller wird, wenn er Datenverkehr für den Rancher-Hostnamen erhält, diesen Datenverkehr an die laufenden Rancher-Pods im Cluster weiterleiten.
+
+Für Ihre Implementierung sollten Sie überlegen, ob Sie einen Layer-4- oder Layer-7-Load Balancer verwenden möchten oder müssen:
+
+* *Ein Layer-4-Lastausgleich* ist die einfachere der beiden Optionen, bei der Sie TCP-Datenverkehr an Ihre Knoten weiterleiten. Wir empfehlen, Ihren Layer-4-Lastausgleich so zu konfigurieren, dass er den Datenverkehr an die Ports TCP/80 und TCP/443 der Rancher-Management-Clusterknoten weiterleitet. Der Ingress-Controller im Cluster wird den HTTP-Datenverkehr auf HTTPS umleiten und SSL/TLS an Port TCP/443 terminieren. Der Ingress-Controller wird den Datenverkehr an Port TCP/80 an das Ingress-Pod in der Rancher-Implementierung weiterleiten.
+* *Ein Layer-7-Lastausgleich* ist etwas komplizierter, kann jedoch Funktionen bieten, die Sie möglicherweise wünschen. Ein Layer-7-Lastausgleich kann beispielsweise die TLS-Terminierung am Lastausgleich übernehmen, anstatt dass Rancher die TLS-Terminierung selbst vornimmt. Dies kann vorteilhaft sein, wenn Sie Ihre TLS-Beendigung in Ihrer Infrastruktur zentralisieren möchten. Layer-7-Load Balancing bietet auch die Möglichkeit, dass Ihr Load Balancer Entscheidungen basierend auf HTTP-Attributen wie Cookies usw. trifft, mit denen sich ein Layer-4-Load Balancer nicht befassen kann. Wenn Sie sich entscheiden, den SSL/TLS-Datenverkehr an einem Layer-7-Lastausgleich zu terminieren, müssen Sie die `--set tls=external` Option verwenden, wenn Sie Rancher in einem späteren Schritt installieren. Für weitere Informationen siehe die {xref-helm-chart-options}#_external_tls_termination[Rancher Helm-Chart-Optionen.]
+
+Für ein Beispiel, wie man einen NGINX-Lastausgleich einrichtet, siehe {xref-nginx-load-balancer}[diese Seite.]
+
+Für eine Anleitung zur Einrichtung eines Amazon ELB Network-Lastausgleichs, verweisen Sie auf {xref-amazon-elb}[diese Seite.]
+
+[CAUTION]
+====
+
+Verwenden Sie diesen Lastausgleich (d.h. den `local` Cluster Ingress) nicht, um Anwendungen außer Rancher nach der Installation zu verteilen. Das Teilen dieses Ingress mit anderen Anwendungen kann zu Websocket-Fehlern bei Rancher nach dem Neuladen der Ingress-Konfiguration für andere Apps führen. Wir empfehlen, den `local` Cluster ausschließlich für Rancher und keine anderen Anwendungen zu verwenden.
+====
+
+
+[#_3_set_up_the_dns_record]
+== 3. DNS-Eintrag einrichten
+
+Nachdem Sie Ihren Load Balancer eingerichtet haben, müssen Sie einen DNS-Eintrag erstellen, um den Datenverkehr an diesen Load Balancer zu senden.
+
+Je nach Ihrer Umgebung kann dies ein A-Eintrag sein, der auf die IP des Load Balancers zeigt, oder es kann ein CNAME sein, der auf den Hostnamen des Load Balancers zeigt. In jedem Fall stellen Sie sicher, dass dieser Eintrag der Hostname ist, auf den Rancher reagieren soll.
+
+Sie müssen diesen Hostnamen in einem späteren Schritt angeben, wenn Sie Rancher installieren, und es ist nicht möglich, ihn später zu ändern. Stellen Sie sicher, dass Ihre Entscheidung endgültig ist.
+
+Für eine Anleitung zur Einrichtung eines DNS-Eintrags, um den Domain-Traffic an einen Amazon ELB-Lastausgleich weiterzuleiten, siehe die https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[offizielle AWS-Dokumentation.]

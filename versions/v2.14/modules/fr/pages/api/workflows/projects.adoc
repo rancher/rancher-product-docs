@@ -1,0 +1,253 @@
+= Projets
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-16
+:page-revdate: {revdate}
+:community-path: api/workflows/projects.adoc 
+:product-path: api/workflows/projects.adoc
+ifeval::["{build-type}" != "community"]
+:xref-cluster-project-roles: xref:rancher-admin/utilisateurs/authn-et-authz/gerer-le-controle-d-acces-en-fonction-du-role-rbac/roles-de-cluster-et-de-projet.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cluster-project-roles: xref:procédure/guide-utilisateur-nouveau/autorisations-d-authentification-et-configuration-globale/gerer-le-controle-d-acces-en-fonction-du-role-rbac/roles-de-cluster-et-de-projet.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+endif::[]
+
+[#_creating_a_project]
+== Création d’un projet de mise à niveau
+
+Les ressources de projet ne peuvent être créées que sur le cluster de gestion. Voir ci-dessous pour <<_creating_a_namespace_in_a_project,la création d'espaces de noms sous des projets dans un cluster géré>>.
+
+[#_creating_a_basic_project]
+=== Créer un projet de base
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+EOF
+----
+
+Lors de la création d'un nouveau projet, vous avez deux options principales pour définir le nom{nbsp}:
+
+* *Génération automatique :* Utilisez `metadata.generateName` pour garantir un ID de projet unique. Cependant, notez que vous devez utiliser `kubectl create` (au lieu de `kubectl apply`) avec cette option, car `kubectl apply` ne la prend pas en charge.
+* *Nommage manuel :* Vous pouvez définir explicitement l'ID du projet en utilisant `metadata.name`. Si un projet avec ce nom exact existe déjà, la demande de nom est refusée.
+Le nom d'affichage visible dans l'interface utilisateur est défini par `spec.displayName`. Si `spec.displayName` n'est pas fourni, le champ `metadata.name` est utilisé à la place.
+
+Définissez `metadata.namespace` et `spec.clusterName` sur l'ID du cluster auquel le projet appartient.
+
+Si vous créez un projet via un compte de membre du cluster et souhaitez que ce compte puisse accéder au projet, vous devez inclure l'annotation `field.cattle.io/creatorId` et la définir sur l'ID utilisateur du compte de membre du cluster.
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  annotations: 
+    field.cattle.io/creatorId: user-id
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+EOF
+----
+
+La définition du champ `field.cattle.io/creatorId` crée un `ProjectRoleTemplateBinding` qui accorde à l'utilisateur spécifié la possibilité de voir les ressources du projet avec la commande `get` et de visualiser le projet dans l'interface utilisateur de Rancher. Les comptes de propriétaire de cluster et d'administrateur n'ont pas besoin de définir cette annotation pour effectuer ces tâches.
+
+La définition de l'annotation `field.cattle.io/creator-principal-name` sur le principal de l'utilisateur la préserve dans un projetroletemplatebinding créé automatiquement pour le propriétaire du projet.
+
+Si vous ne souhaitez pas que le créateur soit ajouté en tant que membre propriétaire (par exemple, si le créateur est un administrateur de cluster) au projet, vous pouvez définir l'annotation `field.cattle.io/no-creator-rbac` sur `true`, ce qui empêchera la création du projetroletemplatebinding correspondant.
+
+[#_creating_a_project_with_a_resource_quota]
+=== Créer un projet avec un quota de ressources
+
+Référez-vous à https://kubernetes.io/docs/concepts/policy/resource-quotas/[Quota de ressources Kubernetes].
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+  resourceQuota:
+    limit:
+      limitsCpu: 1000m
+  namespaceDefaultResourceQuota:
+    limit:
+      limitsCpu: 50m
+EOF
+----
+
+[#_creating_a_project_with_container_limit_ranges]
+=== Créer un projet avec des limites de conteneurs
+
+Référez-vous à https://kubernetes.io/docs/concepts/policy/limit-range/[Kubernetes Limit Ranges].
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+  containerDefaultResourceLimit:
+    limitsCpu:    100m
+    limitsMemory: 100Mi
+    requestsCpu:  50m
+    requestsMemory: 50Mi
+EOF
+----
+
+[#_backing_namespace]
+=== Espace de noms de support
+
+Après la création du projet, le champ `status.backingNamespace` est rempli. Cela représente l'espace de noms dans le cluster de gestion qui est créé pour gérer les ressources liées au projet. Des exemples de ressources stockées dans l'espace de noms de support sont {xref-secrets}#_creating_secrets_in_projects[secrets spécifiques au projet] et {xref-cluster-project-roles}#_project_roles[liaisons de modèles de rôle de projet].
+
+[#_adding_a_member_to_a_project]
+== Ajouter un membre à un projet
+
+Recherchez l'<<_backing_namespace,espace de noms de support du projet>> pour spécifier la valeur du champ `metadata.namespace` et recherchez l'ID du projet pour spécifier la valeur du champ `projectName`.
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+Recherchez l'ID du modèle de rôle pour spécifier la valeur du champ `roleTemplateName` (par exemple, `project-member` ou `project-owner`).
+
+[,bash]
+----
+kubectl get roletemplates
+----
+
+Lors de l'ajout d'un membre utilisateur, spécifiez le champ `userPrincipalName`{nbsp}:
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: ProjectRoleTemplateBinding
+metadata:
+  generateName: prtb-
+  namespace: c-m-abcde-p-vwxyz
+projectName: c-m-abcde:p-vwxyz
+roleTemplateName: project-member
+userPrincipalName: keycloak_user://user
+EOF
+----
+
+Lors de l'ajout d'un membre de groupe, spécifiez plutôt le champ `groupPrincipalName`{nbsp}:
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: ProjectRoleTemplateBinding
+metadata:
+  generateName: prtb-
+  namespace: p-vwxyz
+projectName: c-m-abcde:p-vwxyz
+roleTemplateName: project-member
+groupPrincipalName: keycloak_group://group
+EOF
+----
+
+Créez un projetroletemplatebinding pour chaque rôle que vous souhaitez attribuer au membre du projet.
+
+[#_listing_project_members]
+== Lister les membres du projet
+
+Recherchez l'espace de noms associé au projet{nbsp}:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+Pour lister les projectroletemplatebindings dans l'espace de noms associé au projet{nbsp}:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde-p-vwxyz get projectroletemplatebindings
+----
+
+[#_deleting_a_member_from_a_project]
+== Supprimer un membre d'un projet
+
+Recherchez les IDs de projectroletemplatebinding contenant le membre dans l'espace de noms associé au projet comme décrit dans la section xref:#_listing_project_members[Lister les membres du projet].
+
+Supprimez le projectroletemplatebinding de l'espace de noms associé au projet{nbsp}:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde-p-vwxyz delete projectroletemplatebindings prtb-qx874 prtb-7zw7s
+----
+
+[#_creating_a_namespace_in_a_project]
+== Créer un espace de noms dans un projet
+
+La ressource du projet réside dans le cluster de gestion, même si le projet est destiné à un cluster géré. Les espaces de noms sous le projet résident dans le cluster géré.
+
+Sur le cluster de gestion, recherchez l'ID du projet pour le cluster que vous administrez s'il a été généré en utilisant `metadata.generateName`{nbsp}:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+Sur le cluster géré, créez un espace de noms avec une annotation de projet{nbsp}:
+
+[,bash]
+----
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mynamespace
+  annotations:
+    field.cattle.io/projectId: c-m-abcde:p-vwxyz
+EOF
+----
+
+Notez le format, `<cluster ID>:<project ID>`.
+
+[#_deleting_a_project]
+== Suppression d'un projet
+
+Recherchez le projet à supprimer dans l'espace de noms du cluster{nbsp}:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+Supprimez le projet sous l'espace de noms du cluster{nbsp}:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde delete project p-vwxyz
+----
+
+Notez que cette commande ne supprime pas les espaces de noms et les ressources qui appartenaient auparavant au projet.
+
+Elle supprime tous les projectroletemplatebindings pour les projets, donc recréer le projet ne restaurera pas les membres ajoutés au projet, et vous devez ajouter à nouveau les utilisateurs en tant que membres.

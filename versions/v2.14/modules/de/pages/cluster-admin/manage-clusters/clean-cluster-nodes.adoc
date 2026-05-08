@@ -1,0 +1,463 @@
+= Entfernen von Kubernetes-Komponenten von Knoten
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/clean-cluster-nodes.adoc 
+:product-path: cluster-admin/manage-clusters/clean-cluster-nodes.adoc
+:description: Erfahren Sie mehr über die Clusterbereinigung beim Entfernen von Knoten aus Ihrem von Rancher gestarteten Kubernetes-Cluster. Was entfernt wird, wie man es manuell macht
+ifeval::["{build-type}" != "community"]
+:url-rke2-uninstall: https://documentation.suse.com/cloudnative/rke2/latest/en/install/uninstall.html
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-register-clusters: xref:cluster-deployment/register-existing-clusters.adoc
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-hosted-k8s-clusters: xref:cluster-deployment/hosted-kubernetes/hosted-kubernetes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-uninstall: https://docs.rke2.io/install/uninstall
+:xref-infra-providers: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/index.adoc
+:xref-register-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc
+:xref-custom-clusters: xref:reference-guides/cluster-configuration/rancher-server-configuration/use-existing-nodes/index.adoc
+:xref-hosted-k8s-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-clusters-from-hosted-kubernetes-providers/index.adoc
+endif::[]
+
+In diesem Abschnitt wird beschrieben, wie man einen Knoten von einem von Rancher gestarteten Kubernetes-Cluster trennt und alle Kubernetes-Komponenten vom Knoten entfernt. Dieser Prozess ermöglicht es Ihnen, den Knoten für andere Zwecke zu verwenden.
+
+Wenn Sie Rancher verwenden, um Kubernetes auf neuen Knoten in einem Infrastruktur-Anbieter zu installieren, werden Ressourcen (Container/virtuelle Netzwerkschnittstellen) und Konfigurationselemente (Zertifikate/Konfigurationsdateien) erstellt.
+
+Beim Entfernen von Knoten aus Ihrem von Rancher gestarteten Kubernetes-Cluster (vorausgesetzt, sie befinden sich im `Active` Zustand) werden diese Ressourcen automatisch bereinigt, und die einzige erforderliche Maßnahme besteht darin, den Knoten neu zu starten. Wenn ein Knoten unerreichbar geworden ist und der automatische Bereinigungsprozess nicht verwendet werden kann, beschreiben wir die Schritte, die ausgeführt werden müssen, bevor der Knoten wieder zu einem Cluster hinzugefügt werden kann.
+
+[#_what_gets_removed]
+== Was wird entfernt?
+
+Beim Bereinigen von Knoten, die mit Rancher bereitgestellt wurden, werden die folgenden Komponenten basierend auf dem Typ des Knotens, den Sie entfernen, gelöscht.
+
+|===
+| Entfernte Komponente | {xref-infra-providers}[Von einem Infrastruktur-Anbieter gehostete Knoten] | {xref-custom-clusters}[Benutzerdefinierte Knoten] | {xref-hosted-k8s-clusters}[Gehosteter Cluster] | {xref-register-clusters}[Angemeldete Knoten]
+
+| Der Rancher-Bereitstellungs-Namespace (`cattle-system` standardmäßig)
+| ✓
+| ✓
+| ✓
+| ✓
+
+| `serviceAccount`, `clusterRoles` und `clusterRoleBindings`, die von Rancher gekennzeichnet sind
+| ✓
+| ✓
+| ✓
+| ✓
+
+| Labels, Annotationen und Finalizer
+| ✓
+| ✓
+| ✓
+| ✓
+
+| Rancher-Implementierung
+| ✓
+| ✓
+| ✓
+|
+
+| Maschinen, Cluster, Projekte und benutzerdefinierte Ressourcenbeschreibungen (CRDs)
+| ✓
+| ✓
+| ✓
+|
+
+| Alle Ressourcen, die unter der `management.cattle.io` API-Gruppe erstellt wurden
+| ✓
+| ✓
+| ✓
+|
+
+| Alle CRDs, die von Rancher v2.x erstellt wurden
+| ✓
+| ✓
+| ✓
+|
+|===
+
+[#_removing_a_node_from_a_cluster_by_rancher_ui]
+== Einen Knoten über die Rancher-Benutzeroberfläche aus einem Cluster entfernen
+
+Wenn sich der Knoten im Zustand `Active` befindet, wird das Entfernen des Knotens aus einem Cluster einen Prozess auslösen, um den Knoten zu bereinigen. Bitte starten Sie den Knoten neu, nachdem der automatische Bereinigungsprozess abgeschlossen ist, um sicherzustellen, dass alle nicht persistenten Daten ordnungsgemäß entfernt werden.
+
+*Um einen Knoten neu zu starten:*
+
+----
+# using reboot
+$ sudo reboot
+
+# using shutdown
+$ sudo shutdown -r now
+----
+
+[#_removing_rancher_components_from_a_cluster_manually]
+== Rancher-Komponenten manuell aus einem Cluster entfernen
+
+Wenn ein Knoten nicht erreichbar ist und aus dem Cluster entfernt wird, kann der automatische Bereinigungsprozess nicht ausgelöst werden, da der Knoten nicht erreichbar ist. Bitte folgen Sie den untenstehenden Schritten, um die Rancher-Komponenten manuell zu entfernen.
+
+[WARNING]
+====
+
+Die unten aufgeführten Befehle entfernen Daten vom Knoten. Stellen Sie sicher, dass Sie eine Sicherung der Dateien erstellt haben, die Sie behalten möchten, bevor Sie einen der Befehle ausführen, da Daten verloren gehen.
+====
+
+
+[#_removing_rancher_components_from_registered_clusters]
+=== Rancher-Komponenten aus registrierten Clustern entfernen
+
+Für registrierte Cluster ist der Prozess zum Entfernen von Rancher etwas anders. Sie haben die Möglichkeit, den Cluster einfach in der Rancher-Benutzeroberfläche zu löschen, oder Sie können ein Skript ausführen, das die Rancher-Komponenten von den Knoten entfernt. Beide Optionen führen zu denselben Löschvorgängen.
+
+Nachdem der registrierte Cluster von Rancher getrennt wurde, bleiben die Arbeitslasten des Clusters unbeeinflusst, und Sie können auf den Cluster mit denselben Methoden zugreifen, die Sie vor der Registrierung des Clusters in Rancher verwendet haben.
+
+[tabs]
+======
+Über die Benutzeroberfläche / API::
++
+--
+[WARNING]
+====
+Dieser Prozess entfernt Daten aus Ihrem Cluster. Stellen Sie sicher, dass Sie eine Sicherung der Dateien erstellt haben, die Sie behalten möchten, bevor Sie den Befehl ausführen, da Daten verloren gehen.
+====
+
+Nachdem Sie das Entfernen eines registrierten Clusters über die Rancher-Benutzeroberfläche (oder API) initiiert haben, treten die folgenden Ereignisse ein.
+
+. Rancher erstellt ein `serviceAccount`, das es verwendet, um die Rancher-Komponenten aus dem Cluster zu entfernen. Dieses Konto hat die https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole[clusterRole] und https://kubernetes.io/docs/reference/access-authn-authz/rbac/#rolebinding-and-clusterrolebinding[clusterRoleBinding] Berechtigungen zugewiesen, die erforderlich sind, um die Rancher-Komponenten zu entfernen.
+. Mit dem `serviceAccount` plant und führt Rancher einen https://kubernetes.io/docs/concepts/workloads/controllers/jobs-run-to-completion/[job] aus, der die Rancher-Komponenten vom Cluster entfernt. Dieser Job verweist auch auf die `serviceAccount` und deren Rollen als Abhängigkeiten, sodass der Job sie vor seinem Abschluss löscht.
+. Rancher wird aus dem Cluster entfernt. Der Cluster bleibt jedoch bestehen und führt die native Version von Kubernetes aus.
+
+*Ergebnis:* Alle für registrierte Cluster in <<_what_gets_removed,Was wird entfernt?>> aufgeführten Komponenten werden gelöscht.
+--
+
+Durch Skript::
++
+--
+Anstatt die registrierten Clusterknoten über die Rancher-Benutzeroberfläche zu bereinigen, können Sie stattdessen ein Skript ausführen.
+
+[NOTE]
+.Voraussetzung
+====
+Installieren Sie https://kubernetes.io/docs/tasks/tools/install-kubectl/[kubectl].
+====
+
+. Öffnen Sie einen Webbrowser, navigieren Sie zu https://github.com/rancher/rancher/blob/main/cleanup/user-cluster.sh[GitHub] und laden Sie `user-cluster.sh` herunter.
+. Machen Sie das Skript ausführbar, indem Sie den folgenden Befehl im selben Verzeichnis wie `user-cluster.sh` ausführen:
++
+----
+chmod +x user-cluster.sh
+----
+
+. *Nur für Air Gap-Umgebungen:* Öffnen Sie `user-cluster.sh` und ersetzen Sie `yaml_url` durch die URL in `user-cluster.yml`.
++
+Wenn Sie keine Air Gap-Umgebung haben, überspringen Sie diesen Schritt.
+
+. Führen Sie aus demselben Verzeichnis das Skript aus und geben Sie die `rancher/rancher-agent` Bildversion an, die der Version von Rancher entsprechen sollte, die zur Verwaltung des Clusters verwendet wird. (`<RANCHER_VERSION>`):
++
+[TIP]
+====
+Fügen Sie das `-dry-run` Flag hinzu, um das Ergebnis des Skripts anzuzeigen, ohne Änderungen vorzunehmen.
+
+----
+./user-cluster.sh rancher/rancher-agent:<RANCHER_VERSION>
+----
+====
+
+*Ergebnis:* Das Skript wird ausgeführt. Alle für registrierte Cluster in <<_what_gets_removed,Was wird entfernt?>> aufgeführten Komponenten werden gelöscht.
+--
+====== 
+
+[#_cleaning_up_nodes]
+## Bereinigung der Knoten 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[NOTE]
+====
+Für Anweisungen zur Bereinigung von Knoten in RKE2-Clustern, die nicht von Rancher bereitgestellt wurden, siehe die {url-rke2-uninstall}[offizielle RKE2-Dokumentation] zum Deinstallieren von Clustern.
+====
+
+Sie müssen die folgenden Komponenten von den von Rancher bereitgestellten RKE2-Knoten entfernen:
+
+* Der rancher-system-agent, der sich mit Rancher verbindet und RKE2 installiert und verwaltet.
+* RKE2 selbst.
+
+[pass]
+<h3><a id="_removing_rancher-system-agent"></a>Entfernen des rancher-system-agent</h3>
+
+
+Um den rancher-system-agent zu entfernen, führen Sie das https://github.com/rancher/system-agent/blob/main/system-agent-uninstall.sh[system-agent-uninstall.sh] Skript aus:
+
+[source,shell]
+----
+curl https://raw.githubusercontent.com/rancher/system-agent/main/system-agent-uninstall.sh > system-agent-uninstall.sh
+sudo sh system-agent-uninstall.sh
+----
+
+[pass]
+<h3><a id="_removing_rke2"></a>Entfernen von RKE2</h3>
+
+Um die RKE2-Installation zu entfernen, führen Sie das `rke2-uninstall` Skript aus, das bereits auf dem Knoten vorhanden ist:
+
+----
+sudo rke2-uninstall.sh
+----
+--
+
+K3s::
++
+--
+Sie müssen die folgenden Komponenten von den von Rancher bereitgestellten K3s-Knoten entfernen:
+
+* Der rancher-system-agent, der sich mit Rancher verbindet und K3s installiert und verwaltet.
+* K3s selbst.
+
+[pass]
+<h3><a id="_removing_rancher-system-agent"></a>Entfernen des rancher-system-agent</h3>
+
+
+Um den rancher-system-agent zu entfernen, führen Sie das https://github.com/rancher/system-agent/blob/main/system-agent-uninstall.sh[system-agent-uninstall.sh] Skript aus:
+
+[source,shell]
+----
+curl https://raw.githubusercontent.com/rancher/system-agent/main/system-agent-uninstall.sh > system-agent-uninstall.sh
+sudo sh system-agent-uninstall.sh
+----
+
+[pass]
+<h3><a id="_removing_k3s"></a>Entfernen von K3s</h3>
+
+
+Um die K3s-Installation zu entfernen, führen Sie das `k3s-uninstall` Skript aus, das bereits auf dem Knoten vorhanden ist:
+
+```
+sudo k3s-uninstall.sh
+```
+--
+====== 
+
+[#_directories_and_files]
+=== Verzeichnissen und Dateien
+
+Die folgenden Verzeichnisse werden verwendet, wenn ein Knoten zu einem Cluster hinzugefügt wird, und sollten entfernt werden. Sie können ein Verzeichnis mit `rm -rf /directory_name` entfernen.
+
+[IMPORTANT]
+====
+
+Je nach der Rolle, die Sie dem Knoten zugewiesen haben, können bestimmte Verzeichnisse auf dem Knoten vorhanden sein oder nicht.
+
+====
+
+[tabs]
+======
+RKE2::
++
+--
+[%autowidth]
+|===
+| Verzeichnisse
+
+| `/etc/ceph`
+| `/etc/cni`
+| `/etc/kubernetes`
+| `/etc/rancher`
+| `/opt/cni`
+| `/run/calico`
+| `/run/flannel`
+| `/run/secrets/kubernetes.io`
+| `/var/lib/calico`
+| `/var/lib/cni`
+| `/var/lib/etcd`
+| `/var/lib/kubelet`
+| `/var/lib/rancher`
+| `/var/lib/weave`
+| `/var/log/containers`
+| `/var/log/pods`
+| `/var/run/calico`
+|===
+
+**Um die Verzeichnisse zu bereinigen:**
+
+[source,shell]
+----
+rm -rf /etc/ceph \
+       /etc/cni \
+       /etc/kubernetes \
+       /etc/rancher \
+       /opt/cni \
+       /run/calico \
+       /run/flannel \
+       /run/secrets/kubernetes.io \
+       /var/lib/calico \
+       /var/lib/cni \
+       /var/lib/etcd \
+       /var/lib/kubelet \
+       /var/lib/rancher \
+       /var/lib/weave \
+       /var/log/containers \
+       /var/log/pods \
+       /var/run/calico
+----
+--
+
+K3s::
++
+--
+[%autowidth]
+|===
+| Verzeichnisse
+
+| `/etc/ceph`
+| `/etc/cni`
+| `/etc/kubernetes`
+| `/etc/rancher`
+| `/etc/systemd/system/k3s`
+| `/opt/cni`
+| `/run/calico`
+| `/run/flannel`
+| `/run/secrets/kubernetes.io`
+| `/usr/local/bin/k3s`
+| `/var/lib/calico`
+| `/var/lib/cni`
+| `/var/lib/etcd`
+| `/var/lib/kubelet`
+| `/var/lib/rancher`
+| `/var/lib/weave`
+| `/var/log/containers`
+| `/var/log/pods`
+| `/var/run/calico`
+|===
+
+**Um die Verzeichnisse zu bereinigen:**
+
+[source,shell]
+----
+rm -rf /etc/ceph \
+       /etc/cni \
+       /etc/kubernetes \
+       /etc/rancher \
+       /etc/systemd/system/k3s \
+       /opt/cni \
+       /run/calico \
+       /run/flannel \
+       /run/secrets/kubernetes.io \
+       /usr/local/bin/k3s \
+       /var/lib/calico \
+       /var/lib/cni \
+       /var/lib/etcd \
+       /var/lib/kubelet \
+       /var/lib/rancher \
+       /var/lib/weave \
+       /var/log/containers \
+       /var/log/pods \
+       /var/run/calico
+----
+--
+====== 
+
+[#_network_interfaces_and_iptables]
+=== Netzwerkschnittstellen und Iptables
+
+Die verbleibenden zwei Komponenten, die geändert/konfiguriert werden, sind (virtuelle) Netzwerkschnittstellen und Iptables-Regeln. Beide sind nicht persistent für den Knoten, was bedeutet, dass sie nach einem Neustart des Knotens gelöscht werden. Um diese Komponenten zu entfernen, wird ein Neustart empfohlen.
+
+*Um einen Knoten neu zu starten:*
+
+----
+# using reboot
+$ sudo reboot
+
+# using shutdown
+$ sudo shutdown -r now
+----
+
+Wenn Sie mehr über (virtuelle) Netzwerkschnittstellen oder Iptables-Regeln erfahren möchten, lesen Sie bitte die spezifischen Themen unten.
+
+[#_network_interfaces]
+=== Netzwerkschnittstellen
+
+[NOTE]
+====
+
+Je nach dem Netzwerkprovider, der für den Cluster konfiguriert ist, zu dem der Knoten gehörte, werden einige der Schnittstellen auf dem Knoten vorhanden sein oder nicht.
+====
+
+
+|===
+| Schnittstellen
+
+| `flannel.1`
+| `cni0`
+| `tunl0`
+| `caliXXXXXXXXXXX` (zufällige Schnittstellennamen)
+| `vethXXXXXXXX` (zufällige Schnittstellennamen)
+|===
+
+*Um alle Netzwerkschnittstellen aufzulisten:*
+
+----
+# Using ip
+ip address show
+
+# Using ifconfig
+ifconfig -a
+----
+
+*Um eine Netzwerkschnittstelle zu entfernen:*
+
+----
+ip link delete interface_name
+----
+
+[#_iptables]
+=== iptables
+
+[NOTE]
+====
+
+Je nach dem Netzwerkprovider, der für den Cluster konfiguriert ist, zu dem der Knoten gehörte, werden einige der Ketten auf dem Knoten vorhanden sein oder nicht.
+====
+
+
+Iptables-Regeln werden verwendet, um den Datenverkehr von und zu Containern zu leiten. Die erstellten Regeln sind nicht persistent, sodass ein Neustart des Knotens iptables in seinen ursprünglichen Zustand zurücksetzt.
+
+|===
+| Ketten
+
+| `cali-failsafe-in`
+| `cali-failsafe-out`
+| `cali-fip-dnat`
+| `cali-fip-snat`
+| `cali-from-hep-forward`
+| `cali-from-host-endpoint`
+| `cali-from-wl-dispatch`
+| `cali-fw-caliXXXXXXXXXXX` (zufällige Kettennamen)
+| `cali-nat-outgoing`
+| `cali-pri-kns.NAMESPACE` (Kette pro Namespace)
+| `cali-pro-kns.NAMESPACE` (Kette pro Namespace)
+| `cali-to-hep-forward`
+| `cali-to-host-endpoint`
+| `cali-to-wl-dispatch`
+| `cali-tw-caliXXXXXXXXXXX` (zufällige Kettennamen)
+| `cali-wl-to-host`
+| `KUBE-EXTERNAL-SERVICES`
+| `KUBE-FIREWALL`
+| `KUBE-MARK-DROP`
+| `KUBE-MARK-MASQ`
+| `KUBE-NODEPORTS`
+| `KUBE-SEP-XXXXXXXXXXXXXXXX` (zufällige Kettennamen)
+| `KUBE-SERVICES`
+| `KUBE-SVC-XXXXXXXXXXXXXXXX` (zufällige Kettennamen)
+|===
+
+*Um alle iptables-Regeln aufzulisten:*
+
+----
+iptables -L -t nat
+iptables -L -t mangle
+iptables -L
+----

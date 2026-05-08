@@ -1,147 +1,167 @@
 = 设置 Azure 云提供商
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2026-02-11
+endif::[]
+:revdate: 2026-05-05
 :page-revdate: {revdate}
-:experimental:
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/azure.adoc 
+:product-path: cluster-deployment/set-up-cloud-providers/azure.adoc
+ifeval::["{build-type}" != "community"]
+:xref-migrate-out-of-tree-azure: xref:cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/azure.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-migrate-out-of-tree-azure: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-azure.adoc
+endif::[]
 
 [NOTE]
-.Important:
+.重要说明：
 ====
-In Kubernetes 1.30 and later, you must use an out-of-tree Azure cloud provider. The Azure cloud provider has been https://github.com/kubernetes/kubernetes/pull/122857[removed completely], and won't work after an upgrade to Kubernetes 1.30. The steps listed below are still required to set up an Azure cloud provider. You can <<_using_the_out_of_tree_azure_cloud_provider,set up an out-of-tree cloud provider>> after completing the prerequisites for Azure.
+在 Kubernetes 1.30 及更高版本中，您必须使用外部 Azure 云提供商。Azure 云提供商已被 https://github.com/kubernetes/kubernetes/pull/122857[完全移除]，在升级到 Kubernetes 1.30 后将无法使用。下面列出的步骤仍然需要设置 Azure 云提供商。在完成 Azure 的先决条件后，您可以<<_using_the_out_of_tree_azure_cloud_provider,设置外部云提供商>>。
 
-You can also xref:cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/azure.adoc[migrate from an in-tree to an out-of-tree Azure cloud provider] on Kubernetes 1.29 and earlier. All existing clusters must migrate prior to upgrading to v1.30 in order to stay functional.
+您还可以在 Kubernetes 1.29 及更早版本上{xref-migrate-out-of-tree-azure}[从内部迁移到外部 Azure 云提供商]。所有现有集群必须在升级到 v1.30 之前进行迁移，以保持功能正常。
 
-Starting with Kubernetes 1.29, in-tree cloud providers have been disabled. You must set `DisableCloudProviders` and `DisableKubeletCloudCredentialProviders` feature gates to `false` to use the in-tree Azure cloud provider. You can do this by setting `feature-gates=DisableCloudProviders=false,DisableKubeletCloudCredentialProviders=false` as an additional argument for the cluster's Kubelet, Controller Manager, and API Server in the advanced cluster configuration. Setting `DisableKubeletCloudCredentialProviders=false` in the Kubelet, Controller Manager, and API Server arguments enables in-tree functionality for authenticating to Azure container registries for image pull credentials. See the https://kubernetes.io/blog/2023/12/13/kubernetes-v1-29-release/#in-tree-cloud-provider-integration-removal[Kubernetes 1.29: Mandala release notes] and this https://kubernetes.io/blog/2023/12/14/cloud-provider-integration-changes/#continue-using-in-tree-provider-code[blog post] for more details.
+从 Kubernetes 1.29 开始，内部云提供商已被禁用。您必须将 `DisableCloudProviders` 和 `DisableKubeletCloudCredentialProviders` 功能开关设置为 `false` 才能使用内部 Azure 云提供商。您可以通过在高级集群配置中将 `feature-gates=DisableCloudProviders=false,DisableKubeletCloudCredentialProviders=false` 设置为集群的 Kubelet、控制器管理器和 API 服务器的附加参数来实现。在 Kubelet、控制器管理器和 API 服务器参数中设置 `DisableKubeletCloudCredentialProviders=false` 可启用内部功能，以便对 Azure 容器注册表进行身份验证以获取镜像拉取凭据。有关更多详细信息，请参见 https://kubernetes.io/blog/2023/12/13/kubernetes-v1-29-release/#in-tree-cloud-provider-integration-removal[Kubernetes 1.29: Mandala 发布说明] 和此 https://kubernetes.io/blog/2023/12/14/cloud-provider-integration-changes/#continue-using-in-tree-provider-code[博客文章]。
 
-Starting with Kubernetes version 1.26, in-tree persistent volume types `kubernetes.io/azure-disk` and `kubernetes.io/azure-file` are deprecated and will no longer be supported. For new clusters, <<_installing_csi_drivers,install the CSI drivers>>, or migrate to the corresponding CSI drivers `disk.csi.azure.com` and `file.csi.azure.com` by following the https://learn.microsoft.com/en-us/azure/aks/csi-migrate-in-tree-volumes[upstream migration documentation].
+从 Kubernetes 版本 1.26 开始，内部持久卷类型 `kubernetes.io/azure-disk` 和 `kubernetes.io/azure-file` 已被弃用，将不再受支持。对于新集群，<<_installing_csi_drivers,安装 CSI 驱动程序>>，或通过遵循 https://learn.microsoft.com/en-us/azure/aks/csi-migrate-in-tree-volumes[上游迁移文档] 迁移到相应的 CSI 驱动程序 `disk.csi.azure.com` 和 `file.csi.azure.com`。
 ====
 
-使用 `Azure` 云提供商时，你可以使用以下功能：
+使用 `Azure` 云提供商时，您可以利用以下功能：
 
-* *负载均衡器*：在特定网络安全组中启动 Azure 负载均衡器。
-* *持久卷*：支持将 Azure Blob 磁盘和 Azure 托管磁盘与标准和高级 Storage Account 一起使用。
-* *网络存储*：通过 CIFS 挂载支持 Azure 文件。
+* *负载均衡器：*在特定的网络安全组内启动 Azure 负载均衡器。
+* *持久卷：*支持使用 Azure Blob 磁盘和 Azure 托管磁盘与标准和高级存储帐户。
+* *网络存储:*通过 CIFS 挂载支持 Azure 文件。
 
-Azure 订阅不支持以下账号类型：
+以下账户类型不支持 Azure 订阅：
 
-* 单租户账号（即没有订阅的账号）。
-* 多订阅账号。
+* 单租户账户（即没有订阅的账户）。
+* 多订阅账户。
 
-== RKE 和 {rke2-product-name} 的先决条件
+[#_prerequisites_for_rke_and_rke2_product_name]
+== RKE 和 {rke2-product-name} 的前提条件
 
-要为 RKE 和 RKE2 设置 Azure 云提供商，你需要配置以下凭证：
+要为 RKE 和 RKE2 设置 Azure 云提供商，需要配置以下凭据：
 
-. <<_1_设置_azure_租户_id,设置 Azure 租户 ID>>
-. <<_2_设置_azure_客户端_id_和_azure_客户端密码,设置 Azure 客户端 ID 和 Azure 客户端密码>>
-. <<_3_配置应用注册权限,配置应用注册权限>>
-. <<_4_设置_azure_网络安全组名称,设置 Azure 网络安全组名称>>
+. <<_1_set_up_the_azure_tenant_id,设置 Azure 租户 ID>>
+. <<_2_set_up_the_azure_client_id_and_azure_client_secret,设置 Azure 客户端 ID 和 Azure 客户端密钥>>
+. <<_3_configure_app_registration_permissions,配置应用注册权限>>
+. <<_4_set_up_azure_network_security_group_name,设置 Azure 网络安全组名称>>
 
-=== 1. 设置 Azure 租户 ID
+[#_1_set_up_the_azure_tenant_id]
+=== 1.设置 Azure 租户 ID
 
-访问 https://portal.azure.com[Azure 门户]，登录并转到 *Azure Active Directory*，然后选择 *Properties*。你的 *Directory ID* 是你的 *Tenant ID* (tenantID)。
+访问 https://portal.azure.com[Azure 门户]，登录并转到 *Azure Active Directory*，然后选择 *属性*。您的 *目录 ID* 是您的 *租户 ID*（tenantID）。
 
-如果要使用 Azure CLI，你可以运行 `az account show` 命令来获取信息。
+如果您想使用 Azure CLI，可以运行命令 `az account show` 来获取信息。
 
-=== 2. 设置 Azure 客户端 ID 和 Azure 客户端密码
+[#_2_set_up_the_azure_client_id_and_azure_client_secret]
+=== 2.设置 Azure 客户端 ID 和 Azure 客户端密钥
 
-访问 https://portal.azure.com[Azure 门户]，登录并按照以下步骤创建 *App Registration* 和对应的 *Azure Client ID* (aadClientId) 以及 *Azure Client Secret* (aadClientSecret)。
+访问 https://portal.azure.com[Azure 门户]，登录并按照以下步骤创建 *应用注册* 及相应的 *Azure 客户端 ID*（aadClientId）和 *Azure 客户端密钥*（aadClientSecret）。
 
 . 选择 *Azure Active Directory*。
-. 选择 *App registrations*。
-. 选择 *New application registration*。
-. 选择 *Name*，选择 `Web app/API` 作为 *Application Type*，并选择任意 *Sign-on URL*。
-. 选择 *Create*。
+. 选择 *应用注册*。
+. 选择 *新建应用注册*。
+. 选择一个*名称*，选择`Web app / API`作为*应用类型*，并选择一个*登录 URL*，在这种情况下可以是任何内容。
+. 选择*创建*。
 
-在 *App registrations* 视图中，你应该会看到你创建的应用注册。*APPLICATION ID* 列中显示的值是需要用作 *Azure Client ID* 的值。
+在*应用注册*视图中，您应该能看到您创建的应用注册。在*应用程序 ID*列中显示的值是您需要用作*Azure 客户端 ID*的内容。
 
-下一步是生成 *Azure Client Secret*：
+下一步是生成*Azure 客户端密钥*：
 
-. 打开你创建的应用注册。
-. 在 *Settings* 视图中，打开 *Keys*。
-. 输入 *Key description*，选择过期时间，然后选择 *Save*。
-. *Value* 列中显示的生成值是需要用作 *Azure Client Secret* 的值。该值只会显示一次。
+. 打开您创建的应用注册。
+. 在*设置*视图中，打开*密钥*。
+. 输入一个*密钥描述*，选择一个过期时间，然后选择*保存*。
+. 在*值*列中显示的生成值是您需要用作*Azure 客户端密钥*的内容。此值只会显示一次。
 
-=== 3. 配置应用注册权限
+[#_3_configure_app_registration_permissions]
+=== 3.配置应用注册权限
 
-最后，为你的应用注册分配适当的权限：
+您需要做的最后一件事是为您的应用注册分配适当的权限。
 
-. 前往 *More services*，搜索 *Subscriptions* 并打开它。
-. 打开 *Access control (IAM)*。
-. 选择 *Add*。
-. 在 *Role* 中选择 `Contributor`。
-. 在 *Select* 中选择你创建的应用注册的名称。
-. 选择 *Save*。
+. 转到*更多服务*，搜索*订阅*并打开它。
+. 打开*访问控制 (IAM)*。
+. 选择*添加*。
+. 对于*角色*，选择`Contributor`。
+. 对于*选择*，选择您创建的应用注册名称。
+. 选择 *保存*。
 
-=== 4. 设置 Azure 网络安全组名称
+[#_4_set_up_azure_network_security_group_name]
+=== 4.设置 Azure 网络安全组名称
 
-要使 Azure 负载均衡器正常工作，你需要自定义一个 Azure 网络安全组 (securityGroupName)。
+需要一个自定义的 Azure 网络安全组（securityGroupName）以允许 Azure 负载均衡器工作。
 
-如果你使用 Rancher Machine Azure 驱动来配置主机，则需要手动编辑主机，从而将主机分配给此网络安全组。
+如果您使用 Rancher Machine Azure 驱动程序配置主机，您需要手动编辑它们以将其分配到此网络安全组。
 
-你需要在配置期间将自定义主机分配给此网络安全组。
+在配置期间，您应该已经将自定义主机分配到此网络安全组。
 
-只有需要成为负载均衡器后端的主机才需要分配到该组。
+只有预期作为负载均衡器后端的主机需要在此组中。
 
-== Rancher 中的 {rke2-product-name} 集群设置
+[#__rke2_product_name_cluster_set_up_in_rancher]
+== {rke2-product-name} 在 Rancher 中的集群设置
 
-. 在**集群配置**中的**云提供商**下拉列表中选择 *Azure*。
+[NOTE]
+.重要说明：
+====
+本节仅适用于使用内部云提供商创建集群。
+====
 
-1.
 
-* 配置云提供商。请注意，Rancher 会自动创建新的网络安全组、资源组、可用性集、子网和虚拟网络。如果你已经创建了其中的一部分或全部，则需要在创建集群之前指定它们。
-* 你可以单击**显示高级选项**以查看更多自动生成的名称，并在需要的时候更新它们。你的云提供商配置**必须**与**主机池**中的字段匹配。如果你有多个池，它们必须使用相同的资源组、可用性集、子网、虚拟网络和网络安全组。
-* 下面提供了一个示例。你可以根据需要对其进行修改。
+. 在集群配置部分的云提供商下拉菜单中选择 "Azure"。
+. 提供云提供商配置。请注意，Rancher 会自动创建一个新的网络安全组、资源组、可用性集、子网和虚拟网络。如果您已经创建了其中一些或全部，您必须在创建集群之前指定它们。
+ ** 点击 *显示高级* 以查看或编辑这些自动生成的名称。您的云提供商配置 *必须* 与 *机器池* 部分中的字段匹配。如果您有多个池，它们必须都使用相同的资源组、可用性集、子网、虚拟网络和网络安全组。
+ ** 下面提供了一个示例。根据需要进行修改。
 
-.云提供商配置示例
++
+.示例配置
 [%collapsible]
 ======
-
++
 [,yaml]
 ----
-   {
-       "cloud":"AzurePublicCloud",
-       "tenantId": "YOUR TENANTID HERE",
-       "aadClientId": "YOUR AADCLIENTID HERE",
-       "aadClientSecret": "YOUR AADCLIENTSECRET HERE",
-       "subscriptionId": "YOUR SUBSCRIPTIONID HERE",
-       "resourceGroup": "docker-machine",
-       "location": "westus",
-       "subnetName": "docker-machine",
-       "securityGroupName": "rancher-managed-KA4jV9V2",
-       "securityGroupResourceGroup": "docker-machine",
-       "vnetName": "docker-machine-vnet",
-       "vnetResourceGroup": "docker-machine",
-       "primaryAvailabilitySetName": "docker-machine",
-       "routeTableResourceGroup": "docker-machine",
-       "cloudProviderBackoff": false,
-       "useManagedIdentityExtension": false,
-       "useInstanceMetadata": true
-   }
+ {
+     "cloud":"AzurePublicCloud",
+     "tenantId": "YOUR TENANTID HERE",
+     "aadClientId": "YOUR AADCLIENTID HERE",
+     "aadClientSecret": "YOUR AADCLIENTSECRET HERE",
+     "subscriptionId": "YOUR SUBSCRIPTIONID HERE",
+     "resourceGroup": "docker-machine",
+     "location": "westus",
+     "subnetName": "docker-machine",
+     "securityGroupName": "rancher-managed-KA4jV9V2",
+     "securityGroupResourceGroup": "docker-machine",
+     "vnetName": "docker-machine-vnet",
+     "vnetResourceGroup": "docker-machine",
+     "primaryAvailabilitySetName": "docker-machine",
+     "routeTableResourceGroup": "docker-machine",
+     "cloudProviderBackoff": false,
+     "useManagedIdentityExtension": false,
+     "useInstanceMetadata": true
+ }
 ----
-
++
 ======
+. 在 menu:集群配置[高级] 部分下，点击 *添加* 在 *附加控制器管理器参数* 下并添加此标志：`--configure-cloud-routes=false`
+. 点击 *创建* 提交表单并创建集群。
 
-. 在menu:集群配置[高级选项]、中，单击**补充的 Controller Manager 参数**下的**添加**，并添加 `--configure-cloud-routes=false` 标志。
-. 单击**创建**按钮来提交表单并创建集群。
+[#_cloud_provider_configuration]
+== 云提供商配置
 
-== Cloud Provider Configuration
+Rancher 会自动创建一个新的网络安全组、资源组、可用性集、子网和虚拟网络。如果您已经创建了其中一些或全部，您需要在创建集群之前指定它们。您可以查看 *RKE1 节点模板* 或 *RKE2 机器池* 以查看或编辑这些自动生成的名称。
 
-Rancher automatically creates a new Network Security Group, Resource Group, Availability Set, Subnet, and Virtual Network. If you already have some or all of these created, you will need to specify them before creating the cluster. You can check *RKE1 Node Templates* or *RKE2 Machine Pools* to view or edit these automatically generated names.
-
-*Refer to the full list of configuration options in the https://cloud-provider-azure.sigs.k8s.io/install/configs/[upstream docs].*
+*请参阅 https://cloud-provider-azure.sigs.k8s.io/install/configs/[上游文档] 中的完整配置选项列表。*
 
 [NOTE]
 ====
 
-. `useInstanceMetadata` must be set to `true` for the cloud provider to correctly configure `providerID`.
-. `excludeMasterFromStandardLB` must be set to `false` if you need to add nodes labeled `node-role.kubernetes.io/master` to the backend of the Azure Load Balancer (ALB).
-. `loadBalancerSku` can be set to `basic` or `standard`. Basic SKU will be deprecated in September 2025. Refer to the https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-basic-upgrade-guidance#basic-sku-vs-standard-sku[Azure upstream docs] for more information.
+. `useInstanceMetadata` 必须设置为 `true`，以便云提供商正确配置 `providerID`。
+. `excludeMasterFromStandardLB` 必须设置为 `false`，如果您需要将标记为 `node-role.kubernetes.io/master` 的节点添加到 Azure 负载均衡器 (ALB) 的后端。
+. `loadBalancerSku` 可以设置为 `basic` 或 `standard`。基本 SKU 将于 2025 年 9 月弃用。有关更多信息，请参阅 https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-basic-upgrade-guidance#basic-sku-vs-standard-sku[Azure 上游文档]。
 ====
 
 
-Azure supports reading the cloud config from Kubernetes secrets. The secret is a serialized version of the azure.json file. When the secret is changed, the cloud controller manager reconstructs itself without restarting the pod. It is recommended for the Helm chart to read the Cloud Provider Config from the secret.
+Azure 支持从 Kubernetes 秘密中读取云配置。该秘密是 azure.json 文件的序列化版本。当秘密被更改时，云控制器管理器会在不重启 pod 的情况下重建自身。建议 Helm 图表从秘密中读取云提供商配置。
 
-Note that the chart reads the Cloud Provider Config from a given secret name in the `kube-system` namespace. Since Azure reads Kubernetes secrets, RBAC also needs to be configured. An example secret for the Cloud Provider Config is shown below. Modify it as needed and create the secret.
+请注意，图表从 `kube-system` 名称空间中的给定秘密名称读取云提供商配置。由于 Azure 读取 Kubernetes 秘密，因此还需要配置 RBAC。下面显示了云提供商配置的示例秘密。根据需要修改并创建该秘密。
 
 [,yaml]
 ----
@@ -159,7 +179,7 @@ stringData:
       "tenantId": "<tenant-id>",
       "subscriptionId": "<subscription-id>",
       "aadClientId": "<client-id>",
-      "aadClientSecret": "<tenant-id>",
+      "aadClientSecret": "<client-secret>",
       "resourceGroup": "docker-machine",
       "location": "westus",
       "subnetName": "docker-machine",
@@ -177,24 +197,25 @@ stringData:
     }
 ----
 
-== Using the Out-of-tree Azure Cloud Provider
+[#_using_the_out_of_tree_azure_cloud_provider]
+== 使用外部 Azure 云提供商。
 
 [tabs,sync-group-id=k8s-distro]
 ======
 RKE2::
 +
 --
-. Select *External* from the *Cloud Provider* drop-down in the *Cluster Configuration* section.
-. Under menu:Cluster Configuration[Advanced], click *Add* under *Additional Controller Manager Args* and add this flag: `--configure-cloud-routes=false`.
-. Prepare the Cloud Provider Configuration to set it in the next step. Note that Rancher automatically creates a new Network Security Group, Resource Group, Availability Set, Subnet, and Virtual Network. If you already have some or all of these created, you must specify them before creating the cluster.
+. 在 *集群配置* 部分的 *云提供商* 下拉菜单中选择 *外部*。
+. 在 menu:集群配置[高级] 下，点击 *添加* 在 *附加控制器管理器参数* 下，并添加此标志：`--configure-cloud-routes=false`。
+. 准备云提供商配置，以便在下一步中设置。请注意，Rancher 会自动创建一个新的网络安全组、资源组、可用性集、子网和虚拟网络。如果您已经创建了其中一些或全部，您必须在创建集群之前指定它们。
 +
-Click *Show Advanced* to view or edit these automatically generated names. Your Cloud Provider Configuration *must* match the fields in the *Machine Pools* section. If you have multiple pools, they must all use the same Resource Group, Availability Set, Subnet, Virtual Network, and Network Security Group.
+点击 *显示高级* 以查看或编辑这些自动生成的名称。您的云提供商配置 *必须* 与 *机器池* 部分中的字段匹配。如果您有多个池，它们必须都使用相同的资源组、可用性集、子网、虚拟网络和网络安全组。
 +
-. Under *Cluster Configuration > Add-on Config*, add the cloud controller manager manifest shown below into *Additional Manifest*.
+. 在 *集群配置 > 附加配置* 下，将下面显示的云控制器管理器清单添加到 *附加清单* 中。
 +
-Note that this chart reads the Cloud Provider Config from the secret in the `kube-system` namespace. An example secret for the Cloud Provider Config is shown below; modify it as needed. Refer to the full list of configuration options in the https://cloud-provider-azure.sigs.k8s.io/install/configs/[upstream docs].
+请注意，此图表从 `kube-system` 名称空间中的密钥读取云提供商配置。下面显示了云提供商配置的示例密钥；根据需要修改。请参阅 https://cloud-provider-azure.sigs.k8s.io/install/configs/[上游文档] 中的完整配置选项列表。
 +
-Alternatively, you can also install the cloud controller manager using the <<_helm_chart_installation_from_cli,Helm CLI>>.
+或者，您也可以使用 <<_helm_chart_installation_from_cli,Helm CLI>> 安装云控制器管理器。
 +
 [,yaml]
 ----
@@ -216,9 +237,9 @@ spec:
       cloudConfig: null
       clusterCIDR: null
       enableDynamicReloading: 'true'
-      nodeSelector: 
+      nodeSelector:
         node-role.kubernetes.io/control-plane: 'true'
-      allocateNodeCidrs: 'false' 
+      allocateNodeCidrs: 'false'
       hostNetworking: true
       caCertDir: /etc/ssl
       configureCloudRoutes: 'false'
@@ -246,7 +267,7 @@ stringData:
       "tenantId": "<tenant-id>",
       "subscriptionId": "<subscription-id>",
       "aadClientId": "<client-id>",
-      "aadClientSecret": "<tenant-id>",
+      "aadClientSecret": "<client-secret>",
       "resourceGroup": "docker-machine",
       "location": "westus",
       "subnetName": "docker-machine",
@@ -254,7 +275,7 @@ stringData:
       "securityGroupResourceGroup": "docker-machine",
       "vnetName": "docker-machine-vnet",
       "vnetResourceGroup": "docker-machine",
-      "primaryAvailabilitySetName": "docker-machine",  
+      "primaryAvailabilitySetName": "docker-machine",
       "routeTableResourceGroup": "docker-machine",
       "cloudProviderBackoff": false,
       "useManagedIdentityExtension": false,
@@ -264,31 +285,32 @@ stringData:
     }
 ----
 
-. Click *Create* to submit the form and create the cluster.
+. 点击 *创建* 提交表单并创建集群。
 --
 
 RKE1::
 +
 --
-. Choose *External* from the *Cloud Provider* drop-down in the *Cluster Options* section. This sets `--cloud-provider=external` for Kubernetes components.
-. Install the `cloud-provider-azure` chart after the cluster finishes provisioning. Note that the cluster is not successfully provisioned and nodes are still in an `uninitialized` state until you deploy the cloud controller manager. This can be done <<_helm_chart_installation_from_cli,manually using CLI>>, or via <<_helm_chart_installation_from_ui,Helm charts in UI>>.
+. 在 *集群选项* 部分的下拉菜单中选择 *外部* 作为 *云提供商*。这为 Kubernetes 组件设置了 `--cloud-provider=external`。
+. 在集群完成配置后安装 `cloud-provider-azure` 图表。请注意，集群尚未成功配置，节点仍处于 `uninitialized` 状态，直到您部署云控制器管理器。这可以通过 <<_helm_chart_installation_from_cli,手动使用 CLI>> 或通过 <<_helm_chart_installation_from_ui,UI 中的 Helm 图表>> 完成。
 
-Refer to the https://cloud-provider-azure.sigs.k8s.io/install/azure-ccm/[official Azure upstream documentation] for more details on deploying the Cloud Controller Manager.
+有关部署云控制器管理器的更多详细信息，请参阅 https://cloud-provider-azure.sigs.k8s.io/install/azure-ccm/[官方 Azure 上游文档]。
 --
 ======
 
-=== Helm Chart Installation from CLI
+[#_helm_chart_installation_from_cli]
+=== 通过 CLI 安装 Helm 图表
 
-Official upstream docs for https://github.com/kubernetes-sigs/cloud-provider-azure/tree/master/helm/cloud-provider-azure[Helm chart installation] can be found on Github.
+关于 https://github.com/kubernetes-sigs/cloud-provider-azure/tree/master/helm/cloud-provider-azure[Helm 图表安装] 的官方上游文档可以在 Github 上找到。
 
-. Create a `azure-cloud-config` secret with the required <<_cloud_provider_configuration,cloud provider config>>.
+. 创建一个 `azure-cloud-config`包含所需 <<_cloud_provider_configuration,云提供商配置>> 的密钥。
 +
 [,shell]
 ----
 kubectl apply -f azure-cloud-config.yaml
 ----
 
-. Add the Helm repository:
+. 添加 Helm 储存库：
 +
 [,shell]
 ----
@@ -296,7 +318,7 @@ helm repo add azure-cloud-controller-manager https://raw.githubusercontent.com/k
 helm repo update
 ----
 
-. Create a `values.yaml` file with the following contents to override the default `values.yaml`:
+. 创建一个包含以下内容的 `values.yaml` 文件以覆盖默认 `values.yaml`：
 +
 [tabs,sync-group-id=k8s-distro]
 ======
@@ -366,21 +388,21 @@ infra:
 --
 ====== 
 
-. Install the Helm chart:
+. 安装 Helm 图表：
 +
 [,shell]
 ----
 helm upgrade --install cloud-provider-azure azure-cloud-controller-manager/cloud-provider-azure -n kube-system --values values.yaml
 ----
 +
-Verify that the Helm chart installed successfully:
+验证 Helm 图表是否成功安装：
 +
 [,shell]
 ----
 helm status cloud-provider-azure -n kube-system
 ----
 
-. (Optional) Verify that the cloud controller manager update succeeded:
+. （可选）验证云控制器管理器更新是否成功：
 +
 [,shell]
 ----
@@ -388,22 +410,23 @@ kubectl rollout status deployment -n kube-system cloud-controller-manager
 kubectl rollout status daemonset -n kube-system cloud-node-manager
 ----
 
-. The cloud provider is responsible for setting the ProviderID of the node. Check if all nodes are initialized with the ProviderID:
+. 云提供商负责设置节点的 ProviderID。检查所有节点是否已用 ProviderID 初始化：
 +
 [,shell]
 ----
 kubectl describe nodes | grep "ProviderID"
 ----
 
-=== Helm Chart Installation from UI
+[#_helm_chart_installation_from_ui]
+=== 通过 UI 安装 Helm 图表
 
-. Click *☰*, then select the name of the cluster from the left navigation.
-. Select *Apps* > *Repositories*.
-. Click the *Create* button.
-. Enter `+https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo+` in the *Index URL* field.
-. Select *Apps* > *Charts* from the left navigation and install *cloud-provider-azure* chart.
-. Select the namespace, `kube-system`, and enable *Customize Helm options before install*.
-. Replace `cloudConfig: /etc/kubernetes/azure.json` to read from the Cloud Config Secret and enable dynamic reloading:
+. 点击 *☰*，然后从左侧导航中选择集群的名称。
+. 选择 *应用* > *储存库*。
+. 点击 *创建* 按钮。
+. 在 `https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo` *索引 URL* 字段中输入。
+. 从左侧导航中选择 *应用* > *图表* 并安装 *cloud-provider-azure* 图表。
+. 选择名称空间 `kube-system`, 并启用 *安装前自定义 Helm 选项*。
+. 将 `cloudConfig: /etc/kubernetes/azure.json` 替换为从 Cloud Config Secret 读取并启用动态重载：
 +
 [,yaml]
 ----
@@ -411,7 +434,7 @@ kubectl describe nodes | grep "ProviderID"
   enableDynamicReloading: 'true'
 ----
 
-. Update the following fields as required:
+. 根据需要更新以下字段：
 +
 [,yaml]
 ----
@@ -426,7 +449,7 @@ RKE2::
 +
 --
 [start=9]
-. Rancher-provisioned RKE2 nodes have the selector `node-role.kubernetes.io/control-plane` set to `true`. Update the nodeSelector:
+. Rancher 提供的 RKE2 节点的选择器 `node-role.kubernetes.io/control-plane` 设置为 `true`。更新节点选择器：
 +
 [,yaml]
 ----
@@ -439,7 +462,7 @@ RKE::
 +
 --
 [start=9]
-. Rancher-provisioned RKE nodes are tainted `node-role.kubernetes.io/controlplane`. Update tolerations and the nodeSelector:
+. Rancher 提供的 RKE 节点被标记为 `node-role.kubernetes.io/controlplane`。更新容忍度和节点选择器：
 +
 [,yaml]
 ----
@@ -461,7 +484,7 @@ nodeSelector:
 ====== 
 
 [start=10]
-. Install the chart and confirm that the cloud controller and cloud node manager deployed successfully:
+. 安装图表并确认云控制器和云节点管理器成功部署：
 +
 [,shell]
 ----
@@ -469,28 +492,29 @@ kubectl rollout status deployment -n kube-system cloud-controller-manager
 kubectl rollout status daemonset -n kube-system cloud-node-manager
 ----
 
-. The cloud provider is responsible for setting the ProviderID of the node. Check if all nodes are initialized with the ProviderID:
+. 云提供商负责设置节点的 ProviderID。检查所有节点是否已用 ProviderID 初始化：
 +
 [,shell]
 ----
 kubectl describe nodes | grep "ProviderID"
 ----
 
-=== Installing CSI Drivers
+[#_installing_csi_drivers]
+=== 安装 CSI 驱动程序
 
-Install https://github.com/kubernetes-sigs/azuredisk-csi-driver[Azure Disk CSI driver] or https://github.com/kubernetes-sigs/azurefile-csi-driver[Azure File CSI Driver] to access https://azure.microsoft.com/en-us/services/storage/disks/[Azure Disk] or https://azure.microsoft.com/en-us/services/storage/disks/[Azure File] volumes respectively.
+安装 https://github.com/kubernetes-sigs/azuredisk-csi-driver[Azure Disk CSI 驱动程序] 或 https://github.com/kubernetes-sigs/azurefile-csi-driver[Azure File CSI 驱动程序] 以分别访问 https://azure.microsoft.com/en-us/services/storage/disks/[Azure Disk] 或 https://azure.microsoft.com/en-us/services/storage/disks/[Azure File] 卷。
 
-The steps to install the Azure Disk CSI driver are shown below. You can install the Azure File CSI Driver in a similar manner by following the https://github.com/kubernetes-sigs/azurefile-csi-driver/blob/master/charts/README.md[helm installation documentation].
+安装 Azure Disk CSI 驱动程序的步骤如下。您可以通过遵循 https://github.com/kubernetes-sigs/azurefile-csi-driver/blob/master/charts/README.md[helm 安装文档] 以类似方式安装 Azure File CSI 驱动程序。
 
 [NOTE]
-.Important
+.重要说明
 ====
-Clusters must be provisioned using `Managed Disk` to use Azure Disk. You can configure this when creating *RKE1 Node Templates* or _*RKE2 Machine Pools_.
+集群必须使用 `Managed Disk` 进行配置才能使用 Azure Disk。您可以在创建 *RKE1 节点模板* 或 _*RKE2 机器池_ 时进行配置。
 ====
 
-Official upstream docs for https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md[Helm chart installation] can be found on Github.
+关于 https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md[Helm 图表安装] 的官方上游文档可以在 Github 上找到。
 
-. Add and update the helm repository:
+. 添加并更新 helm 储存库：
 +
 [,shell]
 ----
@@ -498,21 +522,21 @@ helm repo add azuredisk-csi-driver https://raw.githubusercontent.com/kubernetes-
 helm repo update azuredisk-csi-driver
 ----
 
-. Install the chart as shown below, updating the --version argument as needed. Refer to the full list of latest chart configurations in the https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md#latest-chart-configuration[upstream docs].
+. 按照下面所示安装图表，根据需要更新 -- 版本参数。请参阅 https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md#latest-chart-configuration[上游文档] 中的最新图表配置完整列表。
 +
 [,shell]
 ----
 helm install azuredisk-csi-driver azuredisk-csi-driver/azuredisk-csi-driver --namespace kube-system --version v1.30.1 --set controller.cloudConfigSecretName=azure-cloud-config --set controller.cloudConfigSecretNamespace=kube-system --set controller.runOnControlPlane=true
 ----
 
-. (Optional) Verify that the azuredisk-csi-driver installation succeeded:
+. （可选）验证 azuredisk-csi-driver 安装是否成功：
 +
 [,shell]
 ----
 kubectl --namespace=kube-system get pods --selector="app.kubernetes.io/name=azuredisk-csi-driver" --watch
 ----
 
-. Provision an example Storage Class:
+. 配置一个示例存储类：
 +
 [,shell]
 ----
@@ -528,14 +552,14 @@ parameters:
 EOF
 ----
 +
-Verify that the storage class has been provisioned:
+验证存储类是否已配置：
 +
 [,shell]
 ----
 kubectl get storageclasses
 ----
 
-. Create a PersistentVolumeClaim:
+. 创建一个 PersistentVolumeClaim：
 +
 [,shell]
 ----
@@ -554,7 +578,7 @@ storage: 5Gi
 EOF
 ----
 +
-Verify that the PersistentVolumeClaim and PersistentVolume have been created:
+验证 PersistentVolumeClaim 和 PersistentVolume 是否已创建：
 +
 [,shell]
 ----
@@ -562,9 +586,9 @@ kubectl get persistentvolumeclaim
 kubectl get persistentvolume
 ----
 
-. Attach the new Azure Disk:
+. 附加新的 Azure 磁盘：
 +
-You can now mount the Kubernetes PersistentVolume into a Kubernetes Pod. The disk can be consumed by any Kubernetes object type, including a Deployment, DaemonSet, or StatefulSet. However, the following example simply mounts the PersistentVolume into a standalone Pod.
+您现在可以将 Kubernetes PersistentVolume 挂载到 Kubernetes Pod 中。该磁盘可以被任何 Kubernetes 对象类型使用，包括 Deployment、DaemonSet 或 StatefulSet。但是，以下示例仅将 PersistentVolume 挂载到一个独立的 Pod 中。
 +
 [,shell]
 ----

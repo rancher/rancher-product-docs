@@ -1,0 +1,95 @@
+= Criando uma Versão de Benchmark Personalizada para Executar uma Varredura em Cluster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/compliance-scans/custom-benchmark.adoc 
+:product-path: security/compliance-scans/custom-benchmark.adoc
+:experimental:
+
+Cada Versão de Benchmark define um conjunto de arquivos de configuração de teste que definem os testes de Conformidade a serem executados pela ferramenta https://github.com/aquasecurity/kube-bench[kube-bench].
+O aplicativo `rancher-compliance` instala algumas Versões de Benchmark padrão que estão listadas no menu do aplicativo de Benchmark de Conformidade.
+
+Mas pode haver algumas configurações de cluster Kubernetes que exigem configurações personalizadas dos testes de Benchmark. Por exemplo, o caminho para os arquivos de configuração do Kubernetes ou certificados pode ser diferente do local padrão onde os Benchmarks CIS upstream os procuram.
+
+Mas nos seguintes casos, uma configuração ou remediação personalizada pode ser necessária:
+
+* Locais de arquivos não padrão: Quando os binários do Kubernetes, os caminhos de configuração ou de certificados se desviam dos padrões de benchmark upstream.
++
+Exemplo: Ao contrário do Kubernetes tradicional, o K3s agrupa os componentes do plano de controle em um único binário. Portanto, a presença e configuração da `--anonymous-auth` flag devem ser verificadas nos logs do K3s (`journalctl`), e não por meio de verificações de processos `kube-apiserver` (`ps`).
+
+* Mitigações de risco alternativas: Se uma configuração não atender a uma verificação, mas tiver um controle compensatório igualmente eficaz com justificativa. Ou simplesmente não está sujeito à exigência de verificação devido ao seu design.
++
+Exemplo: Por padrão, o K3s incorpora o servidor API dentro do processo k3s. Não há arquivo de especificação do pod do servidor API, portanto, verificar as permissões de arquivo deste último não é necessário.
+
+[#_1_prepare_the_custom_benchmark_version_configmap]
+== 1. Prepare o ConfigMap da Versão de Benchmark Personalizada
+
+Para criar uma versão de benchmark personalizada, primeiro você precisa criar um ConfigMap contendo os arquivos de configuração da versão do benchmark e enviá-lo para o seu cluster Kubernetes onde deseja executar a varredura.
+
+Para preparar um ConfigMap da versão de benchmark personalizada, suponha que queremos adicionar uma Versão de Benchmark personalizada chamada `foo`.
+
+. Crie um diretório chamado `foo` e dentro deste diretório, coloque todos os arquivos de configuração YAML que a ferramenta https://github.com/aquasecurity/kube-bench[kube-bench] procura Por exemplo, aqui estão os arquivos de configuração YAML para uma Versão de Benchmark CIS Genérica 1.5 https://github.com/aquasecurity/kube-bench/tree/master/cfg/cis-1.5.
+. Coloque o arquivo completo `config.yaml`, que inclui todos os componentes que devem ser testados.
+. Adicione o nome da versão do Benchmark à seção `target_mapping` do `config.yaml`:
++
+[,yaml]
+----
+ target_mapping:
+   "foo":
+     - "master"
+     - "node"
+     - "controlplane"
+     - "etcd"
+     - "policies"
+----
+
+. Faça o upload deste diretório para o seu Cluster Kubernetes criando um ConfigMap:
++
+[,yaml]
+----
+ kubectl create configmap -n <namespace> foo --from-file=<path to directory foo>
+----
+
+[#_2_add_a_custom_benchmark_version_to_a_cluster]
+== 2. Adicione uma Versão de Benchmark Personalizada a um Cluster
+
+. No canto superior esquerdo, clique em *☰ > Gerenciamento de Cluster*.
+. Na página *Clusters*, vá para o cluster onde você deseja adicionar um benchmark personalizado e clique em *Explorar*.
+. Na barra de navegação à esquerda, clique em *Conformidade > Versão do Benchmark*.
+. Clique em *Criar*.
+. Digite o *Nome* e uma descrição para sua versão de benchmark personalizada.
+. Escolha o provedor de cluster ao qual sua versão de benchmark se aplica.
+. Escolha o ConfigMap que você fez o upload no menu suspenso.
+. Adicione os limites mínimos e máximos da versão do Kubernetes aplicáveis, se houver.
+. Clique em *Criar*.
+
+[#_3_create_a_new_profile_for_the_custom_benchmark_version]
+== 3. Crie um Novo Arquivo de Controle para a Versão de Benchmark Personalizada
+
+Para executar uma varredura usando sua versão de benchmark personalizada, você precisa adicionar um novo arquivo de controle apontando para esta versão de benchmark.
+
+. No canto superior esquerdo, clique em *☰ > Gerenciamento de Cluster*.
+. Na página *Clusters*, vá para o cluster onde você deseja adicionar um benchmark personalizado e clique em *Explorar*.
+. Na barra de navegação à esquerda, clique em *Conformidade > Varredura*.
+. Clique em *Criar*.
+. Forneça um *Nome* e uma descrição. Neste exemplo, chamamos de `foo-profile`.
+. Escolha a Versão do Benchmark no menu suspenso.
+. Clique em *Criar*.
+
+[#_4_run_a_scan_using_the_custom_benchmark_version]
+== 4. Execute uma Varredura Usando a Versão de Benchmark Personalizada
+
+Uma vez que o arquivo de controle apontando para sua versão de benchmark personalizada `foo` tenha sido criado, você pode criar uma nova Varredura para executar as configurações de teste personalizadas na Versão do Benchmark.
+
+Para executar uma varredura,
+
+. No canto superior esquerdo, clique em *☰ > Gerenciamento de Cluster*.
+. Na página *Clusters*, vá para o cluster onde você deseja adicionar um benchmark personalizado e clique em *Explorar*.
+. Na barra de navegação à esquerda, clique em menu:Benchmark CIS[Varredura].
+. Clique em *Criar*.
+. Escolha o novo arquivo de controle de varredura de cluster.
+. Clique em *Criar*.
+
+*Resultado:* Um relatório é gerado com os resultados da varredura. Para ver os resultados, clique no nome da varredura que aparece.

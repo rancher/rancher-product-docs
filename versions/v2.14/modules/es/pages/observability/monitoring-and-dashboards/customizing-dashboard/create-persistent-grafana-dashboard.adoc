@@ -1,0 +1,110 @@
+= Paneles persistentes de Grafana
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/monitoring-alerting-guides/crear-panel-persistente-grafana.adoc 
+:product-path: observability/monitoring-and-dashboards/customizando-panel/crear-panel-persistente-grafana.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-monitoring-rbac: xref:observabilidad/monitoring-and-dashboards/RBAC-para-monitorización.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-monitoring-rbac: xref:integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc
+endif::[]
+
+Para permitir que el panel de Grafana persista después de que la instancia de Grafana se reinicie, añade la configuración del panel en formato JSON a un ConfigMap. Los ConfigMaps también permiten que los paneles se desplieguen con un enfoque basado en GitOps o implementación continua. Esto permite que el panel esté bajo control de versiones.
+
+[#_creating_a_persistent_grafana_dashboard]
+== Creando un Panel Persistente de Grafana
+
+[NOTE]
+.Requisitos previos:
+====
+
+* La aplicación de monitorización necesita estar instalada.
+* Para crear el panel persistente, debes tener al menos los permisos de RBAC de *Gestionar Config Maps* asignados en el proyecto o espacio de nombres que contiene los paneles de Grafana. Esto se correlaciona con los roles de RBAC nativos de Kubernetes `monitoring-dashboard-edit` o `monitoring-dashboard-admin` expuestos por el gráfico de monitorización.
+* Para ver los enlaces a las interfaces de usuario de monitorización externas, incluidos los paneles de Grafana, necesitarás al menos un {xref-rancher-monitoring-rbac}#_usuarios_con_permisos_basados_en_rancher[rol de miembro del proyecto.]
+====
+
+
+[#_1_get_the_json_model_of_the_dashboard_that_you_want_to_persist]
+=== 1. Obtén el modelo JSON del panel que deseas persistir
+
+Para crear un panel persistente, necesitarás obtener el modelo JSON del panel que deseas persistir. Puedes usar un panel predefinido o crear el tuyo propio.
+
+Para usar un panel predefinido, ve a https://grafana.com/grafana/dashboards, abre su página de detalles y haz clic en el botón *Descargar JSON* para obtener el modelo JSON para el siguiente paso.
+
+Para usar tu propio panel:
+
+. Haz clic en el enlace para abrir Grafana. En la página de detalles del clúster, haz clic en *Monitorización*.
+. Inicie sesión en Grafana. Nota: El nombre de usuario y la contraseña predeterminados del administrador para la instancia de Grafana son `admin/prom-operator`. También se pueden proporcionar credenciales alternativas al desplegar o actualizar el gráfico.
++
+
+[NOTE]
+====
+Independientemente de quién tenga la contraseña, para acceder a la instancia de Grafana, aún necesitas al menos los permisos de *Gestionar Servicios* o *Ver Monitoreo* en el proyecto en el que se ha desplegado Rancher Monitoring. También se pueden proporcionar credenciales alternativas al desplegar o actualizar el gráfico.
+====
+
+
+. Crea un panel utilizando la interfaz de usuario de Grafana. Una vez completado, ve a la configuración del panel haciendo clic en el icono de engranaje en el menú de navegación superior. En el menú de navegación de la izquierda, haz clic en *Modelo JSON*.
+. Copia la estructura de datos JSON que aparece.
+
+[#_2_create_a_configmap_using_the_grafana_json_model]
+=== 2. Crea un ConfigMap utilizando el modelo JSON de Grafana.
+
+Crea un ConfigMap en el espacio de nombres que contiene tus paneles de Grafana (por ejemplo, `cattle-dashboards` por defecto).
+
+El ConfigMap debería verse así:
+
+[,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    grafana_dashboard: "1"
+  name: <dashboard-name>
+  namespace: cattle-dashboards # Change if using a non-default namespace
+data:
+  <dashboard-name>.json: |-
+    <copied-json>
+----
+
+Por defecto, Grafana está configurado para observar todos los ConfigMaps con la etiqueta `grafana_dashboard` dentro del espacio de nombres `cattle-dashboards`.
+
+Para especificar que deseas que Grafana observe los ConfigMaps en todos los espacios de nombres, consulta <<_configuring_namespaces_for_the_grafana_dashboard_configmap,esta sección>>.
+
+Para crear el ConfigMap a través de la interfaz de usuario de Rancher, primero asegúrate de que estás actualmente conectado a la interfaz de usuario de Grafana, para garantizar que los paneles se importen sin encontrar problemas de permisos. Luego, regresa a la interfaz de usuario de Rancher y realiza los siguientes pasos:
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, ve al clúster donde deseas ver las visualizaciones y haz clic en *Explorar*.
+. Haz clic en menu:Más Recursos[Kernel> ConfigMaps].
+. Haga clic en *Crear*.
+. En la pestaña *Datos*, configura los pares clave-valor de manera similar al ejemplo anterior. Al ingresar el valor para `<dashboard-name>.json`, haz clic en *Leer desde Archivo* para subir el modelo de datos JSON como el valor.
+. En la pestaña *Etiquetas y Anotaciones*, haz clic en *Añadir Etiqueta* e ingresa `grafana_dashboard` como la clave, y `1` como el valor.
+. Haga clic en *Crear*.
+
+*Resultado:* Después de que se cree el ConfigMap, debería aparecer en la interfaz de usuario de Grafana y persistir incluso si se reinicia el pod de Grafana.
+
+[NOTE]
+====
+
+El par clave-valor real puede diferir si has modificado el gráfico de Helm para observar una etiqueta y un valor de panel diferentes.
+====
+
+
+Los paneles que se persisten utilizando ConfigMaps no pueden ser eliminados ni editados desde la interfaz de usuario de Grafana.
+
+Si intentas eliminar el panel en la interfaz de usuario de Grafana, verás el mensaje de error "El panel no puede ser eliminado porque fue provisionado." Para eliminar el panel, necesitarás eliminar el ConfigMap.
+
+[#_configuring_namespaces_for_the_grafana_dashboard_configmap]
+=== Configurando los Espacios de nombres para el ConfigMap del panel de Grafana
+
+Para especificar que deseas que Grafana vigile los ConfigMaps en todos los espacios de nombres, establece este valor en el gráfico Helm `rancher-monitoring`:
+
+----
+grafana.sidecar.dashboards.searchNamespace=ALL
+----
+
+Ten en cuenta que los roles RBAC expuestos por el gráfico de monitorización para añadir paneles de Grafana siguen restringidos a otorgar permisos a los usuarios para añadir paneles en el espacio de nombres definido en `grafana.dashboards.namespace`, que por defecto es `cattle-dashboards`.

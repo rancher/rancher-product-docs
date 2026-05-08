@@ -1,0 +1,232 @@
+= Habilitando el registro de auditoría de la API en clústeres en sentido descendente
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-22
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-api-audit-log-in-downstream-clusters.adoc 
+:product-path: observability/logging/enable-api-audit-log-in-downstream-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-configmaps: xref:cluster-admin/kubernetes-resources/configmaps.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rke2-config: xref:guías-de-referencia/configuración-de-cluster/configuración-del-servidor-rancher/configuración-del-cluster-rke2.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-configmaps: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/configmaps.adoc
+:xref-k3s-config: xref:guías-de-referencia/configuración-de-cluster/configuración-del-servidor-rancher/configuración-del-cluster-k3s.adoc
+endif::[]
+
+La auditoría de Kubernetes proporciona un conjunto de registros cronológicos relevantes para la seguridad sobre un clúster. Kube-apiserver realiza la auditoría. Las solicitudes generan un evento en cada etapa de su ejecución, que luego se preprocesa de acuerdo con una cierta directiva y se escribe en un backend. La directiva determina qué se registra y el backend persiste los registros.
+
+Es posible que desees configurar el registro de auditoría como parte del cumplimiento con los controles del Centro para la Seguridad en Internet (CIS) del Benchmark de Kubernetes.
+
+Para detalles de configuración, consulta la https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/[documentación oficial de Kubernetes].
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[pass]
+<h2><a id="_method_1_recommended_set_audit_policy_file_in_machineglobalconfig_or_machineselectorconfig"></a>Método 1 (Recomendado): Establece `audit-policy-file` en `machineGlobalConfig` o `machineSelectorConfig`</h2>
+
+Puedes establecer `audit-policy-file` en el archivo de configuración utilizando `machineGlobalConfig` o `machineSelectorConfig`.
+
+Al usar `machineGlobalConfig`, Rancher entrega el archivo en la ruta `/var/lib/rancher/rke2/etc/config-files/audit-policy-file` en *todos los nodos* (tanto en nodos de control como en nodos de trabajo), y establece las opciones adecuadas en el servidor RKE2. Esto puede causar una reconciliación no deseada de los nodos de trabajo cuando se modifica la directiva de auditoría.
+
+Para evitar la reconciliación de nodos de trabajo, utiliza `machineSelectorConfig` con un selector de etiquetas para dirigirte solo a los nodos de control. Esto asegura que el archivo de directiva de auditoría solo se entregue a los nodos de control.
+
+Ejemplo usando `machineGlobalConfig`:
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      audit-policy-file: |
+        apiVersion: audit.k8s.io/v1
+        kind: Policy
+        rules:
+          - level: RequestResponse
+            resources:
+              - group: ""
+                resources:
+                  - pods
+----
+
+Ejemplo usando `machineSelectorConfig` (recomendado para evitar la reconciliación de nodos de trabajo):
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          audit-policy-file: |
+            apiVersion: audit.k8s.io/v1
+            kind: Policy
+            rules:
+              - level: RequestResponse
+                resources:
+                  - group: ""
+                    resources:
+                      - pods
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+[pass]
+<h2><a id="_method_2_use_the_directives_machineselectorfiles_and_machineglobalconfig"></a>Método 2: Utiliza las directivas, `machineSelectorFiles` y `machineGlobalConfig`</h2>
+
+[NOTE]
+====
+
+Esta función está disponible en Rancher v2.7.2 y versiones posteriores.
+====
+
+
+Puedes usar `machineSelectorFiles` para entregar el archivo de directiva de auditoría a los nodos del plano de control, y `machineGlobalConfig` para establecer las opciones en kube-apiserver.
+
+Como requisito previo, debes crear un {xref-secrets}[secreto] o un {xref-configmaps}[configmap] que sea la fuente de la directiva de auditoría.
+
+El secreto o configmap debe cumplir con los siguientes requisitos:
+
+. Debe estar en el espacio de nombres `fleet-default` donde existe el objeto Cluster.
+. Debe tener la anotación `rke.cattle.io/object-authorized-for-clusters: <cluster-name1>,<cluster-name2>` que permite a los clústeres de destino usarlo.
+
+[TIP]
+====
+
+Rancher Dashboard proporciona un formulario fácil de usar para crear el secreto o configmap.
+====
+
+
+Ejemplo:
+
+[,yaml]
+----
+apiVersion: v1
+data:
+  audit-policy: >-
+    IyBMb2cgYWxsIHJlcXVlc3RzIGF0IHRoZSBNZXRhZGF0YSBsZXZlbC4KYXBpVmVyc2lvbjogYXVkaXQuazhzLmlvL3YxCmtpbmQ6IFBvbGljeQpydWxlczoKLSBsZXZlbDogTWV0YWRhdGE=
+kind: Secret
+metadata:
+  annotations:
+    rke.cattle.io/object-authorized-for-clusters: cluster1
+  name: <name1>
+  namespace: fleet-default
+----
+
+Habilita y configura el registro de auditoría editando el clúster en YAML, y utilizando las directivas `machineSelectorFiles` y `machineGlobalConfig`.
+
+Ejemplo:
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - audit-policy-file=<customized-path>/dev-audit-policy.yaml
+        - audit-log-path=<customized-path>/dev-audit.logs
+    machineSelectorFiles:
+      - fileSources:
+          - configMap:
+              name: ''
+            secret:
+              items:
+                - key: audit-policy
+                  path: <customized-path>/dev-audit-policy.yaml
+              name: dev-audit-policy
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+Para más información sobre la configuración del clúster, consulta las páginas de {xref-rke2-config}[referencia de configuración del clúster RKE2].
+--
+
+K3s::
++
+--
+
+[NOTE]
+====
+
+Esta función está disponible en Rancher v2.7.2 y versiones posteriores.
+====
+
+
+Puedes usar `machineSelectorFiles` para entregar el archivo de directiva de auditoría a los nodos del plano de control, y `machineGlobalConfig` para establecer las opciones en kube-apiserver.
+
+Como requisito previo, debes crear un {xref-secrets}[secreto] o un {xref-configmaps}[configmap] que sea la fuente de la directiva de auditoría.
+
+El secreto o configmap debe cumplir con los siguientes requisitos:
+
+. Debe estar en el espacio de nombres `fleet-default` donde existe el objeto Cluster.
+. Debe tener la anotación `rke.cattle.io/object-authorized-for-clusters: <cluster-name1>,<cluster-name2>` que permite a los clústeres de destino usarlo.
+
+[TIP]
+====
+
+Rancher Dashboard proporciona un formulario fácil de usar para crear el {xref-secrets}[secreto] o el {xref-configmaps}[configmap].
+====
+
+
+Ejemplo:
+
+[,yaml]
+----
+apiVersion: v1
+data:
+  audit-policy: >-
+    IyBMb2cgYWxsIHJlcXVlc3RzIGF0IHRoZSBNZXRhZGF0YSBsZXZlbC4KYXBpVmVyc2lvbjogYXVkaXQuazhzLmlvL3YxCmtpbmQ6IFBvbGljeQpydWxlczoKLSBsZXZlbDogTWV0YWRhdGE=
+kind: Secret
+metadata:
+  annotations:
+    rke.cattle.io/object-authorized-for-clusters: cluster1
+  name: <name1>
+  namespace: fleet-default
+----
+
+Habilita y configura el registro de auditoría editando el clúster en YAML, y utilizando las directivas `machineSelectorFiles` y `machineGlobalConfig`.
+
+Ejemplo:
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - audit-policy-file=<customized-path>/dev-audit-policy.yaml
+        - audit-log-path=<customized-path>/dev-audit.logs
+    machineSelectorFiles:
+      - fileSources:
+          - configMap:
+              name: ''
+            secret:
+              items:
+                - key: audit-policy
+                  path: <customized-path>/dev-audit-policy.yaml
+              name: dev-audit-policy
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+Para más información sobre la configuración del clúster, consulta las páginas de {xref-k3s-config}[referencia de configuración de K3s].
+--
+======

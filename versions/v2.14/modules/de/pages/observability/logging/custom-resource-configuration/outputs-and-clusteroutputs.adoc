@@ -1,0 +1,321 @@
+= Ausgaben und ClusterAusgaben
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/logging/custom-resource-configuration/outputs-and-clusteroutputs.adoc 
+:product-path: observability/logging/custom-resource-configuration/outputs-and-clusteroutputs.adoc
+ifeval::["{build-type}" != "community"]
+:xref-logging: xref:observability/logging/logging.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-logging: xref:integrations-in-rancher/logging/index.adoc
+endif::[]
+
+Siehe die https://kube-logging.github.io/docs/configuration/flow/[Dokumentation des Logging-Betreibers] für die vollständigen Details zur Konfiguration von `Flows` und `ClusterFlows`.
+
+Siehe {xref-logging}#_Die_Logging_Pufferüberlastungen_Pods[Rancher-Integration mit Logging-Diensten: Fehlerbehebung] zur Behebung von Speicherproblemen mit dem Logging-Puffer.
+
+[#_outputs]
+== Ausgaben
+
+Die `Output` Ressource definiert, wo Ihre `Flows` die Protokollnachrichten senden kann. `Outputs` sind die letzte Stufe für ein Logging `Flow`.
+
+Die `Output` ist eine Namespace-Ressource, was bedeutet, dass nur ein `Flow` innerhalb desselben Namespace darauf zugreifen kann.
+
+Sie können Geheimnisse in diesen Definitionen verwenden, aber sie müssen sich ebenfalls im selben Namespace befinden.
+
+`Outputs` kann konfiguriert werden, indem Formulare in der Rancher-Benutzeroberfläche ausgefüllt werden.
+
+Für die Einzelheiten der `Output` benutzerdefinierten Ressource siehe https://kube-logging.github.io/docs/configuration/crds/v1beta1/output_types/[OutputSpec.].
+
+Die Rancher-Benutzeroberfläche bietet Formulare zur Konfiguration der folgenden `Output` Typen an:
+
+* Amazon ElasticSearch
+* Azure Storage
+* Cloudwatch
+* Datadog
+* Elasticsearch
+* Datei
+* Fluentd
+* GCS
+* Kafka
+* Kinesis Stream
+* LogDNA
+* LogZ
+* Loki
+* New Relic
+* Splunk
+* SumoLogic
+* Syslog
+
+Die Rancher-Benutzeroberfläche bietet Formulare zur Konfiguration des `Output` Typs, Ziels und der Zugriffsanmeldeinformationen, falls zutreffend.
+
+Für Beispielkonfigurationen für jedes vom Logging-Operator unterstützte Logging-Plugin siehe die https://kube-logging.github.io/docs/configuration/plugins/outputs/[Dokumentation des Logging-Operators].
+
+[#_clusteroutputs]
+== ClusterOutputs
+
+`ClusterOutput` definiert ein `Output` ohne Namespace-Einschränkungen. Es ist nur wirksam, wenn es im selben Namespace wie der Logging-Operator bereitgestellt wird.
+
+`ClusterOutputs` kann konfiguriert werden, indem Formulare in der Rancher-Benutzeroberfläche ausgefüllt werden.
+
+Für die Einzelheiten der `ClusterOutput` benutzerdefinierten Ressource siehe https://kube-logging.github.io/docs/configuration/crds/v1beta1/clusteroutput_types/[ClusterOutput.]
+
+[#_yaml_examples]
+== YAML-Beispiele
+
+Sobald das Logging installiert ist, können Sie diese Beispiele verwenden, um Ihre eigene Logging-Pipeline zu erstellen.
+
+* <<_cluster_output_to_elasticsearch,Cluster-Ausgabe an Elasticsearch>>
+* <<_output_to_splunk,Ausgabe an Splunk>>
+* <<_output_to_syslog,Ausgabe an Syslog>>
+* <<_unsupported_outputs,Nicht unterstützte Ausgaben>>
+
+[#_cluster_output_to_elasticsearch]
+=== Cluster-Ausgabe an Elasticsearch
+
+Angenommen, Sie möchten alle Protokolle in Ihrem Cluster an ein `elasticsearch`-Cluster senden. Zuerst erstellen wir ein Cluster `Output`.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+    name: "example-es"
+    namespace: "cattle-logging-system"
+spec:
+    elasticsearch:
+      host: elasticsearch.example.com
+      port: 9200
+      scheme: http
+----
+
+Wir haben dieses `ClusterOutput` ohne Elasticsearch-Konfiguration im selben Namespace wie unserem Operator erstellt: `cattle-logging-system.`. Jedes Mal, wenn wir ein `ClusterFlow` oder `ClusterOutput` erstellen, müssen wir es im `cattle-logging-system` Namespace platzieren.
+
+Jetzt, da wir konfiguriert haben, wohin wir die Protokolle senden möchten, lassen Sie uns alle Protokolle so konfigurieren, dass sie an dieses `ClusterOutput` gesendet werden.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+    name: "all-logs"
+    namespace: "cattle-logging-system"
+spec:
+  globalOutputRefs:
+    - "example-es"
+----
+
+Wir sollten jetzt unseren konfigurierten Index mit Protokollen darin sehen.
+
+[#_output_to_splunk]
+=== Ausgabe an Splunk
+
+Was ist, wenn wir ein Anwendungsteam haben, das nur Protokolle aus bestimmten Namespaces an einen `splunk` Server senden möchte? Für diesen Fall können wir namespaced `Outputs` und `Flows` verwenden.
+
+Bevor wir beginnen, lassen Sie uns die Anwendung dieses Teams einrichten: `coolapp`.
+
+[,yaml]
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devteam
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coolapp
+  namespace: devteam
+  labels:
+    app: coolapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: coolapp
+  template:
+    metadata:
+      labels:
+        app: coolapp
+    spec:
+      containers:
+        - name: generator
+          image: paynejacob/loggenerator:latest
+----
+
+Während `coolapp` läuft, werden wir einen ähnlichen Pfad einschlagen, wie bei der Erstellung eines `ClusterOutput`. Allerdings erstellen wir im Gegensatz zu `ClusterOutputs` unser `Output` im Namespace unserer Anwendung.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Output
+metadata:
+  name: "devteam-splunk"
+  namespace: "devteam"
+spec:
+  splunkHec:
+    hec_host: splunk.example.com
+    hec_port: 8088
+    protocol: http
+----
+
+Einmal mehr, lassen Sie uns unserem `Output` einige Protokolle zuführen:
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Flow
+metadata:
+  name: "devteam-logs"
+  namespace: "devteam"
+spec:
+  localOutputRefs:
+    - "devteam-splunk"
+----
+
+[#_output_to_syslog]
+=== Ausgabe an Syslog
+
+Angenommen, Sie möchten alle Protokolle in Ihrem Cluster an einen `syslog`-Server senden. Zuerst erstellen wir ein `ClusterOutput`:
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: "example-syslog"
+  namespace: "cattle-logging-system"
+spec:
+  syslog:
+    buffer:
+      timekey: 30s
+      timekey_use_utc: true
+      timekey_wait: 10s
+      flush_interval: 5s
+    format:
+      type: json
+      app_name_field: test
+    host: syslog.example.com
+    insecure: true
+    port: 514
+    transport: tcp
+----
+
+Jetzt, da wir konfiguriert haben, wohin wir die Protokolle senden möchten, lassen Sie uns alle Protokolle so konfigurieren, dass sie an dieses `Output` gesendet werden.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+  name: "all-logs"
+  namespace: cattle-logging-system
+spec:
+  globalOutputRefs:
+    - "example-syslog"
+----
+
+[#_unsupported_outputs]
+=== Nicht unterstützte Ausgaben
+
+Für das letzte Beispiel erstellen wir ein `Output`, um Protokolle an ein Ziel zu schreiben, das nicht standardmäßig unterstützt wird:
+
+[NOTE]
+.Hinweis zu syslog:
+====
+
+`syslog` ist ein unterstütztes `Output`. Dieses Beispiel bietet jedoch weiterhin einen Überblick über die Verwendung von nicht unterstützten Plugins.
+====
+
+
+[,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: syslog-config
+  namespace: cattle-logging-system
+type: Opaque
+stringData:
+  fluent-bit.conf: |
+    [INPUT]
+        Name              forward
+        Port              24224
+
+    [OUTPUT]
+        Name              syslog
+        InstanceName      syslog-output
+        Match             *
+        Addr              syslog.example.com
+        Port              514
+        Cluster           ranchers
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fluentbit-syslog-forwarder
+  namespace: cattle-logging-system
+  labels:
+    output: syslog
+spec:
+  selector:
+    matchLabels:
+      output: syslog
+  template:
+    metadata:
+      labels:
+        output: syslog
+    spec:
+      containers:
+      - name: fluentbit
+        image: paynejacob/fluent-bit-out-syslog:latest
+        ports:
+          - containerPort: 24224
+        volumeMounts:
+          - mountPath: "/fluent-bit/etc/"
+            name: configuration
+      volumes:
+      - name: configuration
+        secret:
+          secretName: syslog-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslog-forwarder
+  namespace: cattle-logging-system
+spec:
+  selector:
+    output: syslog
+  ports:
+    - protocol: TCP
+      port: 24224
+      targetPort: 24224
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+  name: all-logs
+  namespace: cattle-logging-system
+spec:
+  globalOutputRefs:
+    - syslog
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: syslog
+  namespace: cattle-logging-system
+spec:
+  forward:
+    servers:
+      - host: "syslog-forwarder.cattle-logging-system"
+    require_ack_response: false
+    ignore_network_errors_at_startup: false
+----
+
+Lassen Sie uns aufschlüsseln, was hier passiert. Zuerst erstellen wir eine Implementierung eines Containers, der das zusätzliche `syslog`-Plugin hat und Protokolle von einem anderen `fluentd` akzeptiert. Als Nächstes erstellen wir ein `Output`, das als Forwarder für unsere Implementierung konfiguriert ist. Die Implementierung `fluentd` wird dann alle Protokolle an das konfigurierte `syslog`-Ziel weiterleiten.

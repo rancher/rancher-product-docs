@@ -1,0 +1,139 @@
+= Opções do Helm Chart do rancher-logging
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-15
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/logging/logging-helm-chart-options.adoc 
+:product-path: observability/logging/logging-helm-chart-options.adoc
+ifeval::["{build-type}" != "community"]
+:xref-selinux-rpm: xref:security/selinux-rpm/selinux-rpm.adoc
+:xref-logging-taints-and-tolerations: xref:observability/logging/taints-and-tolerations.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-selinux-rpm: xref:reference-guides/rancher-security/selinux-rpm/index.adoc
+:xref-logging-taints-and-tolerations: xref:integrations-in-rancher/logging/taints-and-tolerations.adoc
+endif::[]
+
+[#_enable_disable_windows_node_logging]
+== Ativar/Desativar o Registro de Nós do Windows
+
+Você pode ativar ou desativar o registro de nós do Windows definindo `global.cattle.windows.enabled` como `true` ou `false` no `values.yaml`.
+
+Por padrão, o registro de nós do Windows será ativado se a interface do Cluster Dashboard for usada para instalar o aplicativo de registro em um cluster Windows.
+
+Nesse cenário, definir `global.cattle.windows.enabled` como `false` desativará o registro de nós do Windows no cluster.
+Quando desativado, os logs ainda serão coletados dos nós Linux dentro do cluster Windows.
+
+[NOTE]
+====
+
+Atualmente, existe um https://github.com/rancher/rancher/issues/32325[problema] onde os nodeAgents do Windows não são excluídos ao realizar um `helm upgrade` após desativar o registro de nós do Windows em um cluster Windows. Nesse cenário, os usuários podem precisar remover manualmente os nodeAgents do Windows se já estiverem instalados.
+====
+
+
+[#_working_with_a_custom_docker_root_directory]
+== Trabalhando com um Diretório Raiz do Docker Customizado
+
+Se estiver usando um diretório raiz do Docker personalizado, você pode definir `global.dockerRootDirectory` em `values.yaml`.
+
+Isso garantirá que os CRs de Registro criados usem o caminho especificado em vez do local padrão do Docker `data-root`.
+
+Observe que isso afeta apenas os nós Linux.
+
+Se houver nós Windows no cluster, a alteração não será aplicável a esses nós.
+
+[#_adding_nodeselector_settings_and_tolerations_for_custom_taints]
+== Adicionando Configurações de NodeSelector e Tolerâncias para Taints Personalizados
+
+Você pode adicionar suas próprias configurações de `nodeSelector` e adicionar `tolerations` para taints adicionais editando os valores do Helm chart de registro. Para obter detalhes, consulte {xref-logging-taints-and-tolerations}[esta página.]
+
+[#_enabling_the_logging_application_to_work_with_selinux]
+== Ativando o Aplicativo de Registro para Funcionar com SELinux
+
+[NOTE]
+.Requisitos:
+====
+
+O registro v2 foi testado com SELinux no RHEL/CentOS 7 e 8.
+====
+
+
+https://en.wikipedia.org/wiki/Security-Enhanced_Linux[Linux com Segurança Aprimorada (SELinux)] é uma melhoria de segurança para o Linux. Após ter sido historicamente utilizado por agências governamentais, o SELinux agora é padrão da indústria e está habilitado por padrão no CentOS 7 e 8.
+
+Para usar o Logging v2 com SELinux, recomendamos instalar o `rancher-selinux` RPM de acordo com estas {xref-selinux-rpm}[instruções].
+
+Em seguida, ao instalar o aplicativo de registro, configure o chart para estar ciente do SELinux alterando `global.seLinux.enabled` para `true` no `values.yaml`.
+
+[#_additional_logging_sources]
+== Fontes de Log Adicionais
+
+Por padrão, o Rancher coleta logs para https://kubernetes.io/docs/concepts/overview/components/#control-plane-components[componentes do plano de controle] e https://kubernetes.io/docs/concepts/overview/components/#node-components[componentes do nó] para todos os tipos de cluster.
+
+Em alguns casos, o Rancher pode ser capaz de coletar logs adicionais.
+
+A tabela a seguir resume as fontes onde logs adicionais podem ser coletados para cada tipo de nó:
+
+|===
+| Fonte de Registro | Nós Linux (incluindo em cluster Windows) | Nós Windows
+
+| RKE2
+| ✓
+|
+
+| K3s
+| ✓
+|
+
+ifeval::["{build-type}" != "srfa"]
+| AKS
+| ✓
+|
+
+| EKS
+| ✓
+|
+
+| GKE
+| ✓
+|
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+| EKS
+| ✓
+|
+endif::[]
+|===
+
+Para habilitar provedores de Kubernetes hospedados como fontes de registro adicionais, ative a opção *Habilitar registro aprimorado do provedor de nuvem* ao instalar ou atualizar o Helm Chart do rancher-logging.
+
+Quando habilitado, o Rancher coleta todos os logs adicionais de nós e do plano de controle que o provedor disponibilizou, o que pode variar entre os provedores.
+
+Se você já estiver usando a própria solução de registro de um provedor de nuvem, como AWS CloudWatch ou Google Cloud operations suite (anteriormente Stackdriver), não é necessário habilitar esta opção, pois a solução nativa terá acesso irrestrito a todos os logs.
+
+[#_systemd_configuration]
+== Configuração do Systemd
+
+No rancher-logging, `SystemdLogPath` deve ser configurado para distribuições Kubernetes K3s e RKE2.
+
+As distribuições Kubernetes K3s e RKE2 registram no journald, que é o subsistema do systemd usado para registro. Para coletar esses logs, o `systemdLogPath` precisa ser definido. Embora o diretório `run/log/journal` seja usado por padrão, algumas distribuições Linux não adotam esse caminho. Por exemplo, o Ubuntu utiliza `var/log/journal` por padrão. Para determinar sua configuração `systemdLogPath`, veja os passos abaixo.
+
+*Passos para Configuração do Systemd:*
+
+* Execute `cat /etc/systemd/journald.conf | grep -E ^\#?Storage | cut -d"=" -f2` em um dos seus nós.
+* Se `persistent` for retornado, seu `systemdLogPath` deve ser `/var/log/journal`.
+* Se `volatile` for retornado, seu `systemdLogPath` deve ser `/run/log/journal`.
+* Se `auto` for retornado, verifique se `/var/log/journal` existe.
+ ** Se `/var/log/journal` existir, então use `/var/log/journal`.
+ ** Se `/var/log/journal` não existir, então use `/run/log/journal`.
+
+[NOTE]
+====
+
+Se qualquer valor não descrito acima for retornado, o Rancher Logging não conseguirá coletar os logs do plano de controle. Para resolver esse problema, você precisará realizar as seguintes ações em cada nó do plano de controle:
+
+* Defina `Storage=volatile` em journald.conf.
+* Reinicialize sua máquina.
+* Defina `systemdLogPath` como `/run/log/journal`.
+====
+

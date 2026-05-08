@@ -1,0 +1,202 @@
+= Enregistrement auprès du SUSE Customer Center
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+
+Depuis Rancher v2.12.1, les clients de SUSE Rancher Prime peuvent désormais enregistrer Rancher Manager auprès de https://scc.suse.com/home[SUSE Customer Center (SCC)]. Cet enregistrement vous aide à suivre l'utilisation des abonnements de votre organisation et des instances de Rancher Manager déployées.
+
+[#_prerequisites]
+== Conditions préalables
+
+* L'enregistrement de votre instance Rancher Manager auprès de SCC nécessite un compte SUSE. Si vous n'avez pas encore de compte SUSE, https://www.suse.com/account/create/[créez-en un].
+* Vous devez avoir accès à votre organisation. Demandez à l'administrateur de votre organisation de vous ajouter au compte. Consultez la https://scc.suse.com/docs/userguide#UG-Requesting-Access-to-an-Organizations-Account[documentation SCC] et la https://scc.suse.com/docs/help#how-to-add-user[FAQ SCC] pour plus de détails. Si vous connaissez le code d'enregistrement de votre organisation, saisissez-le lorsque cela vous est demandé.
+
+[#_register_with_suse_customer_center]
+== Enregistrez-vous auprès de SUSE Customer Center
+
+Depuis l'interface utilisateur de Rancher, allez dans *Paramètres globaux* > *Enregistrement*. Vous pouvez également vérifier le Centre de notifications (icône de cloche) dans le coin supérieur droit pour une notification "Enregistrement Rancher Prime" et cliquer sur *Enregistrer maintenant*. Cela vous redirige vers la page *Enregistrement* sous *Paramètres globaux*.
+
+Vous avez la possibilité d'enregistrer votre instance Rancher Manager auprès de SCC <<Online Registration,en ligne>> ou <<Offline Registration,hors ligne>>.
+
+[#_online_registration]
+=== Enregistrement en ligne
+
+Vous pouvez vous enregistrer en ligne via l'interface utilisateur de Rancher ou avec Helm.
+
+[#_obtain_registration_code]
+==== Obtenez le code d'enregistrement
+
+Avant de continuer, vous devez obtenir le code d'enregistrement pour votre abonnement Rancher Manager sur SCC. Pour obtenir le code d'enregistrement{nbsp}:
+
+. Connectez-vous à SCC.
+. Accédez à **Mes organisations** et cliquez sur l'organisation avec votre abonnement Rancher Manager.
+. Trouvez votre code d'enregistrement sous *Organisation* > *Abonnements* > *Informations sur l'abonnement*.
+
+[#_rancher_ui]
+==== Interface utilisateur Rancher
+
+. Depuis l'interface utilisateur de Rancher, copiez le code d'enregistrement dans le champ *Code d'enregistrement* et cliquez sur *Enregistrer*. Si cela réussit, le *Statut* devient *Actif*, et le *Nom du produit*, *Date d'expiration* et *Mode d'enregistrement* sont affichés.
++
+image::online-scc-registration.png[Enregistrer avec SCC en utilisant la méthode en ligne]
+
+[#_helm]
+==== Helm
+
+Après avoir obtenu votre code d'enregistrement de SCC, vous pouvez enregistrer votre instance Rancher Manager via Helm.
+
+[#_entrypoint_secret]
+===== Secret d'entrée
+
+Pour suivre les meilleures pratiques de sécurité dans des environnements de production ou GitOps, évitez de stocker les codes d'enregistrement en texte clair. Au lieu de cela, créez manuellement un secret d'entrée avant l'installation pour permettre à l'opérateur SCC de détecter et de consommer automatiquement les données d'enregistrement.
+
+. Créez l'espace de noms système SCC. L'opérateur SCC s'attend à ce que les données d'enregistrement résident dans l'espace de noms `cattle-scc-system`.
++
+[,shell]
+----
+kubectl create namespace cattle-scc-system
+----
+
+. Créez un secret nommé `scc-registration` contenant votre code d'enregistrement. Ce secret peut être géré via des gestionnaires de secrets externes pour le garder crypté dans Git.
++
+[,shell]
+----
+kubectl create secret generic scc-registration \
+  --namespace cattle-scc-system \
+  --from-literal=regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+. Activez l'enregistrement dans votre `values.yaml` mais laissez le champ `regCode` vide. Lorsque `registration.enabled` est `true` et qu'aucun code n'est fourni dans les valeurs, l'opérateur recherche un secret `scc-registration` existant dans l'espace de noms `cattle-scc-system`.
++
+[,yaml]
+----
+registration:
+  enabled: true
+  regCode: ""
+----
+
+. Déployez Rancher en utilisant votre `values.yaml` mis à jour{nbsp}:
++
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --values values.yaml
+----
+
+. Pour vérifier que l'enregistrement a réussi en utilisant le secret créé manuellement, vérifiez les journaux de l'opérateur SCC ou l'état de l'enregistrement dans l'interface utilisateur de Rancher sous *Paramètres globaux* > *Enregistrement*.
+
+[#_helm_parameters]
+===== Paramètres Helm 
+
+Pour les environnements de test ou non-production, vous pouvez passer le code d'enregistrement directement lors de la commande d'installation Helm{nbsp}:
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set registration.enabled=true \
+  --set registration.regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+Alternativement, vous pouvez mettre à jour `values.yaml` pour activer l'enregistrement et ajouter votre code d'enregistrement.
+
+[,yaml]
+----
+registration:
+  enabled: true
+  regCode: "<REGISTRATION-CODE>"
+----
+
+Ensuite, déployez Rancher en utilisant le fichier de valeurs mis à jour{nbsp}:
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher 
+  --namespace cattle-system 
+  --values values.yaml
+----
+
+[#_offline_registration]
+=== Enregistrement hors ligne
+
+Si vous utilisez Rancher dans un environnement isolé physiquement, vous pouvez vous inscrire hors ligne via l'interface utilisateur de Rancher ou avec Helm.
+
+[#_rancher_ui_1]
+==== Interface utilisateur Rancher
+
+[IMPORTANT]
+====
+Un administrateur d'organisation SCC doit obtenir votre certificat d'enregistrement, car les utilisateurs réguliers n'ont pas accès.
+====
+
+. Depuis l'interface utilisateur de Rancher, cliquez sur *Télécharger la demande d'enregistrement* pour télécharger le fichier de demande d'enregistrement.
+. Cliquez sur *Visiter SCC* pour utiliser l'outil d'enregistrement hors ligne SCC et obtenir le certificat d'enregistrement. 
+.. Importez le fichier de demande d'enregistrement.
+.. Sélectionnez votre *Organisation* et *Abonnement*.
+.. Cliquez sur *Télécharger le certificat hors ligne* et enregistrez le fichier de certificat d'enregistrement.
+. Retournez à l'interface utilisateur de Rancher, cliquez sur *Téléverser le certificat et enregistrer* pour téléverser le certificat d'enregistrement. Si cela réussit, le *Statut* devient *Actif*, et le *Nom du produit*, *Date d'expiration* et le *Mode d'enregistrement* sont affichés.
++
+image::offline-scc-registration.png[Enregistrer avec SCC en utilisant la méthode hors ligne]
+
+[#_helm_1]
+==== Helm
+
+. Dans `values.yaml`, activez l'enregistrement, commentez `regCode` et définissez le `mode` sur `offline`.
++
+[,yaml]
+----
+registration:
+  enabled: true
+  # regCode: ""
+  mode: offline
+----
+
+. Exécutez la commande d'installation Helm `helm install rancher rancher-prime/rancher` et vérifiez que l'installation est réussie. 
+. Avant de continuer, utilisez la commande Bash suivante pour vérifier que le SCC-Operator a créé avec succès un secret dans l'espace de noms `cattle-scc-system`. Après la création du secret, il affiche `Secret created!`.
++
+[,bash]
+----
+for i in {1..100}; do kubectl wait --for=create secret/scc-registration -n cattle-scc-system --timeout=3s &> /dev/null && echo "Secret created!" && break || { echo "Not ready yet..."; sleep 3; }; done
+----
+
+. En utilisant `kubectl`, récupérez le fichier de demande d'enregistrement et enregistrez-le localement.
++
+[,bash]
+----
+kubectl get secrets -n  cattle-scc-system \
+-l scc.cattle.io/secret-role=offline-request,scc.cattle.io/scc-hash=$(kubectl get secrets \
+-n cattle-scc-system scc-registration -o yaml|yq '.metadata.labels["scc.cattle.io/scc-hash"]') \
+-o yaml | yq '.items[0].data.request' > offline.base64
+----
++
+. Cliquez sur *Visiter SCC* pour utiliser l'outil d'enregistrement hors ligne SCC. 
+.. Importez le fichier de demande d'enregistrement.
+.. Sélectionnez votre *Organisation* et *Abonnement*.
+.. Cliquez sur *Télécharger le certificat hors ligne* et enregistrez le fichier de certificat d'enregistrement.
+. Téléversez le fichier de certificat d'enregistrement sur votre instance Rancher Manager en utilisant `kubectl` ou Helm.
+
+* *`kubectl`:*
++
+[,bash]
+----
+kubectl patch secret -n cattle-scc-system scc-registration  \
+--type='merge' -p "{\"data\": {\"certificate\": \"$(cat <your Offline Cert file> )\"}}"
+----
+* *Helm:*
++
+Ajoutez votre certificat d'enregistrement en utilisant le champ de valeur `certificate`, puis `helm upgrade` Rancher.
++
+[,yaml]
+----
+certificate: {}
+----
+
+[#_deregister_from_suse_customer_center]
+== Désinscrire du Centre Client SUSE
+
+Si vous devez supprimer ou mettre à jour votre enregistrement, vous pouvez désinscrire votre instance Rancher Manager du SCC. 
+
+. Allez à *Paramètres globaux* > *Enregistrement*.
+. Trouvez votre enregistrement de produit sous *Enregistrement en ligne* ou *Enregistrement hors ligne* et cliquez sur *Désinscrire*.

@@ -1,0 +1,107 @@
+= Configurando um Balanceador de Carga NGINX
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+
+O NGINX será configurado como um balanceador de carga de camada 4 (TCP) que encaminha conexões para um dos seus nós do Rancher.
+
+Nesta configuração, o balanceador de carga está posicionado à frente dos seus nós. O balanceador de carga pode ser qualquer host capaz de executar o NGINX.
+
+[NOTE]
+====
+
+Não utilize um dos seus nós do Rancher como o balanceador de carga.
+====
+
+
+____
+Esses exemplos mostram o balanceador de carga sendo configurado para direcionar o tráfego para três nós do servidor Rancher. Se o Rancher estiver instalado em um cluster Kubernetes RKE, são necessários três nós. Se o Rancher estiver instalado em um cluster Kubernetes K3s, apenas dois nós são necessários.
+____
+
+[#_install_nginx]
+== Instalar o NGINX
+
+Comece instalando o NGINX no nó que você deseja usar como balanceador de carga. O NGINX possui pacotes disponíveis para todos os sistemas operacionais conhecidos. As versões testadas são `1.14` e `1.15`. Para ajuda na instalação do NGINX, consulte a https://www.nginx.com/resources/wiki/start/topics/tutorials/install/[documentação de instalação] deles.
+
+O módulo `stream` é necessário, o qual está presente ao usar os pacotes oficiais do NGINX. Por favor, consulte a documentação do seu sistema operacional sobre como instalar e habilitar o módulo NGINX `stream` no seu sistema operacional.
+
+[#_create_nginx_configuration]
+== Criar Configuração do NGINX
+
+Após instalar o NGINX, você precisa atualizar o arquivo de configuração do NGINX, `nginx.conf`, com os endereços IP dos seus nós.
+
+. Copie e cole o código de exemplo abaixo no seu editor de texto favorito. Salve-o como `nginx.conf`.
+. De `nginx.conf`, substitua ambas as ocorrências (porta 80 e porta 443) de `<IP_NODE_1>`, `<IP_NODE_2>` e `<IP_NODE_3>` pelos IPs dos seus nós.
++
+[NOTE]
+====
+Veja https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/[Documentação do NGINX: Balanceamento de Carga TCP e UDP] para todas as opções de configuração.
+====
++
+.Exemplo de configuração do NGINX
+----
+worker_processes 4;
+worker_rlimit_nofile 40000;
+
+events {
+    worker_connections 8192;
+}
+
+stream {
+    upstream rancher_servers_http {
+        least_conn;
+        server <IP_NODE_1>:80 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_2>:80 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_3>:80 max_fails=3 fail_timeout=5s;
+    }
+    server {
+        listen 80;
+        proxy_pass rancher_servers_http;
+    }
+
+}
+
+http {
+
+    upstream rancher_servers_https {
+        least_conn;
+        server <IP_NODE_1>:443 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_2>:443 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_3>:443 max_fails=3 fail_timeout=5s;
+    }
+    server {
+        listen 443 ssl;
+        ssl_certificate /path/to/tls.crt;
+        ssl_certificate_key /path/to/key.key;
+        location / {
+            proxy_pass https://rancher_servers_https;
+            proxy_set_header Host <rancher UI URL>;
+            proxy_ssl_server_name on;
+            proxy_ssl_name <rancher UI URL>
+        }
+    }
+}
+----
+
+. Salve `nginx.conf` no seu balanceador de carga no seguinte caminho: `/etc/nginx/nginx.conf`.
+. Carregue as atualizações para sua configuração do NGINX executando o seguinte comando:
++
+----
+# nginx -s reload
+----
+
+[#_option_run_nginx_as_docker_container]
+== Opção - Executar o NGINX como um contêiner Docker
+
+Em vez de instalar o NGINX como um pacote no sistema operacional, você pode executá-lo como um contêiner Docker. Salve o *Exemplo de configuração do NGINX* editado como `/etc/nginx.conf` e execute o seguinte comando para iniciar o contêiner NGINX:
+
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v /etc/nginx.conf:/etc/nginx/nginx.conf \
+  nginx:1.14
+----

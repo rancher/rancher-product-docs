@@ -1,0 +1,183 @@
+= Requisitos del nodo para {rancher-product-name} clústeres downstream
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: instrucciones/nuevas-instrucciones-para-usuarios/clústeres-kubernetes-en-rancher/configuración/requisitos-del-nodo-para-clústeres-downstream-de-rancher.adoc 
+:product-path: cluster-deployment/node-requirements.adoc
+ifeval::["{build-type}" != "community"]
+:xref-use-windows-clusters: xref:cluster-deployment/custom-clusters/windows/use-windows-clusters.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-security-overview: xref:security/security-overview.adoc
+:xref-port-reqs: xref:installation-and-upgrade/requirements/port-requirements.adoc
+:xref-provisioning-drivers: xref:rancher-admin/global-configuration/provisioning-drivers/provisioning-drivers.adoc
+:xref-rancher-on-arm64: xref:rancher-admin/experimental-features/rancher-on-arm64.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-use-windows-clusters: xref:guías-como-hacer/nuevas-guías-de-usuario/clusters-de-kubernetes-en-rancher-configuración/utilizar-clústeres-windows/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-security-overview: xref:reference-guides/rancher-security/index.adoc
+:xref-port-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/port-requirements.adoc
+:xref-provisioning-drivers: xref:instrucciones/nuevos-usuarios/guías-de-autenticación-permisos-y-configuración-global/acerca-de-controladores-de-provisionamiento/index.adoc
+:xref-rancher-on-arm64: xref:how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64.adoc
+endif::[]
+
+Esta página describe los requisitos para los clústeres de Kubernetes gestionados por Rancher donde se instalarán vuestras apps y servicios. Estos clústeres downstream deben estar separados del clúster de tres nodos que ejecuta Rancher.
+
+[NOTE]
+====
+
+Si Rancher está instalado en un clúster de Kubernetes de alta disponibilidad, el clúster de tres nodos del servidor Rancher y los clústeres downstream tienen diferentes requisitos. Para los requisitos de instalación de Rancher, consultad los requisitos del nodo en la {xref-install-reqs}[sección de instalación].
+====
+
+
+[#_operating_systems_and_container_runtime_requirements]
+== Requisitos de sistemas operativos y del entorno de ejecución de contenedor
+
+Rancher debería funcionar con cualquier distribución de Linux moderna y cualquier versión moderna de Docker. Linux es necesario para los nodos etcd y controlplane de todos los clústeres downstream. Los nodos trabajadores pueden ejecutar Linux o <<_windows_nodes,Windows Server.>>
+
+Para obtener detalles sobre qué versiones de SO y Docker se probaron con cada versión de Rancher, consulta los https://rancher.com/support-maintenance-terms/[términos de mantenimiento de soporte.]
+
+Todos los sistemas operativos compatibles son de 64 bits x86.
+
+Si planeas usar ARM64, consulta {xref-rancher-on-arm64}[Ejecución en ARM64 (Experimental).]
+
+Para obtener información sobre cómo instalar Docker, consultad la https://docs.docker.com/[documentación oficial de Docker.]
+
+[#_oracle_linux_and_rhel_derived_linux_nodes]
+=== Nodos de Linux derivados de Oracle Linux y RHEL
+
+Algunas distribuciones de Linux derivadas de RHEL, incluyendo Oracle Linux, pueden tener reglas de firewall predeterminadas que bloquean la comunicación con Helm. Recomendamos desactivar firewalld. Para Kubernetes 1.19, firewalld debe estar desactivado.
+
+[NOTE]
+====
+
+En RHEL 8.4, se incluyen dos servicios adicionales en el NetworkManager: `nm-cloud-setup.service` y `nm-cloud-setup.timer`. Estos servicios añaden una tabla de enrutamiento que interfiere con la configuración del plugin CNI. Si estos servicios están habilitados, debes desactivarlos utilizando el comando a continuación, y luego reiniciar el nodo para restaurar la conectividad:
+
+----
+   systemctl disable nm-cloud-setup.service nm-cloud-setup.timer
+   reboot
+----
+====
+
+
+[#_suse_linux_nodes]
+=== Nodos de SUSE Linux
+
+SUSE Linux puede tener un firewall que bloquea todos los puertos por defecto. En esa situación, sigue {xref-port-reqs}#_opening_suse_linux_ports[estos pasos] para abrir los puertos necesarios para añadir un host a un clúster personalizado.
+
+[#_flatcar_container_linux_nodes]
+=== Nodos de Flatcar Container Linux
+
+Cuando {xref-launch-k8s-with-rancher}[Lanzando Kubernetes con Rancher] utilizando nodos de Flatcar Container Linux, es necesario usar la siguiente configuración en el Archivo de Configuración del Clúster.
+
+[tabs]
+======
+Canal::
++
+--
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  network:
+    plugin: canal
+    options:
+      canal_flex_volume_plugin_dir: /opt/kubernetes/kubelet-plugins/volume/exec/nodeagent~uds
+      flannel_backend_type: vxlan
+
+  services:
+    kube-controller:
+      extra_args:
+        flex-volume-plugin-dir: /opt/kubernetes/kubelet-plugins/volume/exec/
+----
+--
+
+Calico::
++
+--
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  network:
+    plugin: calico
+    options:
+      calico_flex_volume_plugin_dir: /opt/kubernetes/kubelet-plugins/volume/exec/nodeagent~uds
+      flannel_backend_type: vxlan
+
+  services:
+    kube-controller:
+      extra_args:
+        flex-volume-plugin-dir: /opt/kubernetes/kubelet-plugins/volume/exec/
+----
+--
+======
+
+También es necesario habilitar el servicio de Docker, puedes habilitar el servicio de Docker utilizando el siguiente comando:
+
+----
+systemctl enable docker.service
+----
+
+El servicio de Docker se habilita automáticamente al utilizar {xref-provisioning-drivers}#_node_drivers[Controladores de Nodos].
+
+[#_windows_nodes]
+=== Nodos de Windows
+
+Los nodos con Windows Server deben ejecutar Docker Enterprise Edition.
+
+Los nodos de Windows solo pueden usarse como nodos trabajadores. Consulta {xref-use-windows-clusters}[Configuración de Clústeres Personalizados para Windows]
+
+[#_hardware_requirements]
+== Requisitos de hardware
+
+Los requisitos de hardware para nodos con el rol `worker` dependen principalmente de tus cargas de trabajo. El mínimo para ejecutar los componentes del nodo de Kubernetes es 1 CPU (núcleo) y 1 GB de memoria.
+
+En cuanto a la CPU y la memoria, se recomienda que los diferentes planos de los clústeres de Kubernetes (etcd, controlplane y trabajadores) se alojen en diferentes nodos para que puedan escalar por separado unos de otros.
+
+Para recomendaciones de hardware para grandes clústeres de Kubernetes, consultad la documentación oficial de Kubernetes sobre https://kubernetes.io/docs/setup/best-practices/cluster-large/[construcción de grandes clústeres.]
+
+Para recomendaciones de hardware para clústeres etcd en producción, consultad la https://etcd.io/docs/v3.5/op-guide/hardware/[documentación oficial de etcd.]
+
+[#_networking_requirements]
+== Requisitos de red
+
+Para un clúster de producción, recomendamos que restrinjáis el tráfico abriendo solo los puertos definidos en los requisitos de puertos a continuación.
+
+Los puertos que deben estar abiertos son diferentes dependiendo de cómo se inicie el clúster de usuario. Cada una de las secciones a continuación lista los puertos que necesitan ser abiertos para diferentes {xref-cluster-deployment}[opciones de creación de clúster].
+
+Para un desglose de los requisitos de puertos para nodos etcd, nodos de controlplane y nodos de trabajo en un clúster de Kubernetes, consultad los https://rancher.com/docs/rke/latest/en/os/#ports[requisitos de puertos para el Rancher Kubernetes Engine.]
+
+Los detalles sobre qué puertos se utilizan en cada situación se encuentran bajo {xref-port-reqs}#_downstream_kubernetes_cluster_nodes[Requisitos de puertos del clúster downstream].
+
+[#_ipv6_address_requirements]
+=== Requisitos de Dirección IPv6
+
+Rancher admite clústeres configurados con redes solo IPv4, solo IPv6 o de doble pila.
+
+Debéis aprovisionar cada nodo con al menos una dirección IPv4 válida, una dirección IPv6, o ambas, de acuerdo con la configuración de red del clúster.
+
+Para entornos solo IPv6, aseguraos de configurar correctamente el sistema operativo y que el archivo `/etc/hosts` incluya una entrada de host local válida, por ejemplo:
+
+[source,shell]
+----
+::1       localhost
+----
+
+[CAUTION]
+====
+
+Nunca debéis registrar un nodo con el mismo nombre de host o dirección IP que un nodo existente. Hacerlo provoca que RKE impida que el nodo se una, y el aprovisionamiento se quede colgado. Esto puede ocurrir tanto para controladores de nodo como para clústeres personalizados. Si un nodo debe reutilizar un nombre de host o IP de un nodo existente, debéis establecer la opción `hostname_override` https://rke.docs.rancher.com/config-options/nodes#overriding-the-hostname[RKE option] antes de registrar el nodo, para que pueda unirse correctamente.
+====
+
+
+[#_optional_security_considerations]
+== Opcional: Consideraciones relativas a la seguridad
+
+Si queréis aprovisionar un clúster de Kubernetes que cumpla con el CIS (Centro para la Seguridad en Internet) Kubernetes Benchmark, recomendamos seguir nuestra guía de protección para configurar vuestros nodos antes de instalar Kubernetes.
+
+Para más información sobre la guía de protección y detalles sobre qué versión de la guía corresponde a vuestras versiones de Rancher y Kubernetes, consultad la {xref-security-overview}#_rancher_hardening_guide[sección de seguridad]

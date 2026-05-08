@@ -1,0 +1,178 @@
+= コンプライアンススキャン
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/compliance-scans/index.adoc 
+:product-path: security/compliance-scans/compliance-scans.adoc
+ifeval::["{build-type}" != "community"]
+:xref-security-overview: xref:security/security-overview.adoc
+:xref-compliance-scans-howto: xref:security/compliance-scans/how-to.adoc
+:xref-compliance-scans-rbac: xref:security/compliance-scans/rbac-for-compliance-scans.adoc
+:xref-compliance-scans-config: xref:security/compliance-scans/configuration-reference.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-security-overview: xref:reference-guides/rancher-security/index.adoc
+:xref-compliance-scans-howto: xref:how-to-guides/advanced-user-guides/compliance-scan-guides/index.adoc
+:xref-compliance-scans-rbac: xref:integrations-in-rancher/compliance-scans/rbac-for-compliance-scans.adoc
+:xref-compliance-scans-config: xref:integrations-in-rancher/compliance-scans/configuration-reference.adoc
+endif::[]
+
+ifeval::["{build-type}" != "srfa"] 
+Rancherは、STIG、BSI、CISなどのKubernetesセキュリティベンチマークで定義されたセキュリティのベストプラクティスに従ってクラスターがデプロイされているかどうかをチェックするために、セキュリティスキャンを実行できます。コンプライアンススキャンは、EKS、AKS、GKEなどのホスト型Kubernetesプロバイダーを含む、任意のKubernetesクラスターで実行できます。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+Rancherは、STIG、BSI、CISなどのKubernetesセキュリティベンチマークで定義されたセキュリティのベストプラクティスに従ってクラスターがデプロイされているかどうかをチェックするために、セキュリティスキャンを実行できます。コンプライアンススキャンは、EKSなどのホスト型Kubernetesプロバイダーを含む、任意のKubernetesクラスターで実行できます。
+endif::[]
+
+`rancher-compliance`アプリは、Aqua Securityのオープンソースツールである https://github.com/aquasecurity/kube-bench[kube-bench,]を活用して、クラスターがKubernetesベンチマークに対して準拠しているかどうかをチェックします。また、クラスター全体のレポートを生成するために、アプリケーションは https://github.com/vmware-tanzu/sonobuoy[Sonobuoy]を利用してレポートを集約します。
+
+[#_about_the_cis_benchmark]
+== CISベンチマークについて
+
+インターネットセキュリティセンターは、2000年10月に設立された501(c)(3)の非営利団体であり、"サイバー防御のためのベストプラクティスソリューションを特定、開発、検証、促進、維持し、サイバースペースにおける信頼の環境を可能にするコミュニティを構築し、リードする"という使命を持っています。この組織はニューヨーク州イーストグリーンブッシュに本部を置き、大企業、政府機関、学術機関などのメンバーが含まれています。
+
+CISベンチマークは、ターゲットシステムのセキュアな構成のためのベストプラクティスです。CISベンチマークは、専門家、技術ベンダー、公共および民間のコミュニティメンバー、CISベンチマーク開発チームの寛大なボランティア活動を通じて開発されています。
+
+CISウェブサイトで https://learn.cisecurity.org/benchmarks[サインアップ]して、公式のベンチマーク文書を表示してください。
+
+[#_about_the_generated_report]
+== 生成されたレポートについて
+
+各スキャンはレポートを生成し、Rancher UIで表示でき、CSV形式でダウンロードできます。
+
+デフォルトでは、CISベンチマークv1.6が使用されます。
+
+ベンチマークのバージョンは生成されたレポートに含まれています。
+
+ベンチマークは、2種類の推奨事項を提供します：自動と手動。ベンチマークで手動とマークされた推奨事項は、生成されたレポートには含まれません。
+
+一部のテストは「該当なし」と指定されています。これらのテストは、RancherがRKE2/K3sクラスターをプロビジョニングする方法のため、CISスキャンでは実行されません。テスト結果の監査方法や、なぜ一部のテストが適用外と指定されているのかについては、対応するKubernetesバージョンのRancherの{xref-security-overview}#_the_cis_benchmark_and_self_assessment[self-assessment guide]を参照してください。
+
+このレポートには次の情報が含まれます：
+
+|===
+| レポートの列 | 説明
+
+| `id`
+| CISベンチマークのID番号。
+
+| `description`
+| CISベンチマークテストの説明。
+
+| `remediation`
+| テストに合格するために修正が必要な項目。
+
+| `state`
+| テストが合格、失敗、スキップ、または適用外であるかを示します。
+
+| `node_type`
+| ノードの役割で、ノード上で実行されるテストに影響を与えます。マスターテストはコントロールプレーンノードで実行され、etcdテストはetcdノードで実行され、ノードテストはワーカーノードで実行されます。
+
+| `audit`
+| これは、`kube-bench`がこのテストのために実行する監査チェックです。
+
+| `audit_config`
+| 監査スクリプトに適用される設定。
+
+| `test_info`
+| テストに関連する情報が`kube-bench`によって報告されている場合。
+
+| `commands`
+| テストに関連するコマンドが`kube-bench`によって報告されている場合。
+
+| `config_commands`
+| テストに関連する設定データが`kube-bench`によって報告されている場合。
+
+| `actual_value`
+| テストの実際の値で、`kube-bench`によって報告されている場合に存在します。
+
+| `expected_result`
+| テストの期待される結果で、`kube-bench`によって報告されている場合に存在します。
+|===
+
+Kubernetes、ベンチマーク、Rancher、および私たちのハードニングガイドの各バージョンがどのように対応しているかについては、{xref-security-overview}[ハードニングガイドの表]を参照してください。CIS準拠のクラスターの設定ファイルや、失敗したテストの修正に関する情報については、ハードニングガイドも参照してください。
+
+[#_test_profiles]
+== テストプロファイル
+
+次のプロファイルが利用可能です：
+
+* Generic CIS 1.6
+* Generic CIS 1.20
+* Generic CIS 1.23
+* RKE2許容1.6
+* RKE2ハードニング1.6
+* RKE2許容1.20
+* RKE2ハードニング1.20
+* RKE2許容1.23
+* RKE2ハードニング1.23
+* K3s許容1.6
+* K3sハードニング1.6
+* K3s許容1.20
+* K3sハードニング1.20
+* K3s許容1.23
+* K3sハードニング1.23
+ifeval::["{build-type}" != "srfa"]
+* AKS
+* EKS
+* GKE
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+* EKS
+endif::[]
+
+プロファイルをカスタマイズするために、スキップするテストのセットを保存する機能もあります。
+
+すべてのプロファイルには、CISスキャン中にスキップされる該当しないテストのセットがあります。これらのテストは、RancherがRKE2/K3sクラスターを管理する方法に基づいて該当しません。
+
+RKE2/K3sクラスターのスキャンプロファイルには2種類あります：
+
+* *許容:*このプロファイルには、デフォルトのRKE2/K3s Kubernetesクラスターで失敗するためスキップされるテストが含まれています。スキップされるテストのリストに加えて、プロファイルは該当しないテストも実行しません。
+* *ハードニング:*このプロファイルは、該当しないテストを除いて、どのテストもスキップしません。
+
+ifeval::["{build-type}" != "srfa"]
+EKSおよびGKEクラスターのスキャンプロファイルは、それらのタイプのクラスターに特有のCISベンチマークバージョンに基づいています。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+EKSクラスターのスキャンプロファイルは、それらのタイプのクラスターに特有のCISベンチマークバージョンに基づいています。
+endif::[]
+
+「ハードニング」プロファイルに合格するには、{xref-security-overview}#_rancher_hardening_guide[ハードニングガイド]の手順に従い、ハードニングガイドで定義された`cluster.yml`を使用してハードニングされたクラスターをプロビジョニングする必要があります。
+
+デフォルトのプロファイルとサポートされているCISベンチマークバージョンは、スキャンされるクラスターのタイプによって異なります。
+
+`rancher-compliance`はCIS 1.9ベンチマークバージョンをサポートしています。
+
+* RKE2 Kubernetesクラスターの場合、RKE2許容1.9プロファイルがデフォルトです。
+ifeval::["{build-type}" != "srfa"]
+* EKSおよびGKEには、`kube-bench`によって公開された独自のCISベンチマークがあります。対応するテストプロファイルは、デフォルトでこれらのクラスターに使用されます。
+* RKE2、EKS、GKE以外のクラスタータイプの場合、デフォルトでGeneric CIS 1.5プロファイルが使用されます。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+* EKSには、`kube-bench`によって公開された独自のCISベンチマークがあります。対応するテストプロファイルは、デフォルトでこれらのクラスターに使用されます。
+* RKE2およびEKS以外のクラスタータイプの場合、デフォルトでGeneric CIS 1.5プロファイルが使用されます。
+endif::[]
+
+[#_about_skipped_and_not_applicable_tests]
+== スキップされたテストと該当しないテストについて
+
+現在、ユーザー定義のスキップされたテストのみが生成されたレポートでスキップとしてマークされています。
+
+デフォルトプロファイルのいずれかによってスキップされると定義されたスキップされたテストは、該当しないとしてマークされます。
+
+[#_roles_based_access_control]
+== ロールベースのアクセス制御
+
+権限に関する情報は、{xref-compliance-scans-rbac}[このページ]を参照してください。
+
+[#_configuration]
+== 設定
+
+スキャン、プロファイル、およびベンチマークバージョンのカスタムリソースを設定する方法についての詳細は、{xref-compliance-scans-config}[このページ]を参照してください。
+
+[#_how_to_guides]
+== ハウツーガイド
+
+コンプライアンススキャンを実行する方法を学ぶには、{xref-compliance-scans-howto}[コンプライアンススキャンガイド]を参照してください。

@@ -1,0 +1,186 @@
+= RancherをOIDCプロバイダーとして設定します。
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/configure-oidc-provider.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-oidc-provider.adoc
+
+Rancherは他のアプリケーションのためのOpenID Connect (OIDC) アイデンティティプロバイダー (IdP) として機能します。これにより、Rancherの集中認証とロールベースのアクセス制御 (RBAC) を使用して、外部のサードパーティアプリケーションへのアクセスを管理できます。これは、Rancherコンポーネント全体でシングルサインオン (SSO) を有効にするために使用できます。例えば、 https://documentation.suse.com/cloudnative/suse-observability/latest/en/setup/security/authentication/oidc.html[SUSE ObservabilityのOIDCプロバイダーの設定に関するドキュメント]を参照してください。
+
+[NOTE]
+====
+OIDCはOAuth2のスーパーセットであるため、完全なOIDCを必要とせずにRancherをOAuth2サーバーとして使用できます。これにより、`rancher-ai-mcp`サーバーなどのOAuth2の側面を利用するクライアントが完全にサポートされます。
+====
+
+Rancher OIDCプロバイダーは、OAuth2およびOIDCのためのアクセストークンを発行し、これをRancherとの認証に使用できる標準のBearerトークン（RFC6750に準拠）として利用できます。以前は、IDトークンのみがユーザーになりすますために使用できました。
+
+OIDCプロバイダーは、`oidc-provider`機能フラグで有効にできます。このフラグがオンのとき、次のエンドポイントが利用可能です：
+
+- `https://{rancher-url}/oidc/authorize`:このエンドポイントは認証フローを開始します。ユーザーがすでにRancherにログインしている場合、認可コードを返します。そうでない場合、ユーザーはRancherのログインページにリダイレクトされます。認可コードと関連するリクエスト情報は、セッションシークレットに安全に保存されます。コードは一度限りの使用で、10分後に期限切れになります。
+
+- `https://{rancher-url}/oidc/token`:このエンドポイントは、認可コードを`id_token`、`access_token`、および`refresh_token`と交換します。
+
+- `https://{rancher-url}/oidc/.well-known/openid-configuration`:このエンドポイントは、エンドポイントURL、サポートされているスコープ、クレーム、およびその他の関連詳細を含むOIDCプロバイダーの設定を含むJSONドキュメントを返します。
+
+- `https://{rancher-url}/oidc/userinfo`:このエンドポイントは、認証されたユーザーに関する情報を提供します。
+
+OIDCプロバイダーはPKCEを使用したOIDC認証コードフローをサポートしています。
+
+[#_configuring_an_oidc_client]
+== OIDCクライアントの設定
+
+`OIDCClient`は、Rancherに対して認証を行う外部アプリケーションを表します。クライアントアプリケーションを登録するには、`OIDCClient`カスタムリソースを作成する必要があります。
+
+[#_configuration_fields]
+=== 設定フィールド
+
+`OIDCClient`マニフェストを定義する際には、CRD検証を通過させるために特定のフィールドを含める必要があります。
+
+- `spec.tokenExpirationSeconds`:このフィールドは厳密に必要であり、省略すると検証エラーが発生します。これはアクセストークンの有効期限を定義します。
+- `spec.refreshTokenExpirationSeconds`:このフィールドも厳密に必要であり、省略すると検証エラーが発生します。これはリフレッシュトークンの有効期限を定義します。
+- `scopes`（オプション）：このフィールドでは、クライアントが要求できるスコープを制限することができます。明示的に設定されていない場合、許可されるスコープは`openid`、`profile`、および`offline_access`にデフォルト設定されます。
+
+[#_example_oidc_client_manifest]
+=== OIDCクライアントマニフェストの例
+
+以下は`OIDCClient`設定の例です：
+
+[NOTE]
+====
+リソースを正常に適用するには、有効期限フィールドを含める必要があります。
+====
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: OIDCClient
+metadata:
+  name: example-client
+spec:
+  description: "Example OIDC Client"
+  redirectUris:
+    - "https://example-app.com/callback"
+  tokenExpirationSeconds: 3600
+  refreshTokenExpirationSeconds: 86400
+  # scopes:
+  #   - openid
+  #   - profile
+  #   - offline_access
+----
+
+この設定をファイルに保存し（例：`oidcclient.yaml`）、Rancherのローカルクラスタに適用します：
+
+[,sh]
+----
+kubectl apply -f oidcclient.yaml
+----
+
+Rancherは各`OIDCClient`のためにクライアントIDとクライアントシークレットを自動的に生成します。リソースが作成されると、RancherはクライアントIDでステータスフィールドを埋めます：
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: OIDCClient
+metadata:
+  name: oidc-client-test
+spec:
+  tokenExpirationSeconds: 600 # expiration of the id_token and access_token
+  refreshTokenExpirationSeconds: 3600 # expiration of the refresh_token
+  redirectURIs:
+    - "https://myredirecturl.com" # replace with your redirect url
+  scopes: # Optional: Restricts the scopes the client can request. Defaults to openid, profile, and offline_access if omitted.
+    - openid
+    - profile
+    - offline_access
+status:
+  clientID: client-xxx
+  clientSecrets:
+    client-secret-1:
+      createdAt: "xxx"
+      lastFiveCharacters: xxx
+----
+
+Rancherは各`OIDCClient`リソースのために、`cattle-oidc-client-secrets`ネームスペースにKubernetes `Secret`を自動的に生成します。シークレットの名前は`OIDCClient`クライアントIDと一致します。最初は、`Secret`には単一のクライアントシークレットが含まれています。
+
+クライアントシークレットを取得するには：
+
+[,bash]
+----
+kubectl get secret client-xxx -n cattle-oidc-client-secrets -o jsonpath="{.data.client-secret-1}" | base64 -d
+----
+
+出力:
+
+[,bash]
+----
+secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+----
+
+このクライアントIDとクライアントシークレットをOIDCクライアントアプリケーションで使用できます。
+
+[#_managing_client_secrets]
+==== クライアントシークレットの管理
+
+`OIDCClient`ごとに複数のクライアントシークレットを管理できます。シークレット操作を実行するには、`OIDCClient`リソースにアノテーションを使用します：
+
+- 作成:`cattle.io/oidc-client-secret-create: true`アノテーションを追加すると、新しいクライアントシークレットが作成されます。
+- 削除：`cattle.io/oidc-client-secret-remove:client-secret-1`アノテーションを追加すると、指定されたクライアントシークレットが削除されます。
+- 再生成：`cattle.io/oidc-client-secret-regenerate:client-secret-1`アノテーションを追加すると、指定されたクライアントシークレットが再生成されます。
+
+[#_rancher_ui]
+=== Rancher UI
+
+OIDCClientを作成する：
+
+. 左上隅で、**☰ > ユーザーと認証**をクリックします。
+. 左側のナビゲーションメニューで、**OIDCアプリ**をクリックします。
+. **アプリケーションの追加**をクリックします。**OIDCアプリを作成**フォームに記入します。
+. **アプリケーションの追加**をクリックします。
+
+[#_managing_client_secrets_1]
+==== クライアントシークレットの管理
+
+OIDCアプリページで：
+
+- 作成:**新しいシークレットを追加**をクリックします。
+- 削除：**⋮ > 削除**をクリックします。
+- 再生成：**⋮ > 再生成**をクリックします。
+
+[#_signing_key]
+== 署名キー
+
+Rancherは、`id_token`、`access_token`、および`refresh_token`トークンの署名用のデフォルトキーペアを、`cattle-system`ネームスペースの`oidc-signing-key`という`Secret`に作成します。署名には1つのキーのみが使用されますが、キーのローテーション時の中断を避けるため、複数の公開キーがJWKSエンドポイントで返されることがあります。
+
+[#_rotation_without_disruption]
+=== 中断のないローテーション
+
+署名用の新しいキーペアを作成するには、新しいキーペアを手動で作成し、それを `oidc-signing-key` `Secret` に追加する必要があります。
+
+例:
+
+[,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+ name: oidc-signing-key
+type: Opaque
+data:
+ key2.pem: <base64-encoded-new-private-key>
+ key1.pub: <base64-encoded-old-public-key>
+ key2.pub: <base64-encoded-new-public-key>
+----
+
+Rancherは `key2.pem` を使用してトークンを署名し、JWKSエンドポイントは `key1.pub` と `key2.pub` の両方を提供します。これにより、既存のトークン検証を中断することなく、`key1` から `key2` へのスムーズなキーのローテーションが保証されます。シークレットには同時に1つのプライベートキー（.pem）しか保存できず、各キーペアは同じベース名を共有し、サフィックスのみが異なります：プライベートキーは.pem、公開キーは.pubです。
+
+[#_rotation_with_disruption]
+=== 中断のあるローテーション
+
+`oidc-signing-key` `Secret` を削除すると、次回の再起動時にRancherが署名キーを再生成します。
+
+[WARNING]
+====
+これにより、以前に発行されたすべての `id_token`、`access_token`、および `refresh_token` トークンが無効になり、使用できなくなります。
+====

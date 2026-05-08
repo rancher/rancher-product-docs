@@ -1,0 +1,90 @@
+= 1. Infrastruktur einrichten
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-16
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/rancher-behind-an-http-proxy/infrastruktur-einrichten.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/http-proxy/set-up-infrastructure.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-http-proxy-install-k8s: xref:installation-and-upgrade/other-installation-methods/http-proxy/install-kubernetes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-http-proxy-install-k8s: xref:getting-started/installation-and-upgrade/other-installation-methods/rancher-behind-an-http-proxy/install-kubernetes.adoc
+endif::[]
+
+In diesem Abschnitt werden Sie die zugrunde liegende Infrastruktur für Ihren Rancher-Management-Server mit Internetzugang über einen HTTP-Proxy bereitstellen.
+
+Um den Rancher-Management-Server in einem hochverfügbaren RKE2/K3s-Cluster zu installieren, empfehlen wir, die folgende Infrastruktur einzurichten:
+
+* *Drei Linux-Knoten,* typischerweise virtuelle Maschinen, in einem Infrastruktur-Anbieter wie Amazons EC2, Google Compute Engine oder vSphere.
+* *Ein Load Balancer*, um den Frontend-Datenverkehr zu den drei Knoten zu leiten.
+* *Ein DNS-Eintrag*, um eine URL dem Load Balancer zuzuordnen. Dies wird die Rancher-Server-URL, und nachgelagerte Kubernetes-Cluster müssen darauf zugreifen können.
+
+Diese Knoten müssen sich in derselben Region/dem selben Rechenzentrum befinden. Sie können diese Server in separaten Verfügbarkeitszonen platzieren.
+
+[#_why_three_nodes]
+== Warum drei Knoten?
+
+In einem RKE2/K3s-Cluster werden die Rancher-Serverdaten auf etcd gespeichert. Diese etcd-Datenbank läuft auf allen drei Knoten.
+
+Die etcd-Datenbank benötigt eine ungerade Anzahl von Knoten, damit sie immer einen Führer mit einer Mehrheit des etcd-Clusters wählen kann. Wenn die etcd-Datenbank keinen Führer wählen kann, kann etcd unter https://www.quora.com/What-is-split-brain-in-distributed-systems[Split Brain] leiden, was eine Wiederherstellung des Clusters aus einer Sicherung erforderlich macht. Wenn einer der drei etcd-Knoten ausfällt, können die beiden verbleibenden Knoten einen Führer wählen, da sie die Mehrheit der insgesamt vorhandenen etcd-Knoten haben.
+
+[#_1_set_up_linux_nodes]
+== 1. Linux-Knoten einrichten
+
+Diese Hosts werden über einen HTTP-Proxy mit dem Internet verbunden.
+
+Stellen Sie sicher, dass Ihre Knoten die allgemeinen Installationsanforderungen für {xref-install-reqs}[Betriebssystem, Container-Laufzeit, Hardware und Netzwerk.] erfüllen.
+
+Für ein Beispiel, wie man Linux-Knoten einrichtet, siehe dieses {xref-setup-ec2-nodes}[Tutorial] zur Einrichtung von Knoten als Instanzen in Amazon EC2.
+
+[#_2_set_up_the_load_balancer]
+== 2. Richten Sie den Load Balancer ein
+
+Sie müssen auch einen Load Balancer einrichten, um den Datenverkehr an die Rancher-Replik auf beiden Knoten zu leiten. Das verhindert, dass ein Ausfall eines einzelnen Knotens die Kommunikation mit dem Rancher-Managementserver unterbricht.
+
+Wenn Kubernetes in einem späteren Schritt eingerichtet wird, wird das RKE2/K3s-Tool einen NGINX Ingress-Controller bereitstellen. Dieser Controller wird auf den Ports 80 und 443 der Arbeitsknoten lauschen und den Datenverkehr für bestimmte Hostnamen beantworten.
+
+Wenn Rancher installiert ist (auch in einem späteren Schritt), erstellt das Rancher-System eine Ingress-Ressource. Dieses Ingress weist den NGINX Ingress-Controller an, auf den Datenverkehr zu lauschen, der für den Rancher-Hostnamen bestimmt ist. Der NGINX Ingress-Controller wird, wenn er Datenverkehr für den Rancher-Hostnamen empfängt, diesen Datenverkehr an die laufenden Rancher-Pods im Cluster weiterleiten.
+
+Für Ihre Implementierung sollten Sie überlegen, ob Sie einen Layer-4- oder Layer-7-Load Balancer verwenden möchten oder müssen:
+
+* *Ein Layer-4-Load Balancer* ist die einfachere der beiden Optionen, bei der Sie TCP-Datenverkehr an Ihre Knoten weiterleiten. Wir empfehlen, Ihren Load Balancer als Layer-4-Load Balancer zu konfigurieren, der den Datenverkehr an die Ports TCP/80 und TCP/443 der Rancher-Management-Clusterknoten weiterleitet. Der Ingress-Controller im Cluster wird HTTP-Datenverkehr auf HTTPS umleiten und SSL/TLS an Port TCP/443 beenden. Der Ingress-Controller wird den Datenverkehr an Port TCP/80 an das Ingress-Pod in der Rancher-Bereitstellung weiterleiten.
+* *Ein Layer-7-Load Balancer* ist etwas komplizierter, kann jedoch Funktionen bieten, die Sie möglicherweise wünschen. Ein Layer-7-Lastausgleich kann beispielsweise die TLS-Beendigung am Lastausgleich durchführen, anstatt dass Rancher die TLS-Beendigung selbst vornimmt. Dies kann vorteilhaft sein, wenn Sie Ihre TLS-Beendigung in Ihrer Infrastruktur zentralisieren möchten. Layer-7-Load Balancer bietet auch die Möglichkeit, dass Ihr Load Balancer Entscheidungen basierend auf HTTP-Attributen wie Cookies usw. trifft, mit denen sich ein Layer-4-Load Balancer nicht befassen kann. Wenn Sie sich entscheiden, den SSL/TLS-Datenverkehr an einem Layer-7-Lastausgleich zu beenden, müssen Sie die `--set tls=external` Option verwenden, wenn Sie Rancher in einem späteren Schritt installieren. Für weitere Informationen siehe die {xref-helm-chart-options}#_external_tls_termination[Rancher Helm-Chart-Optionen.]
+
+Für ein Beispiel, wie man einen NGINX-Load Balancer einrichtet, siehe {xref-nginx-load-balancer}[diese Seite.]
+
+Für eine Anleitung zur Einrichtung eines Amazon ELB-Load Balancer, siehe {xref-amazon-elb}[diese Seite.]
+
+[NOTE]
+.Wichtig:
+====
+
+Verwenden Sie diesen Load Balancer (d.h. den `local` Cluster Ingress) nicht, um Anwendungen außer Rancher nach der Installation auszugleichen. Das Teilen dieses Ingress mit anderen Anwendungen kann zu Websocket-Fehlern bei Rancher nach dem Neuladen der Ingress-Konfiguration für andere Apps führen. Wir empfehlen, den `local` Cluster ausschließlich für Rancher und keine anderen Anwendungen zu verwenden.
+====
+
+
+[#_3_set_up_the_dns_record]
+== 3. DNS-Eintrag einrichten
+
+Nachdem Sie Ihren Load Balancer eingerichtet haben, müssen Sie einen DNS-Eintrag erstellen, um den Datenverkehr an diesen Load Balancer zu senden.
+
+Je nach Ihrer Umgebung kann dies ein A-Eintrag sein, der auf die LB-IP zeigt, oder es kann ein CNAME sein, der auf den Hostnamen des Load Balancers zeigt. In jedem Fall stellen Sie sicher, dass dieser Eintrag der Hostname ist, auf den Rancher reagieren soll.
+
+Sie müssen diesen Hostnamen in einem späteren Schritt angeben, wenn Sie Rancher installieren, und es ist nicht möglich, ihn später zu ändern. Stellen Sie sicher, dass Ihre Entscheidung endgültig ist.
+
+Für eine Anleitung zur Einrichtung eines DNS-Eintrags, um den Domain-Traffic an einen Amazon ELB Load Balancer weiterzuleiten, siehe die https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[offizielle AWS-Dokumentation.]
+
+[#__xref_http_proxy_install_k8s_next_set_up_a_kubernetes_cluster]
+== {xref-http-proxy-install-k8s}[Weiter: Richten Sie einen Kubernetes-Cluster ein]

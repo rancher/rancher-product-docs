@@ -1,0 +1,321 @@
+= Salidas y Salidas de Clúster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/logging/custom-resource-configuration/outputs-and-clusteroutputs.adoc 
+:product-path: observability/logging/custom-resource-configuration/outputs-and-clusteroutputs.adoc
+ifeval::["{build-type}" != "community"]
+:xref-logging: xref:observability/logging/logging.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-logging: xref:integrations-in-rancher/logging/index.adoc
+endif::[]
+
+Consulta la https://kube-logging.github.io/docs/configuration/flow/[documentación del operador de logging] para obtener todos los detalles sobre cómo configurar `Flows` y `ClusterFlows`.
+
+Consulta {xref-logging}#_El_Búfer_de_Logging_Sobrepasa_los_Pods[Rancher Integración con Servicios de Logging: Resolución de Problemas] para saber cómo resolver problemas de memoria con el búfer de logging.
+
+[#_outputs]
+== Salidas
+
+El recurso `Output` define dónde tu `Flows` puede enviar los mensajes de registro. `Outputs` son la etapa final para un `Flow` de registro.
+
+El `Output` es un recurso con espacio de nombres, lo que significa que solo un `Flow` dentro del mismo espacio de nombres puede acceder a él.
+
+Puedes usar secretos en estas definiciones, pero también deben estar en el mismo espacio de nombres.
+
+`Outputs` se puede configurar completando formularios en la interfaz de usuario de Rancher.
+
+Para los detalles del recurso personalizado `Output`, consulta https://kube-logging.github.io/docs/configuration/crds/v1beta1/output_types/[OutputSpec.].
+
+La interfaz de usuario de Rancher proporciona formularios para configurar los siguientes tipos de `Output`:
+
+* Amazon ElasticSearch
+* Azure Storage
+* Cloudwatch
+* Datadog
+* Elasticsearch
+* Archivo
+* Fluentd
+* GCS
+* Kafka
+* Kinesis Stream
+* LogDNA
+* LogZ
+* Loki
+* New Relic
+* Splunk
+* SumoLogic
+* Syslog
+
+La interfaz de usuario de Rancher proporciona formularios para configurar el tipo `Output`, el objetivo y las credenciales de acceso si corresponde.
+
+Para la configuración de ejemplo de cada complemento de registro soportado por el operador de registro, consulta la https://kube-logging.github.io/docs/configuration/plugins/outputs/[documentación del operador de registro].
+
+[#_clusteroutputs]
+== ClusterOutputs
+
+`ClusterOutput` define un `Output` sin restricciones de espacio de nombres. Solo es efectivo cuando se despliega en el mismo espacio de nombres que el operador de registro.
+
+`ClusterOutputs` se puede configurar completando formularios en la interfaz de usuario de Rancher.
+
+Para los detalles del recurso personalizado `ClusterOutput`, consulta https://kube-logging.github.io/docs/configuration/crds/v1beta1/clusteroutput_types/[ClusterOutput.]
+
+[#_yaml_examples]
+== Ejemplos de YAML
+
+Una vez que se ha instalado el registro, puedes utilizar estos ejemplos para ayudar a crear tu propia canalización de registro.
+
+* <<_cluster_output_to_elasticsearch,Salida del clúster a ElasticSearch>>
+* <<_output_to_splunk,Salida a Splunk>>
+* <<_output_to_syslog,Salida a Syslog>>
+* <<_unsupported_outputs,Salidas no soportadas>>
+
+[#_cluster_output_to_elasticsearch]
+=== Salida del clúster a ElasticSearch
+
+Supongamos que quieres enviar todos los registros de tu clúster a un clúster `elasticsearch`. Primero, creamos un clúster `Output`.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+    name: "example-es"
+    namespace: "cattle-logging-system"
+spec:
+    elasticsearch:
+      host: elasticsearch.example.com
+      port: 9200
+      scheme: http
+----
+
+Hemos creado este `ClusterOutput`, sin configuración de elasticsearch, en el mismo espacio de nombres que nuestro operador: `cattle-logging-system.`. Cada vez que creamos un `ClusterFlow` o `ClusterOutput`, tenemos que colocarlo en el espacio de nombres `cattle-logging-system`.
+
+Ahora que hemos configurado a dónde queremos que vayan los registros, configuremos todos los registros para que vayan a ese `ClusterOutput`.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+    name: "all-logs"
+    namespace: "cattle-logging-system"
+spec:
+  globalOutputRefs:
+    - "example-es"
+----
+
+Ahora deberíamos ver nuestro índice configurado con registros en él.
+
+[#_output_to_splunk]
+=== Salida a Splunk
+
+¿Qué pasa si tenemos un equipo de aplicación que solo quiere que se envíen registros de un espacio de nombres específico a un servidor `splunk`? Para este caso, podemos usar `Outputs` y `Flows` con espacio de nombres.
+
+Antes de comenzar, configuremos la aplicación de ese equipo: `coolapp`.
+
+[,yaml]
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devteam
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coolapp
+  namespace: devteam
+  labels:
+    app: coolapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: coolapp
+  template:
+    metadata:
+      labels:
+        app: coolapp
+    spec:
+      containers:
+        - name: generator
+          image: paynejacob/loggenerator:latest
+----
+
+Con `coolapp` en funcionamiento, seguiremos un camino similar al que seguimos cuando creamos un `ClusterOutput`. Sin embargo, a diferencia de `ClusterOutputs`, creamos nuestro `Output` en el espacio de nombres de nuestra aplicación.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Output
+metadata:
+  name: "devteam-splunk"
+  namespace: "devteam"
+spec:
+  splunkHec:
+    hec_host: splunk.example.com
+    hec_port: 8088
+    protocol: http
+----
+
+Una vez más, alimentemos a nuestro `Output` con algunos registros:
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Flow
+metadata:
+  name: "devteam-logs"
+  namespace: "devteam"
+spec:
+  localOutputRefs:
+    - "devteam-splunk"
+----
+
+[#_output_to_syslog]
+=== Salida a Syslog
+
+Supongamos que quieres enviar todos los registros de tu clúster a un servidor `syslog`. Primero, creamos un `ClusterOutput`:
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: "example-syslog"
+  namespace: "cattle-logging-system"
+spec:
+  syslog:
+    buffer:
+      timekey: 30s
+      timekey_use_utc: true
+      timekey_wait: 10s
+      flush_interval: 5s
+    format:
+      type: json
+      app_name_field: test
+    host: syslog.example.com
+    insecure: true
+    port: 514
+    transport: tcp
+----
+
+Ahora que hemos configurado a dónde queremos que vayan los registros, configuremos todos los registros para que vayan a ese `Output`.
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+  name: "all-logs"
+  namespace: cattle-logging-system
+spec:
+  globalOutputRefs:
+    - "example-syslog"
+----
+
+[#_unsupported_outputs]
+=== Salidas no soportadas
+
+Para el ejemplo final, creamos un `Output` para escribir registros en un destino que no está soportado de forma predeterminada:
+
+[NOTE]
+.Nota sobre syslog:
+====
+
+`syslog` es un `Output` soportado. Sin embargo, este ejemplo aún proporciona una visión general sobre el uso de plugins no soportados.
+====
+
+
+[,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: syslog-config
+  namespace: cattle-logging-system
+type: Opaque
+stringData:
+  fluent-bit.conf: |
+    [INPUT]
+        Name              forward
+        Port              24224
+
+    [OUTPUT]
+        Name              syslog
+        InstanceName      syslog-output
+        Match             *
+        Addr              syslog.example.com
+        Port              514
+        Cluster           ranchers
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fluentbit-syslog-forwarder
+  namespace: cattle-logging-system
+  labels:
+    output: syslog
+spec:
+  selector:
+    matchLabels:
+      output: syslog
+  template:
+    metadata:
+      labels:
+        output: syslog
+    spec:
+      containers:
+      - name: fluentbit
+        image: paynejacob/fluent-bit-out-syslog:latest
+        ports:
+          - containerPort: 24224
+        volumeMounts:
+          - mountPath: "/fluent-bit/etc/"
+            name: configuration
+      volumes:
+      - name: configuration
+        secret:
+          secretName: syslog-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslog-forwarder
+  namespace: cattle-logging-system
+spec:
+  selector:
+    output: syslog
+  ports:
+    - protocol: TCP
+      port: 24224
+      targetPort: 24224
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+  name: all-logs
+  namespace: cattle-logging-system
+spec:
+  globalOutputRefs:
+    - syslog
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: syslog
+  namespace: cattle-logging-system
+spec:
+  forward:
+    servers:
+      - host: "syslog-forwarder.cattle-logging-system"
+    require_ack_response: false
+    ignore_network_errors_at_startup: false
+----
+
+Desglosemos lo que está sucediendo aquí. Primero, creamos una ampliación de un contenedor que tiene el plugin adicional `syslog` y acepta registros reenviados desde otro `fluentd`. A continuación, creamos un `Output` configurado como reenviador a nuestra ampliación. La ampliación `fluentd` reenviará entonces todos los registros al destino `syslog` configurado.

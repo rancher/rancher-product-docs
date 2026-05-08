@@ -1,0 +1,758 @@
+= AWS EC2 Auto Scaling Groupsを使用したクラスターオートスケーラー
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+ifeval::["{build-type}" != "community"]
+:xref-port-reqs: xref:installation-and-upgrade/requirements/port-requirements.adoc
+:xref-cloud-provider-amazon: xref:cluster-deployment/set-up-cloud-providers/amazon.adoc
+:xref-production-checklist: xref:cluster-deployment/production-checklist/production-checklist.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-port-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/port-requirements.adoc
+:xref-cloud-provider-amazon: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/amazon.adoc
+:xref-production-checklist: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/checklist-for-production-ready-clusters/index.adoc
+endif::[]
+
+このガイドでは、AWS EC2 Auto Scaling Groupsを使用してRancherカスタムクラスターに https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/[Kubernetes cluster-autoscaler]をインストールして使用する方法を示します。
+
+固定数のノードにetcdおよびcontrolplane役割を持たせ、可変数のノードにworker役割を持たせたRancher RKE2カスタムクラスターを`cluster-autoscaler`によって管理します。
+
+[#_prerequisites]
+== 前提条件
+
+このガイドに従うために必要な要素は次のとおりです：
+
+* Rancherサーバーが稼働中であること
+* 仮想マシン、オートスケーリンググループ、IAMプロファイルおよびロールを作成するための適切な権限を持つAWS EC2ユーザーがいること
+
+[#_1_create_a_custom_cluster]
+=== 1.カスタムクラスターを作成する
+
+Rancherサーバー上で、カスタムk8sクラスターを作成する必要があります。バージョンの互換性を確認するには https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/[こちら]を参照してください。
+
+cloud_provider名が`amazonec2`に設定されていることを確認してください。クラスターが作成されたら、次の情報を取得する必要があります：
+
+* clusterID: `c-xxxxx`はEC2 `kubernetes.io/cluster/<clusterID>`インスタンスタグで使用されます
+* clusterName: EC2 `k8s.io/cluster-autoscaler/<clusterName>`インスタンスタグで使用されます
+* nodeCommand: クラスターに新しいノードを追加するためにEC2インスタンスのuser_dataに追加されます
++
+[,sh]
+----
+  sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:<RANCHER_VERSION> --server https://<RANCHER_URL> --token <RANCHER_TOKEN> --ca-checksum <RANCHER_CHECKSUM> <roles>
+----
+
+[#_2_configure_the_cloud_provider]
+=== 2.クラウドプロバイダーを設定する
+
+AWS EC2上で、システムを構成するためにいくつかのオブジェクトを作成する必要があります。AWS上で構成するために、3つの異なるグループとIAMプロファイルを定義しました。
+
+. オートスケーリンググループ：EC2オートスケーリンググループ（ASG）の一部となるノード。ASGは`cluster-autoscaler`によってスケールアップおよびスケールダウンに使用されます。
+ ** IAMプロファイル:クラスターオートスケーラーが実行されるk8sノードで必要です。Kubernetesマスターノードに推奨されます。このプロファイルは`K8sAutoscalerProfile`と呼ばれます。
+
++
+[,json]
+----
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Action": [
+                   "autoscaling:DescribeAutoScalingGroups",
+                   "autoscaling:DescribeAutoScalingInstances",
+                   "autoscaling:DescribeLaunchConfigurations",
+                   "autoscaling:SetDesiredCapacity",
+                   "autoscaling:TerminateInstanceInAutoScalingGroup",
+                   "autoscaling:DescribeTags",
+                   "autoscaling:DescribeLaunchConfigurations",
+                   "ec2:DescribeLaunchTemplateVersions"
+               ],
+               "Resource": [
+                   "*"
+               ]
+           }
+       ]
+   }
+----
+. マスターグループ:Kubernetesのetcdおよび/またはコントロールプレーンの一部となるノード。これはASGの外になります。
+ ** IAMプロファイル:Kubernetesのcloud_provider統合で必要です。オプションで、`AWS_ACCESS_KEY`と`AWS_SECRET_KEY`は https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/aws/README.md#using-aws-credentials[using-aws-credentials.]の代わりに使用できます。このプロファイルは`K8sMasterProfile`と呼ばれます。
+
++
+[,json]
+----
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Action": [
+                   "autoscaling:DescribeAutoScalingGroups",
+                   "autoscaling:DescribeLaunchConfigurations",
+                   "autoscaling:DescribeTags",
+                   "ec2:DescribeInstances",
+                   "ec2:DescribeRegions",
+                   "ec2:DescribeRouteTables",
+                   "ec2:DescribeSecurityGroups",
+                   "ec2:DescribeSubnets",
+                   "ec2:DescribeVolumes",
+                   "ec2:CreateSecurityGroup",
+                   "ec2:CreateTags",
+                   "ec2:CreateVolume",
+                   "ec2:ModifyInstanceAttribute",
+                   "ec2:ModifyVolume",
+                   "ec2:AttachVolume",
+                   "ec2:AuthorizeSecurityGroupIngress",
+                   "ec2:CreateRoute",
+                   "ec2:DeleteRoute",
+                   "ec2:DeleteSecurityGroup",
+                   "ec2:DeleteVolume",
+                   "ec2:DetachVolume",
+                   "ec2:RevokeSecurityGroupIngress",
+                   "ec2:DescribeVpcs",
+                   "elasticloadbalancing:AddTags",
+                   "elasticloadbalancing:AttachLoadBalancerToSubnets",
+                   "elasticloadbalancing:ApplySecurityGroupsToLoadBalancer",
+                   "elasticloadbalancing:CreateLoadBalancer",
+                   "elasticloadbalancing:CreateLoadBalancerPolicy",
+                   "elasticloadbalancing:CreateLoadBalancerListeners",
+                   "elasticloadbalancing:ConfigureHealthCheck",
+                   "elasticloadbalancing:DeleteLoadBalancer",
+                   "elasticloadbalancing:DeleteLoadBalancerListeners",
+                   "elasticloadbalancing:DescribeLoadBalancers",
+                   "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                   "elasticloadbalancing:DetachLoadBalancerFromSubnets",
+                   "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                   "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                   "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                   "elasticloadbalancing:SetLoadBalancerPoliciesForBackendServer",
+                   "elasticloadbalancing:AddTags",
+                   "elasticloadbalancing:CreateListener",
+                   "elasticloadbalancing:CreateTargetGroup",
+                   "elasticloadbalancing:DeleteListener",
+                   "elasticloadbalancing:DeleteTargetGroup",
+                   "elasticloadbalancing:DescribeListeners",
+                   "elasticloadbalancing:DescribeLoadBalancerPolicies",
+                   "elasticloadbalancing:DescribeTargetGroups",
+                   "elasticloadbalancing:DescribeTargetHealth",
+                   "elasticloadbalancing:ModifyListener",
+                   "elasticloadbalancing:ModifyTargetGroup",
+                   "elasticloadbalancing:RegisterTargets",
+                   "elasticloadbalancing:SetLoadBalancerPoliciesOfListener",
+                   "iam:CreateServiceLinkedRole",
+                   "ecr:GetAuthorizationToken",
+                   "ecr:BatchCheckLayerAvailability",
+                   "ecr:GetDownloadUrlForLayer",
+                   "ecr:GetRepositoryPolicy",
+                   "ecr:DescribeRepositories",
+                   "ecr:ListImages",
+                   "ecr:BatchGetImage",
+                   "kms:DescribeKey"
+               ],
+               "Resource": [
+                   "*"
+               ]
+           }
+       ]
+   }
+----
+ ** IAMロール: `K8sMasterRole: [K8sMasterProfile,K8sAutoscalerProfile]`。
+ ** セキュリティグループ: `K8sMasterSg`。詳細は{xref-port-reqs}#_ダウンストリーム_kubernetes_cluster_nodes[RKE2ポート（カスタムノードタブ）]を参照してください。
+ ** タグ:
+`kubernetes.io/cluster/<clusterID>: owned`
+ ** ユーザーデータ:`K8sMasterUserData` Ubuntu 18.04(ami-0e11cbb34015ff725)は、Dockerをインストールし、K8sクラスターにetcd+コントロールプレーンノードを追加します。
++
+[,sh]
+----
+#!/bin/bash -x
+
+cat <<EOF > /etc/sysctl.d/90-kubelet.conf
+vm.overcommit_memory = 1
+vm.panic_on_oom = 0
+kernel.panic = 10
+kernel.panic_on_oops = 1
+kernel.keys.root_maxkeys = 1000000
+kernel.keys.root_maxbytes = 25000000
+EOF
+sysctl -p /etc/sysctl.d/90-kubelet.conf
+
+curl -sL https://releases.rancher.com/install-docker/19.03.sh | sh
+sudo usermod -aG docker ubuntu
+
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/local-ipv4)
+PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/public-ipv4)
+K8S_ROLES="--etcd --controlplane"
+
+sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:<RANCHER_VERSION> --server https://<RANCHER_URL> --token <RANCHER_TOKEN> --ca-checksum <RANCHER_CA_CHECKSUM> --address ${PUBLIC_IP} --internal-address ${PRIVATE_IP} ${K8S_ROLES}
+----
+. ワーカーグループ:k8sワーカープレーンの一部となるノード。ワーカーノードは、ASGを使用してクラスターオートスケーラーによってスケールされます。
+ ** IAMプロファイル:cloud_providerワーカー統合を提供します。
+  このプロファイルは`K8sWorkerProfile`と呼ばれます。
+
++
+[,json]
+----
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Action": [
+                   "ec2:DescribeInstances",
+                   "ec2:DescribeRegions",
+                   "ecr:GetAuthorizationToken",
+                   "ecr:BatchCheckLayerAvailability",
+                   "ecr:GetDownloadUrlForLayer",
+                   "ecr:GetRepositoryPolicy",
+                   "ecr:DescribeRepositories",
+                   "ecr:ListImages",
+                   "ecr:BatchGetImage"
+               ],
+               "Resource": "*"
+           }
+       ]
+   }
+----
+
+* IAMロール: `K8sWorkerRole: [K8sWorkerProfile]`。
+* セキュリティグループ：`K8sWorkerSg` 詳細は{xref-port-reqs}#_downstream_kubernetes_cluster_nodes[ダウンストリームRKE2ポート（カスタムノードタブ）]にあります。
+* タグ:
+ ** `kubernetes.io/cluster/<clusterID>: owned`
+ ** `k8s.io/cluster-autoscaler/<clusterName>: true`
+ ** `k8s.io/cluster-autoscaler/enabled: true`
+* ユーザーデータ:`K8sWorkerUserData` Ubuntu 18.04(ami-0e11cbb34015ff725)を使用して、Dockerをインストールし、K8sクラスターにワーカーノードを追加します。
++
+[,sh]
+----
+  #!/bin/bash -x
+
+  cat <<EOF > /etc/sysctl.d/90-kubelet.conf
+  vm.overcommit_memory = 1
+  vm.panic_on_oom = 0
+  kernel.panic = 10
+  kernel.panic_on_oops = 1
+  kernel.keys.root_maxkeys = 1000000
+  kernel.keys.root_maxbytes = 25000000
+  EOF
+  sysctl -p /etc/sysctl.d/90-kubelet.conf
+
+  curl -sL https://releases.rancher.com/install-docker/19.03.sh | sh
+  sudo usermod -aG docker ubuntu
+
+  TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/local-ipv4)
+  PUBLIC_IP=$(curl -H "X-aws-ec2-metadata-token: ${TOKEN}" -s http://169.254.169.254/latest/meta-data/public-ipv4)
+  K8S_ROLES="--worker"
+
+  sudo docker run -d --privileged --restart=unless-stopped --net=host -v /etc/kubernetes:/etc/kubernetes -v /var/run:/var/run rancher/rancher-agent:<RANCHER_VERSION> --server https://<RANCHER_URL> --token <RANCHER_TOKEN> --ca-checksum <RANCHER_CA_CHECKCSUM> --address ${PUBLIC_IP} --internal-address ${PRIVATE_IP} ${K8S_ROLES}
+----
+
+詳細は{xref-cloud-provider-amazon}[AWS上のRKE2クラスター]および https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/aws/README.md[AWS上のクラスターオートスケーラー]にあります。
+
+[#_3_deploy_nodes]
+=== 3.ノードをデプロイする
+
+AWSを設定したら、クラスターを起動するためのVMを作成しましょう：
+
+* マスター（etcd+コントロールプレーン）：ニーズに応じて、適切なサイズのマスターインスタンスを3つデプロイします。詳細は{xref-production-checklist}[運用準備完了クラスターの推奨事項]にあります。
+ ** IAMロール：`K8sMasterRole`
+ ** セキュリティグループ：`K8sMasterSg`
+ ** タグ:
+  *** `kubernetes.io/cluster/<clusterID>: owned`
+ ** ユーザーデータ：`K8sMasterUserData`
+* ワーカー：次の設定でEC2にASGを定義します：
+ ** 名前：`K8sWorkerAsg`
+ ** IAMロール：`K8sWorkerRole`
+ ** セキュリティグループ：`K8sWorkerSg`
+ ** タグ:
+  *** `kubernetes.io/cluster/<clusterID>: owned`
+  *** `k8s.io/cluster-autoscaler/<clusterName>: true`
+  *** `k8s.io/cluster-autoscaler/enabled: true`
+ ** ユーザーデータ：`K8sWorkerUserData`
+ ** インスタンス：
+  *** 最小：2
+  *** 希望：2
+  *** 最大：10
+
+VMがデプロイされると、3つのマスターと2つのワーカーノードを持つRancherカスタムクラスターが稼働しているはずです。
+
+[#_4_install_cluster_autoscaler]
+=== 4.クラスターオートスケーラーをインストールする
+
+この時点で、Rancherクラスターが稼働しているはずです。クラスターオートスケーラーの推奨に従って、マスターノードと`kube-system`ネームスペースにクラスターオートスケーラーをインストールします。
+
+[#_parameters]
+==== パラメータ
+
+この表は、クラスターオートスケーラーのパラメータを微調整するためのものです：
+
+|===
+| パラメータ | デフォルト | 説明
+
+| cluster-name
+| -
+| 利用可能な場合のオートスケールされたクラスター名
+
+| address
+| :8085
+| Prometheusメトリクスを公開するためのアドレス
+
+| kubernetes
+| -
+| Kubernetesマスターの場所。デフォルトのために空白のままにする
+
+| kubeconfig
+| -
+| 認証とマスターの場所情報を含むkubeconfigファイルへのパス
+
+| cloud-config
+| -
+| クラウドプロバイダーの設定ファイルへのパス。 設定ファイルがない場合は空の文字列
+
+| ネームスペース
+| "kube-system"
+| クラスターオートスケーラーが実行されるネームスペース
+
+| scale-down-enabled
+| true
+| CAはクラスターをスケールダウンすべきか
+
+| scale-down-delay-after-add
+| "10m"
+| スケールアップ後、スケールダウン評価が再開されるまでの時間
+
+| scale-down-delay-after-delete
+| 0
+| ノード削除後、スケールダウン評価が再開されるまでの時間。デフォルトはscanInterval
+
+| scale-down-delay-after-failure
+| "3m"
+| スケールダウンエラー後、スケールダウン評価が再開されるまでの時間
+
+| scale-down-unneeded-time
+| "10m"
+| ノードがスケールダウンの対象となる前に不要であるべき時間
+
+| scale-down-unready-time
+| "20m"
+| 未準備のノードがスケールダウンの対象となる前に、どれくらいの期間不要であるべきか
+
+| scale-down-utilization-threshold
+| 50%
+| ノード上で実行されているすべてのポッドのCPUまたはメモリの合計をノードの対応する割り当て可能リソースで割った値。この値以下であれば、ノードはスケールダウンの対象と見なされる。
+
+| scale-down-gpu-utilization-threshold
+| 50%
+| ノード上で実行されているすべてのポッドのGPUリクエストの合計をノードの割り当て可能リソースで割った値。この値以下であれば、ノードはスケールダウンの対象と見なされる。
+
+| scale-down-non-empty-candidates-count
+| 30
+| ドレインを伴うスケールダウンの候補として考慮される非空ノードの最大数
+
+| scale-down-candidates-pool-ratio
+| 0.1
+| 前のイテレーションからの候補がもはや有効でない場合に、追加の非空候補として考慮されるノードの比率
+
+| scale-down-candidates-pool-min-count
+| 50
+| 前のイテレーションからの候補がもはや有効でない場合に、追加の非空候補として考慮されるノードの最小数
+
+| node-deletion-delay-timeout
+| "2m"
+| CAがノードを削除する前に、delay-deletion.cluster-autoscaler.kubernetes.io/アノテーションの削除を待つ最大時間
+
+| scan-interval
+| "10s"
+| クラスターがスケールアップまたはスケールダウンのために再評価される頻度
+
+| max-nodes-total
+| 0
+| すべてのノードグループにおけるノードの最大数。クラスターオートスケーラーは、この数を超えてクラスターを拡張しません。
+
+| cores-total
+| "0:320000"
+| クラスター内のコアの最小数と最大数、形式は`<min>:<max>.`。クラスターオートスケーラーは、これらの数を超えてクラスターをスケールしません。
+
+| memory-total
+| "0:6400000"
+| クラスター内のメモリの最小ギガバイト数と最大ギガバイト数、形式は`<min>:<max>.`。クラスターオートスケーラーは、これらの数を超えてクラスターをスケールしません。
+
+| cloud-provider
+| -
+| クラウドプロバイダーの種類
+
+| max-bulk-soft-taint-count
+| 10
+| 同時にPreferNoScheduleとして汚染/非汚染にできるノードの最大数。そのような汚染を無効にするには0に設定します。
+
+| max-bulk-soft-taint-time
+| "3s"
+| 同時にPreferNoScheduleとして汚染/非汚染にできるノードの最大持続時間。
+
+| max-empty-bulk-delete
+| 10
+| 同時に削除できる空のノードの最大数。
+
+| max-graceful-termination-sec
+| 600
+| ノードのスケールダウンを試みる際にCAがポッドの終了を待つ最大秒数。
+
+| max-total-unready-percentage
+| 45
+| クラスター内の未準備ノードの最大割合。 これを超えると、CAは操作を停止します。
+
+| ok-total-unready-count
+| 3
+| 最大未準備割合に関係なく許可される未準備ノードの数。
+
+| scale-up-from-zero
+| true
+| 準備が整っているノードが0のとき、CAはスケールアップすべきですか。
+
+| max-node-provision-time
+| "15m"
+| ノードがプロビジョニングされるのをCAが待つ最大時間。
+
+| ノード
+| -
+| クラウドプロバイダーが受け入れる形式でノードグループの最小・最大サイズおよびその他の設定データを設定します。複数回使用できます。形式: `<min>:<max>:<other...>`
+
+| node-group-auto-discovery
+| -
+| ノードグループの自動検出の1つ以上の定義。定義は`<name of discoverer>:[<key>[=<value>]]`として表現されます。
+
+| estimator
+| "binpacking"
+| スケールアップに使用されるリソース推定器のタイプ。利用可能な値: ["binpacking"]
+
+| エクスパンダー
+| "random"
+| スケールアップに使用されるノードグループエクスパンダーのタイプ。利用可能な値: `["random","most-pods","least-waste","price","priority"]`
+
+| ignore-daemonsets-utilization
+| false
+| CAはスケールダウンのためにリソース利用率を計算する際にDaemonSetポッドを無視するべきか。
+
+| ignore-mirror-pods-utilization
+| false
+| CAはスケールダウンのためにリソース利用率を計算する際にミラーポッドを無視するべきか。
+
+| write-status-configmap
+| true
+| CAはステータス情報をコンフィグマップに書き込むべきか。
+
+| max-inactivity
+| "10m"
+| 自動スケーラーの最後の活動から自動再起動までの最大時間。
+
+| max-failing-time
+| "15m"
+| 自動スケーラーの最後の成功した実行から自動再起動までの最大時間。
+
+| balance-similar-node-groups
+| false
+| 類似のノードグループを検出し、それらの間でノードの数をバランスさせる。
+
+| node-autoprovisioning-enabled
+| false
+| CAは必要に応じてノードグループを自動プロビジョニングするべきか。
+
+| max-autoprovisioned-node-group-count
+| 15
+| クラスター内の自動プロビジョニングされたグループの最大数。
+
+| unremovable-node-recheck-timeout
+| "5m"
+| 以前に削除できなかったノードを再度確認するまでのタイムアウト。
+
+| expendable-pods-priority-cutoff
+| -10
+| カットオフ未満の優先度を持つポッドは削除可能です。スケールダウン中に一切の考慮なく削除され、スケールアップを引き起こすことはありません。優先度がnullのポッド（PodPriority無効）は削除対象外です。
+
+| 地域
+| false
+| クラスターは地域です
+
+| new-pod-scale-up-delay
+| "0s"
+| この値より新しいポッドはスケールアップの対象にはなりません。
+
+| ignore-taint
+| -
+| ノードグループをスケールする際に、ノードテンプレートで無視すべきテイントを指定します。
+
+| balancing-ignore-label
+| -
+| 2つのノードグループが類似しているかを比較する際に、基本的なラベルとクラウドプロバイダーのラベルセットに加えて無視するべきラベルを指定します
+
+| aws-use-static-instance-list
+| false
+| CAは実行時にインスタンスタイプを取得するべきか、静的リストを使用するべきか。AWSのみ
+
+| プロファイリング
+| false
+| デバッグ/pprofエンドポイントは有効ですか？
+|===
+
+[#_deployment]
+==== 展開
+
+https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/aws/examples/cluster-autoscaler-run-on-control-plane.yaml[cluster-autoscaler-run-on-control-plane.yaml]の例に基づいて、好ましい https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/aws#auto-discovery-setup[自動検出セットアップ]を使用するために、独自の`cluster-autoscaler-deployment.yaml`を作成し、トレランス、nodeSelector、イメージバージョン、コマンド設定を更新しました：
+
+[,yml]
+----
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+  name: cluster-autoscaler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-autoscaler
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+rules:
+  - apiGroups: [""]
+    resources: ["events", "endpoints"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    resourceNames: ["cluster-autoscaler"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["watch", "list", "get", "update"]
+  - apiGroups: [""]
+    resources:
+      - "pods"
+      - "services"
+      - "replicationcontrollers"
+      - "persistentvolumeclaims"
+      - "persistentvolumes"
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["extensions"]
+    resources: ["replicasets", "daemonsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "replicasets", "daemonsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csinodes"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["batch", "extensions"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resourceNames: ["cluster-autoscaler"]
+    resources: ["leases"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create","list","watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cluster-autoscaler-status", "cluster-autoscaler-priority-expander"]
+    verbs: ["delete", "get", "update", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-autoscaler
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: cluster-autoscaler
+    namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: cluster-autoscaler
+    namespace: kube-system
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8085'
+    spec:
+      serviceAccountName: cluster-autoscaler
+      tolerations:
+        - effect: NoSchedule
+          operator: "Equal"
+          value: "true"
+          key: node-role.kubernetes.io/controlplane
+      nodeSelector:
+        node-role.kubernetes.io/controlplane: "true"
+      containers:
+        - image: eu.gcr.io/k8s-artifacts-prod/autoscaling/cluster-autoscaler:<VERSION>
+          name: cluster-autoscaler
+          resources:
+            limits:
+              cpu: 100m
+              memory: 300Mi
+            requests:
+              cpu: 100m
+              memory: 300Mi
+          command:
+            - ./cluster-autoscaler
+            - --v=4
+            - --stderrthreshold=info
+            - --cloud-provider=aws
+            - --skip-nodes-with-local-storage=false
+            - --expander=least-waste
+            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled,k8s.io/cluster-autoscaler/<clusterName>
+          volumeMounts:
+            - name: ssl-certs
+              mountPath: /etc/ssl/certs/ca-certificates.crt
+              readOnly: true
+          imagePullPolicy: "Always"
+      volumes:
+        - name: ssl-certs
+          hostPath:
+            path: "/etc/ssl/certs/ca-certificates.crt"
+----
+
+マニフェストファイルが準備できたら、Kubernetesクラスターにデプロイします（Rancher UIを代わりに使用できます）：
+
+[,sh]
+----
+kubectl -n kube-system apply -f cluster-autoscaler-deployment.yaml
+----
+
+[NOTE]
+====
+
+クラスターオートスケーラーのデプロイメントは、 https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/aws#manual-configuration[手動設定]を使用しても設定できます
+====
+
+
+[#_testing]
+== テスト
+
+この時点で、Rancherカスタムクラスターにクラスターオートスケーラーが稼働しているはずです。クラスターのスケールは、次の条件のいずれかが真である場合に、`K8sWorkerAsg` ASGを管理して2から10ノードの間でスケールアップおよびスケールダウンする必要があります：
+
+* リソース不足のためにクラスター内で実行に失敗したポッドがあります。この場合、クラスターはスケールアップされます。
+* クラスター内に長期間過小利用されているノードがあり、そのポッドは他の既存のノードに配置できます。この場合、クラスターはスケールダウンされます。
+
+[#_generating_load]
+=== 負荷生成
+
+Kubernetesクラスターに負荷を生成し、クラスターオートスケーラーが正常に動作しているかを確認するために、`test-deployment.yaml`テストデプロイメントを準備しました。テストデプロイメントは、3つのレプリカによって1000mのCPUと1024Miのメモリを要求しています。要求されたリソースやレプリカを調整して、Kubernetesクラスターのリソースを使い切るようにしてください:
+
+[,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: hello-world
+  name: hello-world
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hello-world
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      containers:
+      - image: rancher/hello-world
+        imagePullPolicy: Always
+        name: hello-world
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+          requests:
+            cpu: 1000m
+            memory: 1024Mi
+----
+
+テストデプロイメントの準備が整ったら、Kubernetesクラスターのデフォルトのネームスペースにデプロイします（Rancher UIを代わりに使用できます）：
+
+----
+kubectl -n default apply -f test-deployment.yaml
+----
+
+[#_checking_scale]
+=== スケールを確認しています
+
+Kubernetesリソースが使い切られたら、cluster-autoscalerはポッドのスケジュールに失敗したワーカーノードをスケールアップする必要があります。すべてのポッドがスケジュールされるまでスケールアップする必要があります。新しいノードがASGおよびKubernetesクラスターに表示されるはずです。`kube-system` cluster-autoscalerポッドのログを確認してください。
+
+スケールアップが確認されたら、スケールダウンを確認しましょう。それを行うには、テストデプロイメントのレプリカ数を減らして、スケールダウンするのに十分なKubernetesクラスターリソースを解放します。ASGおよびKubernetesクラスターでノードが消えるのが見えるはずです。`kube-system` cluster-autoscalerポッドのログを確認してください。

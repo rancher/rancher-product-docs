@@ -1,0 +1,248 @@
+= Configurar OIDC Genérico
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-13
+:page-revdate: {revdate}
+:community-path: procedimentos/guias-para-novos-usuários/autenticação-permissões-e-configuração-global/configuração-de-autenticação/configurar-oidc-genérico.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-generic-oidc.adoc
+:description: Crie um cliente OpenID Connect (OIDC) e configure o Rancher para trabalhar com seu provedor de autenticação. Seus usuários podem então fazer login no Rancher usando o login do provedor de autenticação.
+
+O OpenID Connect (OIDC) genérico permite que os usuários façam login no Rancher usando suas credenciais de sua conta existente em um Provedor de Identidade (IdP) OIDC. O Rancher suporta integração com o protocolo OIDC e o protocolo SAML. Ambas as implementações são funcionalmente equivalentes quando usadas com o Rancher. As seguintes instruções descrevem como criar um cliente OIDC e configurar o Rancher para trabalhar com seu provedor de autenticação. Os usuários podem então fazer login no Rancher usando o login do OIDC IdP.
+
+[#_prerequisites]
+== Pré-requisitos
+
+[#_identity_provider]
+=== Provedor de Identidade
+
+No Rancher, o OIDC genérico está desativado.
+
+[NOTE]
+====
+Consulte a documentação do seu IdP específico para completar os pré-requisitos listados.
+====
+
+[#_oidc_client]
+==== Cliente OIDC
+
+No seu IdP, crie um novo cliente com as configurações abaixo:
+
+|===
+| Configuração | Valor
+
+| `Client ID`
+| +++<CLIENT_ID>+++(ex. `rancher`)+++</CLIENT_ID>+++
+
+| `Name`
+| +++<CLIENT_NAME>+++(ex. `rancher`)+++</CLIENT_NAME>+++
+
+| `Client Protocol`
+| `openid-connect`
+
+| `Access Type`
+| `confidential`
+
+| `Valid Redirect URI`
+| `https://yourRancherHostURL/verify-auth`
+|===
+
+No novo cliente OIDC, crie mapeadores para expor os campos do usuário.
+
+[NOTE]
+====
+As declarações `groups` e `full_group_path` geradas pelos mapeadores de Grupos e Caminho de Grupo, que você cria dentro do cliente OIDC no seu Provedor de Identidade, devem ser arrays JSON, ex. `"groups":["admins","devs","qa"]` e `"full_group_path":["/admins","/devs","/qa"]`.
+====
+
+. Crie um novo `Groups Mapper` com as configurações abaixo:
++
+|===
+| Configuração | Valor
+
+| `Name`
+| `Groups Mapper`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `groups`
+
+| `Add to ID token`
+| `OFF`
+
+| `Add to access token`
+| `OFF`
+
+| `Add to user info`
+| `ON`
+|===
+
+. Crie um novo `Client Audience` com as configurações abaixo:
++
+|===
+| Configuração | Valor
+
+| `Name`
+| `Client Audience`
+
+| `Mapper Type`
+| `Audience`
+
+| `Included Client Audience`
+| +++<CLIENT_NAME>++++++</CLIENT_NAME>+++
+
+| `Add to access token`
+| `ON`
+|===
+
+. Crie um novo `Groups Path` com as configurações abaixo.
++
+|===
+| Configuração | Valor
+
+| `Name`
+| `Group Path`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `full_group_path`
+
+| `Full group path`
+| `ON`
+
+| `Add to user info`
+| `ON`
+|===
+
+[CAUTION]
+====
+O Rancher usa o valor recebido na declaração "sub" para formar o PrincipalID, que é o identificador único no Rancher.  É importante que este seja um valor único e imutável.
+====
+
+[#_configuring_generic_oidc_in_rancher]
+== Configurando OIDC Genérico no Rancher
+
+. No canto superior esquerdo da interface do Rancher, clique em *☰ > Usuários e Autenticação*.
+. Na barra de navegação à esquerda, clique em *Provedor de Autenticação*.
+. Selecione *OIDC Genérico*.
+. Preencha o formulário *Configurar uma conta OIDC*. Para ajuda com o preenchimento do formulário, consulte a <<_configuration_reference,referência de configuração>>.
+. Clique em *Habilitar*.
++
+O Rancher irá redirecioná-lo para a página de login do IdP. Insira suas credenciais do IdP para validar sua configuração do Keycloak no Rancher.
++
+[NOTE]
+====
+Você pode precisar desativar seu bloqueador de pop-ups para ver a página de login do IdP.
+====
+
+*Resultado:* O Rancher está configurado para trabalhar com seu provedor usando o protocolo OIDC. Seus usuários agora podem fazer login no Rancher usando o login do IdP.
+
+[#_custom_claim_mapping]
+=== Mapeamento de Reivindicações Personalizadas
+
+O mapeamento de reivindicações personalizadas dentro da configuração OIDC Genérico é suportado para `name`, `email` e `groups`. Isso permite que você mapeie manualmente essas reivindicações OIDC quando seu IdP não usa nomes padrão nos tokens.
+
+[#_how_a_custom_groups_claim_works]
+==== Como Funciona uma Reivindicação de Grupos Personalizados
+
+Uma reivindicação de grupos personalizados influencia como os grupos de usuários funcionam:
+
+* Se tanto a reivindicação padrão OIDC `groups` quanto a reivindicação de grupos personalizados estiverem presentes no token do usuário, a reivindicação personalizada complementa a lista de grupos fornecida pela reivindicação padrão.
+* Se não houver uma reivindicação de grupos padrão no token, os grupos listados na reivindicação personalizada formarão os únicos grupos do usuário.
+
+[NOTE]
+====
+Não há funcionalidade de busca disponível para grupos provenientes de uma reivindicação personalizada. Para atribuir um papel a um desses grupos, você deve inserir manualmente o nome exato do grupo no campo RBAC.
+====
+
+[#_configuring_custom_claims]
+==== Configurando Reivindicações Personalizadas
+
+Quando estiver no formulário *Configurar uma conta OIDC*:
+
+. Selecione *Adicionar reivindicações personalizadas*.
+. Adicione suas reivindicações personalizadas `name`, `email` ou `groups` ao campo apropriado *Reivindicações Personalizadas*.
+
+Por exemplo, se seu IdP enviar `groups` em uma reivindicação chamada `custom_roles`, insira `custom_roles` no campo *Reivindicação de Grupos Personalizados*. O Rancher então complementa a reivindicação padrão OIDC `groups` ou procura essa reivindicação específica ao processar o token do usuário.
+
+[#_configuration_reference]
+=== Referência de configuração
+
+|===
+| Campo | Descrição
+
+| ID do cliente
+| O ID do Cliente do seu cliente OIDC.
+
+| Segredo do Cliente
+| O segredo gerado para o seu cliente OIDC.
+
+| Chave Privada/Certificado
+| Um par chave/certificado para criar um shell seguro entre o Rancher e seu IdP. Necessário se HTTPS/SSL estiver habilitado em seu servidor OIDC.
+
+| seguros
+| Escolha se deseja usar os valores gerados para os campos URL do Rancher, Emissão e Endpoint de Autenticação ou fornecer substituições manuais se estiverem incorretos.
+
+| URL do Rancher
+| A URL do seu Servidor Rancher.
+
+| Emissor
+| A URL do seu IdP.  Se seu provedor tiver a descoberta habilitada, o Rancher usa a URL do Emissor para buscar todas as URLs necessárias.
+
+| Endpoint de Autenticação
+| A URL para onde os usuários são redirecionados para autenticação.
+|===
+
+[#_custom_claims]
+==== Reivindicações Personalizadas
+
+|===
+| Campo de Reivindicação Personalizada | Reivindicação OIDC Padrão | Descrição da Reivindicação Personalizada
+
+| Reivindicação de Nome Personalizada
+| `name`
+| O nome da reivindicação no token OIDC que contém o nome completo ou o nome de exibição do usuário.
+
+| Reivindicação de Email Personalizada
+| `email`
+| O nome da reivindicação no token OIDC que contém o endereço de email do usuário.
+
+| Reivindicação de Grupos Personalizada
+| `groups`
+| O nome da reivindicação no token OIDC que contém as associações de grupos do usuário (usado para RBAC).
+|===
+
+[#_oidc_support_for_pkce_extension]
+== Suporte OIDC para Extensão PKCE
+
+include::shared:ROOT:partial$en/oidc-pkce-support.adoc[]
+
+[#_troubleshooting]
+== Solução de problemas
+
+Se você estiver enfrentando problemas ao testar a conexão com o servidor OIDC, primeiro verifique as opções de configuração do seu cliente OIDC. Você também pode inspecionar os logs do Rancher para ajudar a identificar o que está causando os problemas. Os logs de depuração podem conter informações mais detalhadas sobre o erro. Por favor, consulte xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[Como posso habilitar o registro de depuração] nesta documentação.
+
+Todas as entradas de log relacionadas ao OIDC Genérico são precedidas por `[generic oidc]` ou `[oidc]`.
+
+[#_you_are_not_redirected_to_your_authentication_provider]
+=== Você não é redirecionado para seu provedor de autenticação
+
+Se você preencher o formulário *Configurar uma conta OIDC Genérica* e clicar em *Ativar*, e não for redirecionado para seu IdP, verifique a configuração do seu cliente OIDC.
+
+[#_the_generated_issuer_and_auth_endpoint_are_incorrect]
+=== Os `Issuer` e `Auth Endpoint` gerados estão incorretos
+
+Se os `Issuer` e `Auth Endpoint` forem gerados incorretamente, abra o formulário *Configurar uma conta OIDC*, mude *Endpoints* para `Specify (advanced)` e substitua o valor de `Issuer`.
+
+[#_error_invalid_grant_type]
+=== Erro: "Invalid grant_type"
+
+Em alguns casos, a mensagem de erro "grant_type inválido" pode ser enganosa e é, na verdade, causada pela configuração incorreta do `Valid Redirect URI`.
+
+[#_configuring_oidc_single_logout_slo]
+== Configurando o Logout Único OIDC (SLO)
+
+include::shared:ROOT:partial$en/configure-slo-oidc.adoc[]

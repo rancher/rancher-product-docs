@@ -1,0 +1,107 @@
+= Einrichten eines NGINX-Lastausgleichs
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+
+NGINX wird als Layer-4-Lastausgleich (TCP) konfiguriert, der Verbindungen an einen Ihrer Rancher-Knoten weiterleitet.
+
+In dieser Konfiguration befindet sich der Lastausgleich vor Ihren Knoten. Der Lastausgleich kann jeder Host sein, der in der Lage ist, NGINX auszuführen.
+
+[NOTE]
+====
+
+Verwenden Sie keinen Ihrer Rancher-Knoten als Lastausgleich.
+====
+
+
+____
+Diese Beispiele zeigen, wie der Lastausgleich konfiguriert wird, um den Datenverkehr an drei Rancher-Serverknoten zu leiten. Wenn Rancher auf einem RKE Kubernetes-Cluster installiert ist, sind drei Knoten erforderlich. Wenn Rancher auf einem K3s Kubernetes-Cluster installiert ist, sind nur zwei Knoten erforderlich.
+____
+
+[#_install_nginx]
+== Installieren Sie NGINX
+
+Beginnen Sie mit der Installation von NGINX auf dem Knoten, den Sie als Lastausgleich verwenden möchten. NGINX hat Pakete für alle bekannten Betriebssysteme verfügbar. Die getesteten Versionen sind `1.14` und `1.15`. Für Hilfe bei der Installation von NGINX, beziehen Sie sich auf deren https://www.nginx.com/resources/wiki/start/topics/tutorials/install/[Installationsdokumentation].
+
+Das `stream` Modul ist erforderlich, das vorhanden ist, wenn die offiziellen NGINX-Pakete verwendet werden. Bitte beziehen Sie sich auf die Dokumentation Ihres Betriebssystems, wie Sie das NGINX `stream` Modul auf Ihrem Betriebssystem installieren und aktivieren können.
+
+[#_create_nginx_configuration]
+== Erstellen Sie die NGINX-Konfiguration
+
+Nach der Installation von NGINX müssen Sie die NGINX-Konfigurationsdatei, `nginx.conf`, mit den IP-Adressen Ihrer Knoten aktualisieren.
+
+. Kopieren Sie den folgenden Code und fügen Sie ihn in Ihren bevorzugten Texteditor ein. Speichern Sie es als `nginx.conf`.
+. Ersetzen Sie in `nginx.conf` beide Vorkommen (Port 80 und Port 443) von `<IP_NODE_1>`, `<IP_NODE_2>` und `<IP_NODE_3>` durch die IPs Ihrer Knoten.
++
+[NOTE]
+====
+Siehe https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/[NGINX-Dokumentation: TCP- und UDP-Lastausgleich] für alle Konfigurationsoptionen.
+====
++
+.Beispiel NGINX-Konfiguration
+----
+worker_processes 4;
+worker_rlimit_nofile 40000;
+
+events {
+    worker_connections 8192;
+}
+
+stream {
+    upstream rancher_servers_http {
+        least_conn;
+        server <IP_NODE_1>:80 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_2>:80 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_3>:80 max_fails=3 fail_timeout=5s;
+    }
+    server {
+        listen 80;
+        proxy_pass rancher_servers_http;
+    }
+
+}
+
+http {
+
+    upstream rancher_servers_https {
+        least_conn;
+        server <IP_NODE_1>:443 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_2>:443 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_3>:443 max_fails=3 fail_timeout=5s;
+    }
+    server {
+        listen 443 ssl;
+        ssl_certificate /path/to/tls.crt;
+        ssl_certificate_key /path/to/key.key;
+        location / {
+            proxy_pass https://rancher_servers_https;
+            proxy_set_header Host <rancher UI URL>;
+            proxy_ssl_server_name on;
+            proxy_ssl_name <rancher UI URL>
+        }
+    }
+}
+----
+
+. Speichern Sie `nginx.conf` in Ihrem Lastausgleich unter folgendem Pfad: `/etc/nginx/nginx.conf`.
+. Laden Sie die Updates Ihrer NGINX-Konfiguration, indem Sie den folgenden Befehl ausführen:
++
+----
+# nginx -s reload
+----
+
+[#_option_run_nginx_as_docker_container]
+== Option - Führen Sie NGINX als Docker-Container aus
+
+Anstatt NGINX als Paket im Betriebssystem zu installieren, können Sie es stattdessen als Docker-Container ausführen. Speichern Sie die bearbeitete *Beispiel NGINX-Konfiguration* als `/etc/nginx.conf` und führen Sie den folgenden Befehl aus, um den NGINX-Container zu starten:
+
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v /etc/nginx.conf:/etc/nginx/nginx.conf \
+  nginx:1.14
+----

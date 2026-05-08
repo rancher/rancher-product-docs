@@ -1,0 +1,81 @@
+= Sincronización de clústeres alojados
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-21
+:page-revdate: {revdate}
+:community-path: reference-guides/cluster-configuration/rancher-server-configuration/sync-clusters.adoc 
+:product-path: cluster-deployment/hosted-kubernetes/sync-clusters.adoc
+
+ifeval::["{build-type}" != "srfa"]
+La sincronización permite a Rancher actualizar los valores del clúster para que estén al día con el objeto de clúster correspondiente alojado en AKS, EKS o GKE. Esto permite que fuentes distintas a Rancher posean el estado de un clúster alojado.
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+La sincronización permite a Rancher actualizar los valores del clúster para que estén al día con el objeto de clúster correspondiente alojado en EKS. Esto permite que fuentes distintas a Rancher posean el estado de un clúster alojado.
+endif::[]
+
+[CAUTION]
+====
+Puedes sobrescribir accidentalmente el estado de una fuente si procesas simultáneamente una actualización de otra fuente. Esto también puede ocurrir si procesas una actualización de una fuente dentro de los 5 minutos posteriores a finalizar una actualización de otra fuente.
+====
+
+[#_how_it_works]
+== Cómo funciona
+
+Hay dos campos en el objeto Clúster de Rancher que deben entenderse para comprender cómo funciona la sincronización:
+
+. El objeto de configuración para el clúster, ubicado en la Especificación del Clúster:
+ifeval::["{build-type}" != "srfa"]
+ ** Para AKS, el campo se llama AKSConfig
+ ** Para EKS, el campo se llama EKSConfig
+ ** Para GKE, el campo se llama GKEConfig
+. El objeto UpstreamSpec
+ ** Para AKS, esto se encuentra en el campo AKSStatus en el Estado del Clúster.
+ ** Para EKS, esto se encuentra en el campo EKSStatus en el Estado del Clúster.
+ ** Para GKE, esto se encuentra en el campo GKEStatus en el Estado del Clúster.
+
+Los tipos de estructura que definen estos objetos se pueden encontrar en sus proyectos de operador correspondientes:
+
+* https://github.com/rancher/aks-operator/blob/master/pkg/apis/aks.cattle.io/v1/types.go[aks-operator]
+* https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
+* https://github.com/rancher/gke-operator/blob/master/pkg/apis/gke.cattle.io/v1/types.go[gke-operator]
+
+Todos los campos son anulables, excepto los siguientes: el nombre del clúster, la ubicación (región o zona), Importado y la referencia de credenciales en la nube.
+
+El AKSConfig, EKSConfig o GKEConfig representa el estado deseado. Los valores nulos son ignorados. Los campos que no son nulos en el objeto de configuración pueden considerarse como gestionados. Cuando se crea un clúster en Rancher, todos los campos son no nulos y, por lo tanto, gestionados. Cuando se registra un clúster preexistente en Rancher, todos los campos anulables se establecen en nulo y no son gestionados. Esos campos se convierten en gestionados una vez que su valor ha sido cambiado por Rancher.
+
+UpstreamSpec representa el clúster tal como está en el proveedor de Kubernetes alojado. Se actualiza cada 5 minutos. Después de que se actualiza UpstreamSpec, Rancher verifica si el clúster tiene una actualización en progreso. Si está actualizando actualmente, no se realiza nada más. Si no está actualizando actualmente, cualquier campo gestionado en AKSConfig, EKSConfig o GKEConfig se sobrescribe con su valor correspondiente de UpstreamSpec recientemente actualizado.
+
+[CAUTION]
+====
+Cuando importas un clúster de un proveedor de nube a Rancher, UpstreamSpec representa el estado del clúster y Config está vacío. Si luego actualizas el clúster importado a través de la interfaz de usuario de Rancher, tanto UpstreamSpec como Config se vuelven no nulos. Cualquier actualización adicional al clúster debe aplicarse a través de Rancher. Esto se debe a que no hay una forma segura de determinar si los cambios que provienen de UpstreamSpec representan el estado deseado o simplemente un desajuste con Config. Si actualizas el clúster importado a través de la consola del proveedor de nube después de aplicar cualquier actualización a través de la interfaz de usuario de Rancher, el controlador desplegará una reversión y el contenido de Config se considerará el estado deseado.
+====
+
+
+El estado deseado efectivo puede considerarse como UpstreamSpec, más todos los campos no nulos en AKSConfig, EKSConfig o GKEConfig. Esto es lo que se muestra en la interfaz de usuario.
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+ ** Para EKS, el campo se llama EKSConfig
+.  El objeto UpstreamSpec
+ ** Para EKS, esto se encuentra en el campo EKSStatus en el Estado del Clúster.
+
+Los tipos de estructura que definen estos objetos se pueden encontrar en sus proyectos de operador correspondientes:
+
+* https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
+
+Todos los campos son anulables, excepto los siguientes: el nombre del clúster, la ubicación (región o zona), Importado y la referencia de credenciales en la nube.
+
+El EKSConfig representa el estado deseado. Los valores nulos son ignorados. Los campos que no son nulos en el objeto de configuración pueden considerarse como gestionados. Cuando se crea un clúster en Rancher, todos los campos son no nulos y, por lo tanto, gestionados. Cuando se registra un clúster preexistente en Rancher, todos los campos anulables se establecen en nulo y no son gestionados. Esos campos se convierten en gestionados una vez que su valor ha sido cambiado por Rancher.
+
+UpstreamSpec representa el clúster tal como está en el proveedor de Kubernetes alojado. Se actualiza cada 5 minutos. Después de que se actualiza UpstreamSpec, Rancher verifica si el clúster tiene una actualización en progreso. Si está actualizando actualmente, no se realiza nada más. Si no se está actualizando actualmente, cualquier campo gestionado en EKSConfig se sobrescribe con su valor correspondiente del UpstreamSpec recientemente actualizado.
+
+[CAUTION]
+====
+Cuando importas un clúster de un proveedor de nube a Rancher, UpstreamSpec representa el estado del clúster y Config está vacío. Si luego actualizas el clúster importado a través de la interfaz de usuario de Rancher, tanto UpstreamSpec como Config se vuelven no nulos. Cualquier actualización adicional al clúster debe aplicarse a través de Rancher. Esto se debe a que no hay una forma segura de determinar si los cambios que provienen de UpstreamSpec representan el estado deseado o simplemente un desajuste con Config. Si actualizas el clúster importado a través de la consola del proveedor de nube después de aplicar cualquier actualización a través de la interfaz de usuario de Rancher, el controlador desplegará una reversión y el contenido de Config se considerará el estado deseado.
+====
+
+
+El estado deseado efectivo puede considerarse como el UpstreamSpec, más todos los campos no nulos en el EKSConfig. Esto es lo que se muestra en la interfaz de usuario.
+endif::[]
+
+Si Rancher y otra fuente intentan actualizar un clúster al mismo tiempo, o dentro de los 5 minutos posteriores a la finalización de una actualización, es probable que cualquier campo gestionado se vea atrapado en una condición de carrera. Para usar EKS como ejemplo, un clúster puede tener PrivateAccess como un campo gestionado. Si PrivateAccess es falso y luego se habilita en la consola de EKS a las 11:01, y las etiquetas se actualizan desde Rancher antes de las 11:05, es probable que el valor se sobrescriba. Esto también puede ocurrir si las etiquetas se actualizan mientras el clúster aún está procesando la actualización. El problema descrito en este ejemplo no debería ocurrir si el clúster está registrado y los campos de PrivateAccess son nulos.

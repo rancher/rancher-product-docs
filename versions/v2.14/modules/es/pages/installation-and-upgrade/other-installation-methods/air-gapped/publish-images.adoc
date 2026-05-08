@@ -1,0 +1,411 @@
+= 2. Recopilar y publicar imágenes en tu registro privado
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-06
+:page-revdate: {revdate}
+:community-path: comenzando/instalación-y-actualización/otros-métodos-de-instalación/instalación-helm-cli-entorno-aislado/publicar-imágenes.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/publish-images.adoc
+ifeval::["{build-type}" != "community"]
+:url-k3s-private-registry: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/private-registry.html
+:xref-use-windows-clusters: xref:cluster-deployment/custom-clusters/windows/use-windows-clusters.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-upgrade-certmanager: xref:installation-and-upgrade/resources/upgrade-cert-manager.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-private-registry: https://docs.k3s.io/installation/private-registry
+:xref-use-windows-clusters: xref:guías-como-hacer/nuevas-guías-de-usuario/clústeres-de-kubernetes-en-rancher-configuración/utilizar-clústeres-windows/index.adoc
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-upgrade-certmanager: xref:getting-started/installation-and-upgrade/resources/upgrade-cert-manager.adoc
+endif::[]
+
+Esta página describe los pasos para recopilar y publicar imágenes de contenedor en un registro privado para una instalación en un entorno aislado de {rancher-product-name}.
+
+[IMPORTANT]
+====
+Puedes usar cualquier versión de Rancher Prime incluida en la URL de Prime Artifacts para los recursos mencionados en estos pasos. Para aprender más sobre la URL de Prime Artifacts, consulta nuestra https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[documentación exclusiva de Prime]. Se requiere autenticación. Utiliza tus credenciales del https://scc.suse.com/home[Centro de Clientes de SUSE (SCC)] para iniciar sesión.
+====
+
+Por defecto, todas las imágenes utilizadas para {xref-cluster-deployment}[provisionar clústeres de Kubernetes] o lanzar cualquier herramienta en Rancher, p. ej. monitoreo, pipelines, alertas, se extraen de Docker Hub. En una instalación en un entorno aislado de Rancher, necesitas un registro privado que sea accesible por tu servidor Rancher para cargar todas las imágenes.
+
+Poblar el registro privado con imágenes es el mismo proceso para instalar Rancher con Docker y para instalar Rancher en un clúster de Kubernetes.
+
+Los pasos en esta sección difieren dependiendo de si planeas o no usar Rancher para provisionar un clúster descendente con nodos Windows. Por defecto, proporcionamos los pasos de cómo poblar tu registro privado asumiendo que Rancher provisionará clústeres de Kubernetes descendentes solo con nodos Linux. Pero si planeas provisionar cualquier {xref-use-windows-clusters}[clústeres de Kubernetes descendentes utilizando nodos Windows], hay instrucciones separadas para soportar las imágenes necesarias.
+
+[NOTE]
+.Requisitos previos:
+====
+Debes tener un https://docs.docker.com/registry/deploying/#run-an-externally-accessible-registry[registro privado] disponible para usar.
+
+Si el registro tiene certificados, consulta la {url-k3s-private-registry}[documentación de K3s] sobre cómo añadir un registro privado. Los certificados y los archivos de configuración del registro deben montarse en el contenedor de Rancher.
+====
+
+[tabs]
+======
+Clústeres solo Linux::
++
+--
+Para servidores Rancher que solo provisionarán clústeres Linux, estos son los pasos para poblar tu registro privado.
+
+. <<_1_find_the_required_assets_for_your_rancher_version,Encuentra los activos requeridos para tu versión de Rancher>>
+. <<_2_collect_the_cert_manager_image,Recopila la imagen del cert-manager>> (a menos que estés trayendo tus propios certificados o terminando TLS en un balanceador de carga)
+. <<_3_save_the_images_to_your_workstation,Guarda las imágenes en tu estación de trabajo>>
+. <<_linux_4_populate_the_private_registry,Poblar el registro privado>>
+
+[pass]
+<h3><a id="_prerequisites"></a>Requisitos previos</h3>
+
+Estos pasos esperan que utilices una estación de trabajo Linux que tenga acceso a internet, acceso a tu registro privado y al menos 20 GB de espacio en disco.
+
+Si vas a utilizar hosts ARM64, el registro debe soportar manifiestos. A partir de abril de 2020, Amazon Elastic Container Registry no soporta manifiestos.
+
+[pass]
+<h3><a id="_1_find_the_required_assets_for_your_rancher_version"></a>1. Encuentra los activos requeridos para tu versión de Rancher</h3>
+
+. Ve a la https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[URL de Artefactos Prime] y encuentra la versión de Rancher v2.x.x que deseas instalar, y haz clic en *mostrar*.
+. Para instalar Rancher en un entorno aislado, debes descargar los siguientes archivos:
++
+|===
+| Archivo de lanzamiento | Descripción
+
+| `rancher-images.txt`
+| Este archivo contiene una lista de imágenes necesarias para instalar Rancher, aprovisionar clústeres y utilizar las herramientas de Rancher.
+
+| `rancher-save-images.sh`
+| Este script descarga todas las imágenes en el `rancher-images.txt` desde Docker Hub y guarda todas las imágenes como `rancher-images.tar.gz`.
+
+| `rancher-load-images.sh`
+| Este script carga imágenes desde el archivo `rancher-images.tar.gz` y las envía a tu registro privado.
+|===
+
+[#_2_collect_the_cert_manager_image]
+[pass]
+<h3><a class="anchor" id="_2_collect_the_cert_manager_image" href="#_2_collect_the_cert_manager_image"></a>2. Recopila la imagen de cert-manager</h3>
+
+[NOTE]
+====
+Salta este paso si estás utilizando tus propios certificados, o si estás terminando TLS en un equilibrador de carga externo.
+====
+
+En una instalación de Kubernetes, si decides utilizar los certificados TLS autofirmados por defecto de Rancher, también debes añadir la imagen https://artifacthub.io/packages/helm/cert-manager/cert-manager[`cert-manager`] a `rancher-images.txt`.
+
+. Obtén el último `cert-manager` gráfico de Helm y analiza la plantilla para obtener detalles de las imágenes:
++
+[NOTE]
+====
+Los cambios recientes en cert-manager requieren una actualización de versión. Si estás actualizando Rancher y utilizando una versión de cert-manager anterior a v0.12.0, consulta nuestra {xref-upgrade-certmanager}[documentación de actualización].
+====
++
+[,console]
+----
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm fetch jetstack/cert-manager
+helm template ./cert-manager-<version>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> ./rancher-images.txt
+----
+
+. Ordena y elimina duplicados de la lista de imágenes para eliminar cualquier superposición entre las fuentes:
++
+[,console]
+----
+sort -u rancher-images.txt -o rancher-images.txt
+----
+
+[#_3_save_the_images_to_your_workstation]
+[pass]
+<h3><a id="_3_save_the_images_to_your_workstation"></a>3. Guarda las imágenes en tu estación de trabajo</h3>
+
+. *(Opcional)* Verifica la lista de imágenes antes de descargar:
++
+[,console]
+----
+wc -l rancher-images.txt
+head rancher-images.txt
+----
+
+. Haz `rancher-save-images.sh` ejecutable:
++
+[,console]
+----
+chmod +x rancher-save-images.sh
+----
+
+. Ejecuta `rancher-save-images.sh` con la lista de imágenes `rancher-images.txt` para crear un tarball de todas las imágenes requeridas:
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./rancher-images.txt
+----
+
+. *(Opcional)* Especifica un archivo de salida personalizado:
++
+[,console]
+----
+./rancher-save-images.sh \
+  --image-list ./rancher-images.txt \
+  --images rancher-images-custom.tar.gz
+----
++
+*Resultado:* Docker comienza a descargar las imágenes utilizadas para una instalación en un entorno aislado. Sé paciente. Este proceso tarda unos minutos.
+
+. Verifica que se haya creado el tarball:
++
+[,console]
+----
+ls -lh rancher-images.tar.gz
+----
++
+Si algunas imágenes no se descargan, revisa la salida y vuelve a intentar después de resolver cualquier problema.
+
+[#_linux_4_populate_the_private_registry]
+[pass]
+<h3><a id="_linux_4_populate_the_private_registry"></a>4. Poblar el registro privado</h3>
+
+A continuación, moverás las imágenes en el `rancher-images.tar.gz` a tu registro privado utilizando los scripts para cargar las imágenes.
+
+Mueve las imágenes en el `rancher-images.tar.gz` a tu registro privado utilizando los scripts para cargar las imágenes.
+
+Se espera que el `rancher-images.txt` esté en la estación de trabajo en el mismo directorio en el que estás ejecutando el script `rancher-load-images.sh`. El `rancher-images.tar.gz` también debería estar en el mismo directorio.
+
+. Inicia sesión en tu registro privado si es necesario:
++
+[,console]
+----
+   docker login <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. Haz `rancher-load-images.sh` ejecutable:
++
+----
+   chmod +x rancher-load-images.sh
+----
+
+. Utiliza `rancher-load-images.sh` para extraer, etiquetar y subir `rancher-images.txt` y `rancher-images.tar.gz` a tu registro privado:
++
+[,console]
+----
+   ./rancher-load-images.sh --image-list ./rancher-images.txt --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+--
+
+Clústeres de Linux y Windows::
++
+--
+Para servidores Rancher que provisionarán clústeres de Linux y Windows, hay pasos distintivos para poblar tu registro privado para las imágenes de Windows y las imágenes de Linux. Dado que un clúster de Windows es una mezcla de nodos de Linux y Windows, las imágenes de Linux que se suben al registro privado son manifiestos.
+
+[pass]
+<h2><a id="_windows_steps"></a>Pasos de Windows</h2>
+
+Las imágenes de Windows deben ser recopiladas y enviadas desde una estación de trabajo de servidor Windows.
+
+. <<_1_find_the_required_assets_for_your_rancher_version,Encuentra los activos requeridos para tu versión de Rancher>>
+. <<_2_save_the_images_to_your_windows_server_workstation,Guarda las imágenes en tu estación de trabajo de Windows Server>>
+. <<_3_prepare_the_docker_daemon,Prepara el daemon de Docker>>
+. <<_win_4_populate_the_private_registry,Poblar el registro privado>>
+
+[#_prerequisites]
+[pass]
+<h3><a id="_prerequisites"></a>Requisitos previos</h3>
+
+Estos pasos esperan que utilices una estación de trabajo de Windows Server 1809 que tenga acceso a internet, acceso a tu registro privado y al menos 50 GB de espacio en disco.
+
+La estación de trabajo debe tener Docker 18.02+ para soportar manifiestos, que son necesarios al aprovisionar clústeres de Windows.
+
+Tu registro debe soportar manifiestos. A partir de abril de 2020, Amazon Elastic Container Registry no soporta manifiestos.
+
+[#_1_find_the_required_assets_for_your_rancher_version]
+[pass]
+<h3><a id="_1_find_the_required_assets_for_your_rancher_version"></a>1. Encuentra los activos requeridos para tu versión de Rancher</h3>
+
+. Ve a la https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[URL de Artefactos Prime] y encuentra la versión de Rancher v2.x.x que deseas instalar, y haz clic en *mostrar*.
+. Para instalar Rancher en un entorno aislado, debes descargar los siguientes archivos:
++
+|===
+| Archivo de lanzamiento | Descripción
+
+| `rancher-windows-images.txt`
+| Este archivo contiene una lista de imágenes de Windows necesarias para aprovisionar clústeres de Windows.
+
+| `rancher-save-images.ps1`
+| Este script descarga todas las imágenes en el `rancher-windows-images.txt` desde Docker Hub y guarda todas las imágenes como `rancher-windows-images.tar.gz`.
+
+| `rancher-load-images.ps1`
+| Este script carga las imágenes desde el archivo `rancher-windows-images.tar.gz` y las envía a tu registro privado.
+|===
+
+[#_2_save_the_images_to_your_windows_server_workstation]
+[pass]
+<h3><a id="_2_save_the_images_to_your_windows_server_workstation"></a>2. Guarda las imágenes en tu estación de trabajo de Windows Server</h3>
+
+. Usando `powershell`, ve al directorio que tiene los archivos que se descargaron en el paso anterior.
+. Ejecuta `rancher-save-images.ps1` para crear un tarball de todas las imágenes requeridas:
++
+[,console]
+----
+./rancher-save-images.ps1
+----
++
+*Resultado:* Docker comienza a descargar las imágenes utilizadas para una instalación en un entorno aislado. Sé paciente. Este proceso tarda unos minutos. Cuando el proceso finalice, tu directorio actual generará un tarball llamado `rancher-windows-images.tar.gz`. Verifica que la salida esté en el directorio.
+
+[#_3_prepare_the_docker_daemon]
+[pass]
+<h3><a id="_3_prepare_the_docker_daemon"></a>3. Prepara el daemon de Docker</h3>
+
+Añade la dirección de tu registro privado al campo de configuración `allow-nondistributable-artifacts` en el daemon de Docker (`C:\ProgramData\Docker\config\daemon.json`). Dado que la imagen base de las imágenes de Windows es mantenida por el registro `mcr.microsoft.com`, este paso es necesario ya que las capas en el registro de Microsoft faltan en Docker Hub y necesitan ser descargadas en el registro privado.
+
+[,json]
+----
+   {
+     ...
+     "allow-nondistributable-artifacts": [
+       ...
+       "<REGISTRY.YOURDOMAIN.COM:PORT>"
+     ]
+     ...
+   }
+----
+
+[#_win_4_populate_the_private_registry]
+[pass]
+<h3><a id="_win_4_populate_the_private_registry"></a>4. Poblar el registro privado</h3>
+
+Mueve las imágenes en el `rancher-windows-images.tar.gz` a tu registro privado utilizando los scripts para cargar las imágenes.
+
+Se espera que el `rancher-windows-images.txt` esté en la estación de trabajo en el mismo directorio en el que estás ejecutando el script `rancher-load-images.ps1`. El `rancher-windows-images.tar.gz` también debería estar en el mismo directorio.
+
+. Usando `powershell`, inicia sesión en tu registro privado si es necesario:
++
+[,console]
+----
+docker login <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. Usando `powershell`, utiliza `rancher-load-images.ps1` para extraer, etiquetar y enviar las imágenes desde `rancher-images.tar.gz` a tu registro privado:
++
+[,console]
+----
+./rancher-load-images.ps1 --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+[pass]
+<h2><a id="_linux_steps"></a>Pasos de Linux</h2>
+
+Las imágenes de Linux deben ser recogidas y enviadas desde un host de Linux, pero _debe hacerse después_ de poblar las imágenes de Windows en el registro privado. Estos pasos difieren de los de solo Linux, ya que las imágenes de Linux que se suben al registro privado son, en realidad, manifiestos que soportan tanto imágenes de Windows como de Linux.
+
+[pass]
+<h3><a id="_prerequisites"></a>Requisitos previos</h3>
+
+Debéis poblar el registro privado con las imágenes de Windows antes de poblar el registro privado con las imágenes de Linux. Si ya habéis poblado el registro con imágenes de Linux, necesitaréis seguir estas instrucciones de nuevo, ya que publicarán manifiestos que soportan imágenes de Windows y Linux.
+
+Estos pasos esperan que utilicéis una estación de trabajo Linux que tenga acceso a internet, acceso a vuestro registro privado y al menos 20 GB de espacio en disco.
+
+La estación de trabajo debe tener Docker 18.02+ para soportar manifiestos, que son necesarios al aprovisionar clústeres de Windows.
+
++++<a name="linux-1">++++++</a>+++
+
+[pass]
+<h3><a id="_1_find_the_required_assets_for_your_rancher_version"></a>1. Encuentra los activos requeridos para tu versión de Rancher</h3>
+
+. Navegad a nuestra https://github.com/rancher/rancher/releases[página de lanzamientos] y encontrad la versión de Rancher v2.x.x que queréis instalar. No descarguéis lanzamientos marcados como `rc` o `Pre-release`, ya que no son estables para entornos de producción. Haced clic en *Activos*.
+. Desde la sección de *Activos* de la versión, descargad los siguientes archivos:
+
+|===
+| Archivo de lanzamiento | Descripción
+
+| `rancher-images.txt`
+| Este archivo contiene una lista de imágenes necesarias para instalar Rancher, aprovisionar clústeres y utilizar las herramientas de Rancher.
+
+| `rancher-windows-images.txt`
+| Este archivo contiene una lista de imágenes necesarias para aprovisionar clústeres de Windows.
+
+| `rancher-save-images.sh`
+| Este script descarga todas las imágenes en el `rancher-images.txt` desde Docker Hub y guarda todas las imágenes como `rancher-images.tar.gz`.
+
+| `rancher-load-images.sh`
+| Este script carga imágenes desde el archivo `rancher-images.tar.gz` y las envía a tu registro privado.
+|===
+
++++<a name="linux-2">++++++</a>+++
+
+[pass]
+<h3><a id="_2_collect_all_the_required_images"></a>2. Recoged todas las imágenes requeridas.</h3>
+
+*Para instalaciones de Kubernetes utilizando el certificado autofirmado generado por Rancher:* En una instalación de Kubernetes, si elegís utilizar los certificados TLS autofirmados por defecto de Rancher, debéis añadir la imagen https://artifacthub.io/packages/helm/cert-manager/cert-manager[`cert-manager`] a `rancher-images.txt` también. Saltáis este paso si estáis utilizando vuestros propios certificados.
+
+. Obtened el último `cert-manager` chart de Helm y analizad la plantilla para obtener detalles de las imágenes:
++
+[NOTE]
+====
+Los cambios recientes en cert-manager requieren actualizar la versión. Si estáis actualizando Rancher y utilizando una versión de cert-manager anterior a v0.12.0, consultad nuestra {xref-upgrade-certmanager}[documentación de actualización].
+====
++
+[,console]
+----
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm fetch jetstack/cert-manager
+helm template ./cert-manager-<version>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> ./rancher-images.txt
+----
+
+. Ordena y elimina duplicados de la lista de imágenes para eliminar cualquier superposición entre las fuentes:
++
+[,console]
+----
+sort -u rancher-images.txt -o rancher-images.txt
+----
+
++++<a name="linux-3">++++++</a>+++
+
+[pass]
+<h3><a id="_3_save_the_images_to_your_workstation"></a>3. Guardad las imágenes en vuestra estación de trabajo</h3>
+
+. Haced `rancher-save-images.sh` ejecutable:
++
+----
+chmod +x rancher-save-images.sh
+----
+
+. Ejecutad `rancher-save-images.sh` con la lista de imágenes `rancher-images.txt` para crear un tarball de todas las imágenes requeridas:
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./rancher-images.txt
+----
+
+*Resultado:* Docker comienza a descargar las imágenes utilizadas para una instalación en un entorno aislado. Sed pacientes. Este proceso tarda unos minutos. Cuando el proceso finalice, vuestro directorio actual generará un tarball llamado `rancher-images.tar.gz`. Verificad que la salida esté en el directorio.
+
++++<a name="linux-4">++++++</a>+++
+
+[pass]
+<h3><a id="_4_populate_the_private_registry"></a>4. Poblar el registro privado</h3>
+
+Movéis las imágenes en el `rancher-images.tar.gz` a vuestro registro privado utilizando el `rancher-load-images.sh script` para cargar las imágenes.
+
+Se espera que la lista de imágenes, `rancher-images.txt` o `rancher-windows-images.txt`, esté en la estación de trabajo en el mismo directorio en el que estáis ejecutando el script `rancher-load-images.sh`. El `rancher-images.tar.gz` también debería estar en el mismo directorio.
+
+. Iniciad sesión en vuestro registro privado si es necesario:
++
+[,console]
+----
+docker login <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. Haced `rancher-load-images.sh` ejecutable:
++
+----
+chmod +x rancher-load-images.sh
+----
+
+. Usad `rancher-load-images.sh` para extraer, etiquetar y enviar las imágenes desde `rancher-images.tar.gz` a vuestro registro privado:
+
+[,console]
+----
+./rancher-load-images.sh --image-list ./rancher-images.txt \
+   --windows-image-list ./rancher-windows-images.txt \
+   --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+--
+======
+
+[#_xref_install_kubernetes_adoc_next_step_for_kubernetes_installs_launch_a_kubernetes_cluster]
+== xref:./install-kubernetes.adoc[Próximo paso para instalaciones de Kubernetes - Lanzad un clúster de Kubernetes]

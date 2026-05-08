@@ -1,0 +1,98 @@
+= Práticas recomendadas de logs
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/logging-best-practices.adoc 
+:product-path: observability/logging/best-practices.adoc
+
+Neste guia, recomendamos práticas recomendadas para logs em nível de cluster e logs de aplicação.
+
+* <<_cluster_level_logging,Logs em nível de cluster>>
+* <<_application_logging,Logs de aplicação>>
+* <<_general_best_practices,Práticas recomendadas gerais>>
+
+Antes do Rancher v2.5, o logging no Rancher historicamente foi uma integração bastante estática. Havia uma lista fixa de agregadores para escolher (ElasticSearch, Splunk, Kafka, Fluentd e Syslog), e apenas dois pontos de configuração: nível de cluster e nível de projeto.
+
+O Rancher oferece uma experiência flexível para agregação de logs. Com o recurso de logs, administradores e usuários podem implantar logs que atendem a critérios de coleta detalhados, enquanto oferecem uma gama mais ampla de destinos e opções de configuração.
+
+"Por baixo do capô", o Rancher utiliza o https://github.com/kube-logging/logging-operator[Operador de logs]. Fornecemos o gerenciamento desse operador (e de seus recursos), e conectamos essa experiência ao gerenciamento de seus clusters Rancher.
+
+[#_cluster_level_logging]
+== Logs em nível de cluster
+
+[#_cluster_wide_scraping]
+=== Coleta em todo o cluster
+
+Para alguns usuários, é desejável coletar logs de todos os contêineres em execução no cluster. Isso geralmente coincide com a solicitação (ou exigência) da sua equipe de segurança para coletar todos os logs de todos os pontos de execução.
+
+Nesse cenário, é recomendável criar pelo menos dois objetos _ClusterOutput_ - um para sua equipe de segurança (se você tiver esse requisito) e um para vocês, os administradores do cluster. Ao criar esses objetos, tenha cuidado ao escolher um ponto de saída que possa lidar com o tráfego significativo de logs vindo de todo o cluster. Além disso, certifique-se de escolher um índice apropriado para receber todos esses logs.
+
+Depois de criar esses objetos _ClusterOutput_, crie um _ClusterFlow_ para coletar todos os logs. Não defina nenhuma regra de _Include_ ou _Exclude_ neste fluxo. Isso garantirá que todos os logs de todo o cluster sejam coletados. Se você tiver dois _ClusterOutputs_, certifique-se de enviar logs para ambos.
+
+[#_kubernetes_components]
+=== Componentes do Kubernetes
+
+Os _ClusterFlows_ têm a capacidade de coletar logs de todos os contêineres em todos os hosts no cluster Kubernetes. Isso funciona bem em casos em que esses contêineres fazem parte de um pod Kubernetes.
+
+Uma futura versão do Rancher incluirá o nome do contêiner de origem, o que permitirá filtrar esses logs de componentes. Uma vez que essa alteração seja feita, você poderá personalizar um _ClusterFlow_ para recuperar *apenas* os logs de componentes do Kubernetes e direcioná-los para uma saída apropriada.
+
+[#_application_logging]
+== Logs de aplicação
+
+A melhor prática, não apenas no Kubernetes, mas em todos os aplicativos baseados em contêiner, é direcionar os logs do aplicativo para `stdout`/`stderr`. O tempo de execução do contêiner então capturará esses logs e fará *algo* com eles – normalmente escrevendo-os em um arquivo de registro. Dependendo do tempo de execução do contêiner (e sua configuração), esses logs podem acabar em qualquer número de locais.
+
+No caso de escrever os logs em um arquivo, o Kubernetes ajuda criando um diretório `/var/log/containers` em cada host. Esse diretório cria links simbólicos para os arquivos de registro em seu destino real (que pode diferir com base na configuração ou no tempo de execução do contêiner).
+
+O logging do Rancher lerá todas as entradas de log em `/var/log/containers`, garantindo que todas as entradas de log de todos os contêineres (assumindo uma configuração padrão) tenham a oportunidade de serem coletadas e processadas.
+
+[#_specific_log_files]
+=== Arquivos de Log Específicos
+
+A coleta de logs só recupera logs `stdout`/`stderr` de pods no Kubernetes. Mas e se quisermos coletar logs de outros arquivos gerados por aplicações? Aqui, um sidecar de streaming de logs (ou dois) pode ser útil.
+
+O objetivo de configurar um sidecar de streaming é capturar arquivos de log que são gravados em disco e fazer com que seu conteúdo seja transmitido para `stdout`. Dessa forma, o Operador de logs pode coletar esses logs e enviá-los para a saída desejada.
+
+Para configurar isso, edite seu recurso de carga de trabalho (por exemplo, Deployment) e adicione a seguinte definição de sidecar:
+
+[,yaml]
+----
+...
+containers:
+- args:
+  - -F
+  - /path/to/your/log/file.log
+  command:
+  - tail
+  image: busybox
+  name: stream-log-file-[name]
+  volumeMounts:
+  - mountPath: /path/to/your/log
+    name: mounted-log
+...
+----
+
+Isso adicionará um contêiner à sua definição de carga de trabalho que agora transmitirá o conteúdo de (neste exemplo) `/path/to/your/log/file.log` para `stdout`.
+
+Esse fluxo de log é então coletado automaticamente de acordo com quaisquer _Flows_ ou _ClusterFlows_ que você configurou. Você também pode considerar criar um _Flow_ especificamente para este arquivo de registro, direcionando o nome do contêiner. Consulte o exemplo:
+
+[,yaml]
+----
+...
+spec:
+  match:
+  - select:
+      container_names:
+      - stream-log-file-name
+...
+----
+
+[#_general_best_practices]
+== Melhores Práticas Gerais
+
+* Sempre que possível, produza entradas de log estruturadas (por exemplo, `syslog`, JSON). Isso facilita o manuseio da entrada de log, pois já existem analisadores escritos para esses formatos.
+* Tente fornecer o nome da aplicação que está criando a entrada de log, na própria entrada. Isso pode facilitar a resolução de problemas, já que os objetos do Kubernetes nem sempre carregam o nome da aplicação como o nome do objeto. Por exemplo, um ID de pod pode ser algo como `myapp-098kjhsdf098sdf98`, o que não fornece muitas informações sobre a aplicação em execução dentro do contêiner.
+* Exceto no caso de coletar todos os logs em todo o cluster, tente restringir seus objetos _Flow_ e _ClusterFlow_ de forma mais precisa. Isso facilita a resolução de problemas quando surgem, e também ajuda a garantir que entradas de log não relacionadas não apareçam em seu agregador. Um exemplo de escopo restrito seria limitar um _Flow_ a um único _Deployment_ em um namespace, ou talvez até mesmo a um único contêiner dentro de um _Pod_.
+* Mantenha a verbosidade do log baixa, exceto ao solucionar problemas. Alta verbosidade de log apresenta uma série de problemas, sendo o principal deles *ruído*: eventos significativos podem se perder em um mar de mensagens `DEBUG`. Isso é um pouco mitigado com alertas automatizados e scripts, mas logs altamente verbosos ainda colocam uma quantidade excessiva de estresse na infraestrutura de log.
+* Sempre que possível, tente fornecer um ID de transação ou solicitação com a entrada de log. Isso pode facilitar o rastreamento da atividade da aplicação através de várias fontes de log, especialmente ao lidar com aplicações distribuídas.

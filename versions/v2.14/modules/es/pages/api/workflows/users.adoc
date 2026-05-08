@@ -1,0 +1,210 @@
+= Usuarios
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-12-10
+:page-revdate: {revdate}
+:community-path: api/workflows/users.adoc 
+:product-path: api/workflows/users.adoc
+
+[#_user_resource]
+== Recurso de usuario
+
+El recurso `User` (users.management.cattle.io) representa una cuenta de usuario en Rancher.
+
+Para obtener una descripción de los campos y la estructura del recurso `User`, ejecuta:
+
+[source,shell]
+====
+kubectl explain users.management.cattle.io
+====
+
+[#_creating_a_user]
+== Crear un usuario
+
+Crear un usuario local es un proceso de dos pasos: debes crear el recurso `User`, luego proporcionar una contraseña a través de un `Secret` de Kubernetes.
+
+Solo un usuario con permisos suficientes puede crear un recurso `User`.
+
+[source,shell]
+====
+kubectl create -f -<<EOF
+apiVersion: management.cattle.io/v3
+kind: User
+metadata:
+  name: testuser
+displayName: "Test User"
+username: "testuser"
+EOF
+====
+
+La contraseña del usuario debe proporcionarse en un objeto `Secret` dentro del espacio de nombres `cattle-local-user-passwords`. El webhook de Rancher cifra automáticamente la contraseña y actualiza el `Secret`.
+
+[IMPORTANT]
+====
+Importante: El `Secret` debe tener el mismo nombre que el metadata.name (y nombre de usuario) del recurso `User`. 
+====
+
+[source,shell]
+====
+kubectl create -f -<<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: testuser
+  namespace: cattle-local-user-passwords
+type: Opaque
+stringData:
+  password: Pass1234567!
+EOF
+====
+
+Después de que se envía la contraseña en texto plano, el webhook de Rancher la cifra automáticamente, reemplazando el contenido del `Secret`, asegurando que la contraseña en texto plano nunca se almacene:
+
+[source,yaml]
+====
+apiVersion: v1
+data:
+  password: 1c1Y4CdjlehGWFz26F414x2qoj4gch5L5OXsx35MAa8=
+  salt: m8Co+CfMDo5XwVl0FqYzGcRIOTgRrwFSqW8yurh5DcE=
+kind: Secret
+metadata:
+  annotations:
+    cattle.io/password-hash: pbkdf2sha3512
+  name: testuser
+  namespace: cattle-local-user-passwords
+  ownerReferences:
+  - apiVersion: management.cattle.io/v3
+    kind: User
+    name: testuser
+    uid: 663ffb4f-8178-46c8-85a3-337f4d5cbc2e
+  uid: bade9f0a-b06f-4a77-9a39-4284dc2349c5
+type: Opaque
+====
+
+[#_updating_users_password]
+== Actualizando la contraseña del usuario
+
+Para cambiar la contraseña de un usuario, utiliza el recurso `PasswordChangeRequest`, que gestiona actualizaciones de contraseña seguras.
+
+[source,shell]
+====
+kubectl create  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: PasswordChangeRequest
+spec:
+  userID: "testuser"
+  currentPassword: "Pass1234567!"
+  newPassword: "NewPass1234567!"
+EOF
+====
+
+[#_listing_users]
+== Listando usuarios
+
+Lista todos los recursos `User` en el clúster:
+
+[source,shell]
+====
+kubectl get users
+NAME           AGE
+testuser       3m54s
+user-4n5ws     12m
+====
+
+[#_viewing_a_user]
+== Viendo un usuario
+
+Ver un recurso `User` específico por nombre:
+
+[source,shell]
+====
+kubectl get user testuser
+NAME           AGE
+testuser       3m54s
+====
+
+[#_deleting_a_user]
+== Suprimir un usuario
+
+Eliminar un usuario elimina automáticamente el recurso `Secret` correspondiente a la contraseña.
+
+[source,shell]
+====
+kubectl delete user testuser
+user.management.cattle.io "testuser" deleted
+====
+
+[#_get_a_current_users_information]
+== Obtener información del usuario actual
+
+Un cliente utiliza el recurso `SelfUser` para recuperar información sobre el usuario autenticado actualmente sin conocer su ID. El ID del usuario se devuelve en el campo `.status.userID`.
+
+[source,shell]
+====
+kubectl create -o jsonpath='{.status.userID}'  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: SelfUser
+EOF
+testuser
+====
+
+[#_refreshing_a_users_group_membership]
+== Refrescando la membresía de grupo de un usuario
+
+Las actualizaciones de las membresías de grupo de usuarios son activadas por el recurso `GroupMembershipRefreshRequest`.
+
+[NOTE]
+====
+La membresía de grupo solo es compatible con proveedores de autenticación externos.
+====
+
+[#_for_a_single_user]
+=== Para un solo usuario
+
+[source,shell]
+====
+kubectl create -o jsonpath='{.status}'  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: GroupMembershipRefreshRequest
+spec:
+  userId: testuser
+EOF
+{
+    "conditions": [
+        {
+            "lastTransitionTime": "2025-11-10T12:01:03Z",
+            "message": "",
+            "reason": "",
+            "status": "True",
+            "type": "UserRefreshInitiated"
+        }
+    ],
+    "summary": "Completed"
+}
+====
+
+[#_for_all_users]
+=== Para todos los usuarios
+
+[source,shell]
+====
+kubectl create -o jsonpath='{.status}'  -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: GroupMembershipRefreshRequest
+spec:
+   userId: "*"
+EOF
+{
+    "conditions": [
+        {
+            "lastTransitionTime": "2025-11-10T12:01:59Z",
+            "message": "",
+            "reason": "",
+            "status": "True",
+            "type": "UserRefreshInitiated"
+        }
+    ],
+    "summary": "Completed"
+}
+====

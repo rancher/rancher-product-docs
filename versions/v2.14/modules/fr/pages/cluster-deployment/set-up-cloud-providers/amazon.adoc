@@ -1,0 +1,780 @@
+= Mise en place du fournisseur de cloud Amazon
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-15
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/amazon.adoc 
+:product-path: cluster-deployment/set-up-cloud-providers/amazon.adoc
+:weight: 1
+ifeval::["{build-type}" != "community"]
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-infra-aws: xref:déploiement-cluster/fournisseurs-infra/aws/aws.adoc
+:xref-migrate-out-of-tree-amazon: xref:cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/amazon.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-custom-clusters: xref:guides-de-référence/configuration/serveur-rancher/utiliser-des-nœuds-existants/index.adoc
+:xref-infra-aws: xref:guides-procédures/guides-nouveaux-utilisateurs/lancer-kubernetes-avec-rancher/utiliser-nouveaux-nœuds-dans-un-fournisseur-infra/créer-un-cluster-amazon-ec2.adoc
+:xref-migrate-out-of-tree-amazon: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-amazon.adoc
+endif::[]
+
+[NOTE]
+.Important :
+====
+
+Dans Kubernetes 1.27 et versions ultérieures, vous devez utiliser un fournisseur de cloud AWS hors arbre. Les fournisseurs de cloud en arbre ont cessé d'être pris en charge. Le fournisseur de cloud Amazon a été complètement supprimé et ne fonctionnera plus après une mise à niveau vers Kubernetes 1.27. Les étapes énumérées ci-dessous sont toujours nécessaires pour configurer un fournisseur de cloud Amazon. Vous pouvez <<_using_the_out_of_tree_aws_cloud_provider,configurer un fournisseur de cloud hors arbre>> après avoir créé un rôle IAM et configuré le ClusterID.
+
+Vous pouvez également {xref-migrate-out-of-tree-amazon}[migrer d'un fournisseur de cloud en arbre vers un fournisseur de cloud hors arbre AWS] sur Kubernetes 1.26 et versions antérieures. Tous les clusters existants doivent migrer avant de passer à la version v1.27 afin de rester fonctionnels.
+
+À partir de Kubernetes 1.23, vous devez désactiver la porte de fonctionnalité `CSIMigrationAWS` pour utiliser le fournisseur de cloud AWS en arbre. Vous pouvez le faire en définissant `feature-gates=CSIMigrationAWS=false` comme argument supplémentaire pour le Kubelet, le gestionnaire de contrôleur, l'API Server et le planificateur du cluster dans la configuration avancée du cluster.
+====
+
+
+Lorsque vous utilisez Amazon comme fournisseur de cloud, vous pouvez tirer parti des capacités suivantes{nbsp}:
+
+* *Équilibreurs de charge :* Lancez un AWS Elastic Load Balancer (ELB) lorsque vous sélectionnez `Layer-4 Load Balancer` dans *Mapping de port* ou lorsque vous lancez un `Service` avec `type: LoadBalancer`.
+* *Volumes persistants :* Utilisez des AWS Elastic Block Stores (EBS) pour les volumes persistants.
+
+Consultez le https://kubernetes.github.io/cloud-provider-aws/[README du fournisseur de cloud AWS] pour plus d'informations sur le fournisseur de cloud Amazon.
+
+Pour configurer le fournisseur de cloud Amazon,
+
+. <<_1_create_an_iam_role_and_attach_to_the_instances,Créer un rôle IAM et l'attacher aux instances>>
+. <<_2_configure_the_clusterid,Configurer le ClusterID>>
+
+[#_1_create_an_iam_role_and_attach_to_the_instances]
+== 1. Créer un rôle IAM et l'attacher aux instances
+
+Tous les nœuds ajoutés au cluster doivent pouvoir interagir avec EC2 afin de pouvoir créer et supprimer des ressources. Vous pouvez activer cette interaction en utilisant un rôle IAM attaché à l'instance. Voir https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html#create-iam-role[la documentation Amazon{nbsp}: Création d'un rôle IAM] pour savoir comment créer un rôle IAM. Il existe deux politiques d'exemple{nbsp}:
+
+* La première politique est pour les nœuds avec le rôle `controlplane`. Ces nœuds doivent pouvoir créer/supprimer des ressources EC2. La politique IAM suivante est un exemple, veuillez supprimer les autorisations inutiles pour votre cas d'utilisation.
+* La deuxième politique est pour les nœuds avec le rôle `etcd` ou `worker`. Ces nœuds doivent uniquement pouvoir récupérer des informations d'EC2.
+
+Lors de la création d'un {xref-infra-aws}[cluster Amazon EC2], vous devez remplir le *Nom du profil d'instance IAM* (pas ARN) du rôle IAM créé lors de la création du *Modèle de nœud*.
+
+Lors de la création d'un {xref-custom-clusters}[cluster personnalisé], vous devez attacher manuellement le rôle IAM aux instances.
+
+Politique IAM pour les nœuds avec le rôle `controlplane` :
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeTags",
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVolumes",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:CreateVolume",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:ModifyVolume",
+        "ec2:AttachVolume",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteVolume",
+        "ec2:DetachVolume",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:DescribeVpcs",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:AttachLoadBalancerToSubnets",
+        "elasticloadbalancing:ApplySecurityGroupsToLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancerPolicy",
+        "elasticloadbalancing:CreateLoadBalancerListeners",
+        "elasticloadbalancing:ConfigureHealthCheck",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteLoadBalancerListeners",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DetachLoadBalancerFromSubnets",
+        "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+        "elasticloadbalancing:SetLoadBalancerPoliciesForBackendServer",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:CreateListener",
+        "elasticloadbalancing:CreateTargetGroup",
+        "elasticloadbalancing:DeleteListener",
+        "elasticloadbalancing:DeleteTargetGroup",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeLoadBalancerPolicies",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:ModifyListener",
+        "elasticloadbalancing:ModifyTargetGroup",
+        "elasticloadbalancing:RegisterTargets",
+        "elasticloadbalancing:SetLoadBalancerPoliciesOfListener",
+        "iam:CreateServiceLinkedRole",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "*"
+      ]
+    }
+  ]
+}
+----
+
+Politique IAM pour les nœuds avec le rôle `etcd` ou `worker` :
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones",
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DescribeRepositories",
+        "ecr:ListImages",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+----
+
+[#_2_configure_the_clusterid]
+== 2. Configurer le ClusterID
+
+Les ressources suivantes doivent être balisées avec un `ClusterID` :
+
+* *Nœuds*{nbsp}: Tous les hôtes ajoutés dans Rancher.
+* *Sous-réseau*{nbsp}: Le sous-réseau utilisé pour votre cluster.
+* *Groupe de sécurité*{nbsp}: Le groupe de sécurité utilisé pour votre cluster.
+
+[NOTE]
+====
+
+Ne balisez pas plusieurs groupes de sécurité. Baliser plusieurs groupes génère une erreur lors de la création d'un Elastic Load Balancer (ELB).
+====
+
+
+Lorsque vous créez un {xref-infra-aws}[Cluster Amazon EC2], le `ClusterID` est automatiquement configuré pour les nœuds créés. D'autres ressources doivent encore être étiquetées manuellement.
+
+Utilisez l'étiquette suivante :
+
+*Clé* = `kubernetes.io/cluster/<cluster-id>` *Valeur* = `owned`
+
+Définir la valeur de l'étiquette sur `owned` indique au cluster que toutes les ressources avec cette étiquette sont possédées et gérées par ce cluster.
+
+Si vous partagez des ressources entre des clusters, vous pouvez changer la balise en :
+
+*Clé* = `kubernetes.io/cluster/<cluster-id>` *Valeur* = `shared`.
+
+La valeur de chaîne, `<cluster-id>`, est l'ID du cluster Kubernetes.
+
+[NOTE]
+====
+
+Ne pas étiqueter une ressource avec plusieurs étiquettes possédées ou partagées.
+====
+
+
+[#_using_amazon_elastic_container_registry_ecr]
+== Utilisation d'Amazon Elastic Container Registry (ECR)
+
+Le composant kubelet a la capacité d'obtenir automatiquement les identifiants ECR, lorsque le profil IAM mentionné dans <<_1_create_an_iam_role_and_attach_to_the_instances,Créer un rôle IAM et l'attacher aux instances>> est attaché à l'instance(s). Lors de l'utilisation d'une version de Kubernetes antérieure à v1.15.0, le fournisseur de cloud Amazon doit être configuré dans le cluster. À partir de la version v1.15.0 de Kubernetes, le kubelet peut obtenir des identifiants ECR sans avoir besoin de configurer le fournisseur de cloud Amazon dans le cluster.
+
+[#_using_the_out_of_tree_aws_cloud_provider]
+== Utilisation du fournisseur de cloud AWS hors arbre
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. https://cloud-provider-aws.sigs.k8s.io/prerequisites/[Les conventions de nommage des nœuds et autres prérequis] doivent être respectées pour que le fournisseur de cloud trouve correctement l'instance.
+. Les clusters RKE2/K3s gérés par Rancher ne prennent pas en charge la configuration de `providerID`. Cependant, le moteur définira correctement le nom du nœud si la configuration suivante est définie sur l'objet de cluster de provisionnement{nbsp}:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: aws
+----
++
+Cette option sera transmise à la configuration des différents composants Kubernetes qui s'exécutent sur le nœud, et doit être remplacée pour chaque composant afin d'empêcher le fournisseur en arbre de s'exécuter involontairement{nbsp}:
++
+*Surcharge sur Etcd :*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/etcd-role
+              operator: In
+              values:
+                - 'true'
+----
++
+*Surcharge sur le plan de contrôle :*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+        disable-cloud-controller: true
+        kube-apiserver-arg:
+          - cloud-provider=external
+        kube-controller-manager-arg:
+          - cloud-provider=external
+        kubelet-arg:
+          - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+*Surcharge sur le worker :*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/worker-role
+              operator: In
+              values:
+                - 'true'
+----
+
+. Sélectionnez `Amazon` si vous comptez sur le mécanisme ci-dessus pour définir l'ID du fournisseur. Sinon, sélectionnez le fournisseur de cloud *Externe (hors arbre)*, qui définit `--cloud-provider=external` pour les composants Kubernetes.
+. Spécifiez le chart Helm `aws-cloud-controller-manager` comme manifeste supplémentaire à installer :
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    additionalManifest: |-
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: aws-cloud-controller-manager
+        namespace: kube-system
+      spec:
+        chart: aws-cloud-controller-manager
+        repo: https://kubernetes.github.io/cloud-provider-aws
+        targetNamespace: kube-system
+        bootstrap: true
+        valuesContent: |-
+          hostNetworking: true
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          args:
+            - --configure-cloud-routes=false
+            - --v=5
+            - --cloud-provider=aws
+----
+--
+
+RKE::
++
+--
+. Les conventions de nommage des https://cloud-provider-aws.sigs.k8s.io/prerequisites/[nœuds et autres prérequis] doivent être respectées afin que le fournisseur de cloud puisse trouver l'instance. Les clusters provisionnés par Rancher ne prennent pas en charge la configuration de `providerID`.
++
+[NOTE]
+====
+Si vous utilisez un nommage basé sur l'IP, les nœuds doivent être nommés d'après l'instance suivie du nom de domaine régional (`ip-xxx-xxx-xxx-xxx.ec2.<region>.internal`). Si vous avez un nom de domaine personnalisé défini dans les options DHCP, vous devez définir `--hostname-override` sur `kube-proxy` et `kubelet` pour correspondre à cette convention de nommage.
+====
++
+Pour respecter les conventions de nommage des nœuds, Rancher permet de définir `useInstanceMetadataHostname` lorsque le fournisseur de cloud `External Amazon` est sélectionné. L'activation de `useInstanceMetadataHostname` interrogera le service de métadonnées ec2 et définira `/hostname` comme `hostname-override` pour `kubelet` et `kube-proxy` :
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true
+----
++
+Vous ne devez pas activer `useInstanceMetadataHostname` lorsque vous définissez des valeurs personnalisées pour `hostname-override` pour des clusters personnalisés. Lorsque vous créez un {xref-custom-clusters}[cluster personnalisé], ajoutez `--node-name` à la commande d'enregistrement des nœuds `docker run` pour définir `hostname-override` -- par exemple, `"$(hostname -f)"`. Cela peut être fait manuellement ou en utilisant *Afficher les options avancées* dans l'interface utilisateur de Rancher pour ajouter *Nom du nœud*.
+
+. Sélectionnez le fournisseur de cloud.
++
+Sélectionner *Amazon externe (hors arbre)* définit `--cloud-provider=external` et active `useInstanceMetadataHostname`. Comme mentionné à l'étape 1, activer `useInstanceMetadataHostname` interrogera le service de métadonnées EC2 et définira `http://169.254.169.254/latest/meta-data/hostname` comme `hostname-override` pour `kubelet` et `kube-proxy`.
++
+[NOTE]
+====
+Vous devez désactiver `useInstanceMetadataHostname` lorsque vous définissez un nom de nœud personnalisé pour des clusters personnalisés via `node-name`.
+====
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true/false
+----
++
+Les clusters existants qui utilisent un fournisseur de cloud *Externe* définiront `--cloud-provider=external` pour les composants Kubernetes mais ne définiront pas le nom du nœud.
+
+. Installez le gestionnaire de contrôleur de cloud AWS après que le cluster ait terminé le provisionnement. Notez que le cluster n'est pas provisionné avec succès et que les nœuds sont toujours dans un état `uninitialized` jusqu'à ce que vous déployiez le gestionnaire de contrôleur de cloud. Cela peut être fait manuellement, ou via <<_helm_chart_installation_from_ui,charts Helm dans l'UI>>.
++
+Référez-vous à la documentation officielle AWS en amont pour le https://kubernetes.github.io/cloud-provider-aws[gestionnaire de contrôleur de cloud].
+--
+======
+
+[#_helm_chart_installation_from_cli]
+=== Installation du chart Helm depuis la CLI 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+La documentation officielle en amont pour https://github.com/kubernetes/cloud-provider-aws/tree/master/charts/aws-cloud-controller-manager[l'installation du chart Helm] est disponible sur GitHub.
+
+. Ajoutez le dépôt Helm :
++
+[,shell]
+----
+helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
+helm repo update
+----
+
+. Créez un fichier `values.yaml` avec le contenu suivant pour remplacer le `values.yaml` par défaut{nbsp}:
++
+[,yaml]
+----
+# values.yaml
+hostNetworking: true
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/control-plane
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+args:
+  - --configure-cloud-routes=false
+  - --use-service-account-credentials=true
+  - --v=2
+  - --cloud-provider=aws
+clusterRoleRules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - '*'
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/status
+    verbs:
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services/status
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+     - ''
+    resources:
+      - serviceaccounts
+    verbs:
+    - create
+    - get
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts/token
+    verbs:
+      - create
+----
+
+. Installez le chart Helm{nbsp}:
++
+[,shell]
+----
+helm upgrade --install aws-cloud-controller-manager aws-cloud-controller-manager/aws-cloud-controller-manager --values values.yaml
+----
++
+Vérifiez que le chart Helm a été installé avec succès{nbsp}:
++
+[,shell]
+----
+helm status -n kube-system aws-cloud-controller-manager
+----
+
+. (Optionnel) Vérifiez que la mise à jour du gestionnaire de contrôleur de cloud a réussi :
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
+--
+
+RKE::
++
+--
+La documentation officielle en amont pour https://github.com/kubernetes/cloud-provider-aws/tree/master/charts/aws-cloud-controller-manager[l'installation du chart Helm] est disponible sur GitHub.
+
+. Ajoutez le dépôt Helm :
++
+[,shell]
+----
+helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
+helm repo update
+----
+
+. Créez un fichier `values.yaml` avec le contenu suivant, pour remplacer le `values.yaml` par défaut{nbsp}:
++
+[,yaml]
+----
+# values.yaml
+hostNetworking: true
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+args:
+  - --configure-cloud-routes=false
+  - --use-service-account-credentials=true
+  - --v=2
+  - --cloud-provider=aws
+clusterRoleRules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - '*'
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/status
+    verbs:
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services/status
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+     - ''
+    resources:
+      - serviceaccounts
+    verbs:
+    - create
+    - get
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts/token
+    verbs:
+      - create
+----
+
+. Installez le chart Helm{nbsp}:
++
+[,shell]
+----
+helm upgrade --install aws-cloud-controller-manager -n kube-system aws-cloud-controller-manager/aws-cloud-controller-manager --values values.yaml
+----
++
+Vérifiez que le chart Helm a été installé avec succès{nbsp}:
++
+[,shell]
+----
+helm status -n kube-system aws-cloud-controller-manager
+----
+
+. Si présent, modifiez le Daemonset pour supprimer le sélecteur de nœud par défaut `node-role.kubernetes.io/control-plane: ""`{nbsp}:
++
+[,shell]
+----
+kubectl edit daemonset aws-cloud-controller-manager -n kube-system
+----
+
+. (Optionnel) Vérifiez que la mise à jour du gestionnaire de contrôleurs cloud a réussi :
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
+--
+======
+
+[#_helm_chart_installation_from_ui]
+=== Installation du chart Helm depuis l'interface utilisateur 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. Cliquez sur *☰*, puis sélectionnez le nom du cluster dans la navigation à gauche.
+. Sélectionnez *Applis* > *Dépôts*.
+. Cliquez sur le bouton *Créer*.
+. Entrez `https://kubernetes.github.io/cloud-provider-aws` dans le champ *URL de l'index*.
+. Sélectionnez *Applis* > *Charts* dans la navigation à gauche et installez *aws-cloud-controller-manager*.
+. Sélectionnez l'espace de noms, `kube-system`, et activez *Personnaliser les options Helm avant l'installation*.
+. Ajoutez les arguments de conteneur suivants :
++
+[,yaml]
+----
+  - '--use-service-account-credentials=true'
+  - '--configure-cloud-routes=false'
+----
+
+. Ajoutez `get` à `verbs` pour les ressources `serviceaccounts` dans `clusterRoleRules`. Cela permet au gestionnaire de contrôleurs cloud d'obtenir des comptes de service au démarrage.
++
+[,yaml]
+----
+  - apiGroups:
+      - ''
+    resources:
+      - serviceaccounts
+    verbs:
+      - create
+      - get
+----
+
+. Les nœuds RKE2 provisionnés par Rancher sont marqués `node-role.kubernetes.io/control-plane`. Mettez à jour les tolérances et le sélecteur de nœuds :
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/control-plane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
++
+[NOTE]
+====
+Il existe actuellement un https://github.com/rancher/dashboard/issues/9249[problème connu] où le nodeSelector ne peut pas être mis à jour depuis l'interface Rancher.  Continuez à installer le chart puis modifiez manuellement le Daemonset pour définir le `nodeSelector`{nbsp}:
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
+====
+
+. Installez le chart et confirmez que le Daemonset `aws-cloud-controller-manager` est en cours d'exécution. Vérifiez que `aws-cloud-controller-manager` pods sont en cours d'exécution dans l'espace de noms cible (`kube-system` sauf modification à l'étape 6).
+--
+
+RKE::
++
+--
+. Cliquez sur *☰*, puis sélectionnez le nom du cluster dans la navigation à gauche.
+. Sélectionnez *Applis* > *Dépôts*.
+. Cliquez sur le bouton *Créer*.
+. Entrez `https://kubernetes.github.io/cloud-provider-aws` dans le champ *URL de l'index*.
+. Sélectionnez *Applis* > *Charts* dans la navigation à gauche et installez *aws-cloud-controller-manager*.
+. Sélectionnez l'espace de noms, `kube-system`, et activez *Personnaliser les options Helm avant l'installation*.
+. Ajoutez les arguments de conteneur suivants :
++
+[,yaml]
+----
+  - '--use-service-account-credentials=true'
+  - '--configure-cloud-routes=false'
+----
+
+. Ajoutez `get` à `verbs` pour les ressources `serviceaccounts` dans `clusterRoleRules`. Cela permet au gestionnaire de contrôleurs cloud d'obtenir des comptes de service au démarrage{nbsp}:
++
+[,yaml]
+----
+  - apiGroups:
+      - ''
+    resources:
+      - serviceaccounts
+    verbs:
+      - create
+      - get
+----
+
+. Les nœuds RKE provisionnés par Rancher sont marqués `node-role.kubernetes.io/controlplane`. Mettez à jour les tolérances et le sélecteur de nœuds :
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
++
+[NOTE]
+====
+Il existe actuellement un https://github.com/rancher/dashboard/issues/9249[problème connu] où `nodeSelector` ne peut pas être mis à jour depuis l'interface Rancher.  Continuez à installer le chart puis modifiez manuellement le Daemonset pour définir le `nodeSelector`{nbsp}:
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
+====
+
+. Installez le chart et confirmez que le Daemonset `aws-cloud-controller-manager` se déploie avec succès :
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system aws-cloud-controller-manager
+----
+--
+======

@@ -1,0 +1,173 @@
+= Amazon EKSに{rancher-product-name}をインストールする
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-09
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rancher-on-amazon-eks.adoc 
+:product-path: installation-and-upgrade/hosted-kubernetes/rancher-on-amazon-eks.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-qs-aws-marketplace: xref:installation-and-upgrade/quick-start/deploy-rancher/aws-marketplace.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-qs-aws-marketplace: xref:getting-started/quick-start-guides/deploy-rancher-manager/aws-marketplace.adoc
+endif::[]
+
+このページでは、Amazon EKSクラスターにRancherをインストールする方法を説明します。 AWS Marketplaceを通じて{xref-qs-aws-marketplace}Rancherをインストールすることもできます。
+
+すでにEKS Kubernetesクラスターをお持ちの場合は、<<_5_install_an_ingress,イングレスのインストールに関するステップにスキップしてください。>>次に、{xref-install-rancher}#_install_the_rancher_helm_chart[このページ]の指示に従ってRancher Helmチャートをインストールします。
+
+[#_creating_an_eks_cluster_for_the_rancher_server]
+== Rancherサーバー用のEKSクラスターを作成する
+
+このセクションでは、コマンドラインツールを使用してイングレスを持つEKSクラスターをインストールします。このガイドは、EKS上でRancherを試す際にリソースを少なく使用したい場合に役立つかもしれません。
+
+[NOTE]
+.前提条件:
+====
+
+* すでにAWSアカウントをお持ちである必要があります。
+* ルートAWSアカウントの代わりにIAMユーザーを使用することをお勧めします。AWSコマンドラインインターフェースを設定するには、IAMユーザーのアクセスキーとシークレットキーが必要です。
+* IAMユーザーには、公式の https://eksctl.io/usage/minimum-iam-policies/[eksctlドキュメント]に記載されている最小限のIAMポリシーが必要です。
+====
+
+
+[#_1_prepare_your_workstation]
+=== 1.作業ステーションを準備する
+
+作業ステーションに以下のコマンドラインツールをインストールしてください:
+
+* *AWS CLI v2:*ヘルプが必要な場合は、これらの https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html[インストール手順]を参照してください。
+* *eksctl:*ヘルプが必要な場合は、これらの https://docs.aws.amazon.com/eks/latest/userguide/eksctl.html[インストール手順]を参照してください。
+* *kubectl:*ヘルプが必要な場合は、これらの https://docs.aws.amazon.com/eks/latest/userguide/install-kubectl.html[インストール手順]を参照してください。
+* *helm:*ヘルプが必要な場合は、これらの https://helm.sh/docs/intro/install/[インストール手順]を参照してください。
+
+[#_2_configure_the_aws_cli]
+=== 2.AWS CLIを設定する
+
+AWS CLIを設定するには、次のコマンドを実行します：
+
+----
+aws configure
+----
+
+次の値を入力します：
+
+|===
+| 値 | 説明
+
+| AWSアクセスキーID
+| EKS権限を持つIAMユーザーのアクセスキー資格情報。
+
+| AWSシークレットアクセスキー
+| EKS権限を持つIAMユーザーの秘密鍵資格情報。
+
+| デフォルトのリージョン名
+| クラスターのノードが配置される https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.RegionsAndAvailabilityZones.html#Concepts.RegionsAndAvailabilityZones.Regions[AWSリージョン]。
+
+| デフォルトの出力形式
+| 「`json`.
+|===
+
+[#_3_create_the_eks_cluster]
+=== 3.EKSクラスターを作成する
+
+EKSクラスターを作成するには、次のコマンドを実行します。ご利用のユースケースに適したAWSリージョンを使用してください。Kubernetesのバージョンを選択する際は、最初に https://rancher.com/support-matrix/[サポートマトリックス]を確認して、Rancherのバージョンに対して検証された最高のKubernetesバージョンを見つけてください。
+
+----
+eksctl create cluster \
+  --name rancher-server \
+  --version <VERSION> \
+  --region us-west-2 \
+  --nodegroup-name ranchernodes \
+  --nodes 3 \
+  --nodes-min 1 \
+  --nodes-max 4 \
+  --managed
+----
+
+クラスターはCloudFormationを使用してデプロイされるのに時間がかかります。
+
+[#_4_test_the_cluster]
+=== 4.クラスターをテストする
+
+クラスターをテストするには、次のコマンドを実行します：
+
+----
+eksctl get cluster
+----
+
+結果は次のようになります：
+
+----
+eksctl get cluster
+2021-03-18 15:09:35 [ℹ]  eksctl version 0.40.0
+2021-03-18 15:09:35 [ℹ]  using region us-west-2
+NAME        REGION        EKSCTL CREATED
+rancher-server-cluster        us-west-2    True
+----
+
+[#_5_install_an_ingress]
+=== 5.Ingressをインストールする
+
+クラスターには、Rancherがクラスターの外部からアクセスできるようにするためにIngressが必要です。Ingressをインストールするには、パブリックIPアドレスを割り当てる必要があります。十分なクォータがあることを確認してください。そうでないと、IPアドレスの割り当てに失敗します。パブリックIPアドレスの制限は、サブスクリプションごとに地域レベルで適用されます。AWSが提供するマネージドイングレスコントローラー（ALB）や、Traefikのようなサードパーティのイングレスコントローラーを使用できます。
+
+[WARNING]
+====
+マネージドIngressコントローラーがすでに使用されている場合、TraefikのようなサードパーティのIngressコントローラーをインストールすることは推奨されません。
+====
+
+[WARNING]
+====
+**Ingress-NGINX EOL:**コミュニティの`ingress-nginx`コントローラーは2026年3月にサービス終了となります。このページでは、Rancher環境に推奨される移行パスであるTraefikを使用しています。
+====
+
+Traefikには、ネイティブのIngress NGINXプロバイダーが含まれています。これにより、既存のIngressオブジェクトを再記述することなくNGINXから移行でき、Traefikは`nginx.ingress.kubernetes.io`アノテーションを自動的に解釈します。すでに`ingress-nginx`を使用しているクラスターをアップグレードする場合は、詳細についてはこの https://doc.traefik.io/traefik/migrate/nginx-to-traefik/[ガイド]に従ってください。
+
+Traefikをインストールするには、 https://apps.rancher.io/applications/traefik-proxy[Rancher Prime Application Collection]のTraefikアプリケーションを使用することを強くお勧めします。Rancher Managerと統合するための https://docs.apps.rancher.io/howto-guides/integrate-with-rancher-manager[ドキュメントを確認してください]。
+
+
+[#_6_get_load_balancer_ip]
+=== 6.ロードバランサーIPを取得する
+
+ロードバランサーのアドレスを取得するには、次のコマンドを実行します：
+
+----
+kubectl get service traefik --namespace=traefik
+----
+
+結果は次のようになります：
+
+----
+NAME                       TYPE           CLUSTER-IP     EXTERNAL-IP                                                              PORT(S)
+ AGE
+traefik  LoadBalancer   10.0.116.18    40.31.180.83   80:31229/TCP,443:31050/TCP 27m
+----
+
+`EXTERNAL-IP`を保存します。
+
+[#_7_set_up_dns]
+=== 7.DNSを設定します。
+
+Rancherサーバーへの外部トラフィックは、作成したロードバランサーに向ける必要があります。
+
+保存した外部IPを指すDNSを設定します。このDNSはRancherサーバーのURLとして使用されます。
+
+DNSを設定するための有効な方法は多数あります。ヘルプが必要な場合は、 https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer.html[ELBロードバランサーへのトラフィックのルーティングに関するAWSドキュメント]を参照してください。
+
+[#_8_install_the_rancher_helm_chart]
+=== 8.Rancher Helm チャートをインストールします。
+
+次に、{xref-install-rancher}#_install_the_rancher_helm_chart[このページ]の指示に従って Rancher Helm チャートをインストールします。Helm の指示は、任意の Kubernetes ディストリビューションに Rancher をインストールする際に同じです。
+
+Rancher をインストールする際には、前のステップで得た DNS 名を Rancher サーバーの URL として使用します。それは Helm オプションとして渡すことができます。例えば、DNS 名が `rancher.my.org` の場合、オプション `--set hostname=rancher.my.org` を使用して Helmインストールコマンドを実行できます。
+
+このセットアップの上に Rancher をインストールする際には、Rancher の Ingress リソースで使用する Ingress コントローラーの名前を設定するために、以下の値を Rancher Helm インストールコマンドに渡す必要があります。
+
+----
+--set ingress.ingressClassName=traefik
+----
+
+選択した証明書オプションの Helm インストールコマンドについては、{xref-install-rancher}#_5_install_rancher_with_helm_and_your_chosen_certificate_option[こちら]を参照してください。

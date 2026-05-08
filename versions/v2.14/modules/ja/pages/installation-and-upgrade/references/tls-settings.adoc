@@ -1,0 +1,141 @@
+= TLS設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/installation-references/tls-settings.adoc 
+:product-path: installation-and-upgrade/references/tls-settings.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+endif::[]
+
+デフォルトのTLS設定を変更することは、選択したインストール方法に依存します。
+
+[#_running_rancher_in_a_highly_available_kubernetes_cluster]
+== 高可用性のKubernetesクラスターでRancherを実行する
+
+Rancher管理のKubernetesクラスターをインストールすると、TLSはクラスターのイングレスコントローラーでオフロードされます。TraefikはK3sのデフォルトイングレスであり、RKE2でも使用できます。詳細については、 https://doc.traefik.io/traefik/https/tls/#tls-options[TLSオプション]を参照してください。
+
+[#_running_rancher_in_a_single_docker_container]
+== 単一のDockerコンテナでRancherを実行する
+
+デフォルトのTLS設定は、TLS 1.2および安全なTLS暗号スイートのみを受け入れます。次の環境変数を設定することで、これを変更できます：
+
+|===
+| パラメータ | 説明 | デフォルト | 使用可能なオプション
+
+| `CATTLE_TLS_MIN_VERSION`
+| 最小TLSバージョン
+| `1.2`
+| `1.0`, `1.1`, `1.2`, `1.3`
+
+| `CATTLE_TLS_CIPHERS`
+| 許可されたTLS暗号スイート
+| `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256` +
+`TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384` +
+`TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305` +
+`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` +
+`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384` +
+`TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305`
+| https://golang.org/pkg/crypto/tls/#pkg-constants[Golang TLS定数]を参照してください。
+|===
+
+[#_agent_tls_enforcement]
+== エージェントTLS強制
+
+`agent-tls-mode`設定は、Rancherのエージェント（`cluster-agent`、`fleet-agent`、および`system-agent`）がRancherの証明書を検証する方法を制御します。
+
+値が`strict`に設定されている場合、Rancherのエージェントは`cacerts`設定に含まれる認証局によって生成された証明書のみを信頼します。
+値が`system-store`に設定されている場合、Rancherのエージェントは、オペレーティングシステムの信頼ストアに含まれる公開証明書機関によって生成された任意の証明書を信頼し、Let's Encryptなどの機関によって署名された証明書も含まれます。これはセキュリティリスクとなる可能性があります。なぜなら、ユーザーの制御外にあるこれらの外部機関によって生成された任意の証明書が、この状態では有効と見なされるからです。
+
+`strict`オプションはより高いセキュリティレベルを有効にしますが、Rancherがエージェントに表示される証明書を生成したCAにアクセスすることを要求します。特定の証明書設定（特に外部証明書）の場合、これは自動ではなく、追加の設定が必要です。どのシナリオが追加の設定を必要とするかについての詳細は、{xref-install-rancher}#_3_choose_your_ssl_configuration[インストールガイド]を参照してください。
+
+Rancher v2.9.0以降では、この設定は新しいインストールでデフォルトで`strict`に設定されます。以前のRancherバージョンからインストールまたはアップグレードするユーザーの場合、`system-store`に設定されています。
+
+[#_preparing_for_the_setting_change]
+=== 設定変更の準備
+
+各クラスターには、ステータスフィールドに`AgentTlsStrictCheck`という条件が含まれています。`AgentTlsStrictCheck`が`"True"`に設定されている場合、これはクラスターのエージェントが`strict`モードで操作する準備ができていることを示します。Rancher UIまたは以下のようなkubectlコマンドを使用して、各クラスターが準備できているか手動で確認できます。
+
+[,bash]
+----
+## the below command skips ouputs $CLUSTER_NAME,$STATUS for all non-local clusters
+kubectl get cluster.management.cattle.io -o jsonpath='{range .items[?(@.metadata.name!="local")]}{.metadata.name},{.status.conditions[?(@.type=="AgentTlsStrictCheck")].status}{"\n"}{end}'
+----
+
+[#_changing_the_setting]
+=== 設定の変更
+
+Rancher UIまたは`agentTLSMode` {xref-helm-chart-options}[helmチャートオプション]を使用して設定を変更できます。
+
+[NOTE]
+====
+
+Helmチャートを通じて値を指定する場合、Helmでのみ値を変更できます。
+====
+
+
+[CAUTION]
+====
+
+証明書のセットアップに応じて、証明書を署名した認証局をアップロードするなど、追加のアクションが必要になる場合があります。設定を変更する前に、{xref-install-rancher}#_3_choose_your_ssl_configuration[インストールガイド]を確認して、セットアップに適用される追加の要件があるかどうかを確認してください。
+====
+
+
+UIを通じて設定の値を変更するには、*グローバル設定*ページに移動し、ページの下部近くにある`agent-tls-mode`設定を見つけます。UIを通じて設定を変更すると、Rancherは最初にすべてのダウンストリームクラスターが条件`AgentTlsStrictCheck`を`"True"`に設定していることを確認してからリクエストを許可します。これにより、証明書の不一致による障害が防止されます。
+
+[#_overriding_the_setting_validation_checks]
+==== 設定の検証チェックをオーバーライドする
+
+場合によっては、すべてのエージェントが新しいTLS設定を受け入れられることを確認するチェックをオーバーライドしたいことがあります。
+
+[CAUTION]
+====
+
+Rancherは、ダウンストリームクラスターのすべてのステータスを確認して、障害を防ぎます。このチェックをオーバーライドすることは推奨されず、十分な注意を払って行うべきです。
+====
+
+
+. 管理者として、ローカルクラスタのためのkubeconfigを生成します。以下の例では、これが`local_kubeconfig.yaml`ファイルに保存されました。
+. 現在の設定を取得し、`setting.yaml`に保存します：
++
+[,bash]
+----
+kubectl get setting agent-tls-mode -o yaml --kubeconfig=local_kubeconfig.yaml > setting.yaml
+----
+
+. `setting.yaml`ファイルを更新し、`value`を`strict`に置き換えます。`cattle.io/force: "true"` アノテーションを追加すると、クラスター条件チェックが上書きされ、慎重に行うべきです。
+
+[CAUTION]
+====
+
+任意の値（例えば `"false"` を含む）を持つ `cattle.io/force` アノテーションを含めると、クラスター条件チェックが上書きされます。
+====
+
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+customized: false
+default: strict
+kind: Setting
+metadata:
+  name: agent-tls-mode
+  annotations:
+    cattle.io/force: "true"
+source: ""
+value: strict
+----
+
+. 設定の新しいバージョンを適用してください。
++
+[,bash]
+----
+kubectl apply -f setting.yaml --kubeconfig=local_kubeconfig.yaml
+----

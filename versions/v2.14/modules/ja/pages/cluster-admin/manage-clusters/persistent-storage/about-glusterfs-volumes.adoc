@@ -1,0 +1,52 @@
+= GlusterFS Volumes
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/about-glusterfs-volumes.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/about-glusterfs-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+[NOTE]
+====
+
+このセクションは、{xref-launch-k8s-with-rancher}[RKEクラスター]にのみ適用されます。
+====
+
+
+GlusterFSボリューム上にデータを保存するクラスターでは、`kubelet`の再起動後にポッドがボリュームをマウントできなくなることがあります。`kubelet`のログには、次の内容が表示されます: `transport endpoint is not connected`。これを防ぐために、クラスターを構成して`systemd-run`バイナリを`kubelet`コンテナにマウントすることができます。クラスターの構成を変更する前に、2つの要件があります。
+
+* ノードには`systemd-run`バイナリがインストールされている必要があります（これは各クラスターのノードでコマンド`which systemd-run`を使用して確認できます）。
+* `systemd-run`バイナリは、hyperkubeイメージが基づいているDebian OSと互換性がある必要があります（これは各クラスターのノードで、次のコマンドを使用して確認できます。イメージタグは、使用したいKubernetesのバージョンに置き換えてください。）
+
+----
+docker run -v /usr/bin/systemd-run:/usr/bin/systemd-run -v /usr/lib/x86_64-linux-gnu/libcrypto.so.3:/usr/lib/x86_64-linux-gnu/libcrypto.so.3 -v /lib/systemd/libsystemd-shared-249.so:/lib/systemd/libsystemd-shared-249.so --entrypoint /usr/bin/systemd-run rancher/hyperkube:v1.26.14-rancher1 --version
+----
+
+[CAUTION]
+====
+
+`systemd-run`バイナリをマウントするためにKubernetes YAMLを更新する前に、クラスターのノードに`systemd`パッケージがインストールされていることを確認してください。このパッケージがKubernetes YAMLでバインドマウントが作成される_前_にインストールされていない場合、Dockerは各ノードにディレクトリとファイルを自動的に作成し、パッケージのインストールが成功することを許可しません。
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/usr/bin/systemd-run:/usr/bin/systemd-run"
+      - "/usr/lib/x86_64-linux-gnu/libcrypto.so.3:/usr/lib/x86_64-linux-gnu/libcrypto.so.3"
+      - "/lib/systemd/libsystemd-shared-249.so:/lib/systemd/libsystemd-shared-249.so"
+----
+
+クラスターのプロビジョニングが完了した後、`kubelet`コンテナのログを確認して、次のログラインを探すことで機能が有効になっているかどうかを確認できます:
+
+----
+Detected OS with systemd
+----

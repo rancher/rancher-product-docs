@@ -1,0 +1,186 @@
+= Configura Rancher como un proveedor OIDC.
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/configure-oidc-provider.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-oidc-provider.adoc
+
+Rancher puede actuar como un proveedor de identidad (IdP) OpenID Connect (OIDC) para otras aplicaciones. Esto te permite utilizar la autenticación centralizada de Rancher y el control de acceso basado en funciones (RBAC) para gestionar el acceso a aplicaciones externas de terceros. Esto se puede utilizar para habilitar el inicio de sesión único (SSO) en los componentes de Rancher. Por ejemplo, consulta la https://documentation.suse.com/cloudnative/suse-observability/latest/en/setup/security/authentication/oidc.html[documentación] para configurar el proveedor OIDC para SUSE Observability.
+
+[NOTE]
+====
+Dado que OIDC es un superconjunto de OAuth2, puedes utilizar Rancher como un servidor OAuth2 sin requerir OIDC completo. Esto asegura que los clientes que utilizan el aspecto OAuth2, como el servidor `rancher-ai-mcp`, estén completamente soportados.
+====
+
+El proveedor OIDC de Rancher emite tokens de acceso para OAuth2 y OIDC que se pueden utilizar como tokens Bearer estándar (según RFC6750) para autenticarte con Rancher. Anteriormente, solo se podía utilizar un token de ID para suplantar y autenticar a un usuario.
+
+El proveedor OIDC se puede habilitar con la bandera de característica `oidc-provider`. Cuando esta bandera está activada, los siguientes puntos finales están disponibles:
+
+- `https://{rancher-url}/oidc/authorize`: Este punto final inicia el flujo de autenticación. Si un usuario ya ha iniciado sesión en Rancher, devuelve un código de autorización. De lo contrario, redirige al usuario a la página de inicio de sesión de Rancher. Los códigos de autorización y la información de solicitud relacionada se almacenan de forma segura en secretos de sesión. Los códigos son de un solo uso y caducan después de 10 minutos.
+
+- `https://{rancher-url}/oidc/token`: Este punto final intercambia un código de autorización por un `id_token`, `access_token` y `refresh_token`.
+
+- `https://{rancher-url}/oidc/.well-known/openid-configuration`: Este punto final devuelve un documento JSON que contiene la configuración del proveedor OIDC, incluidos los URL de los puntos finales, los ámbitos soportados, las reclamaciones y otros detalles relevantes.
+
+- `https://{rancher-url}/oidc/userinfo`: Este punto final proporciona información sobre el usuario autenticado.
+
+El proveedor OIDC admite el flujo de código de autenticación OIDC con PKCE.
+
+[#_configuring_an_oidc_client]
+== Configurando un cliente OIDC
+
+Una `OIDCClient` representa una aplicación externa que se autentica contra Rancher. Para registrar una aplicación cliente, debes crear un `OIDCClient` recurso personalizado.
+
+[#_configuration_fields]
+=== Campos de configuración
+
+Al definir tu `OIDCClient` manifiesto, debes incluir campos específicos para pasar la validación de CRD:
+
+- `spec.tokenExpirationSeconds`: Este campo es estrictamente necesario y causará un error de validación si se omite. Define la duración del token de acceso.
+- `spec.refreshTokenExpirationSeconds`: Este campo también es estrictamente necesario y causará un error de validación si se omite. Define la duración del token de actualización.
+- `scopes` (Opcional): Este campo te permite restringir los ámbitos que un cliente puede solicitar. Si no se configura explícitamente, los ámbitos permitidos se establecerán por defecto en `openid`, `profile` y `offline_access`.
+
+[#_example_oidc_client_manifest]
+=== Ejemplo de manifiesto de cliente OIDC
+
+A continuación se muestra un ejemplo de configuración de `OIDCClient`:
+
+[NOTE]
+====
+Debes incluir los campos de expiración para aplicar correctamente el recurso.
+====
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: OIDCClient
+metadata:
+  name: example-client
+spec:
+  description: "Example OIDC Client"
+  redirectUris:
+    - "https://example-app.com/callback"
+  tokenExpirationSeconds: 3600
+  refreshTokenExpirationSeconds: 86400
+  # scopes:
+  #   - openid
+  #   - profile
+  #   - offline_access
+----
+
+Guarda esta configuración en un archivo (por ejemplo, `oidcclient.yaml`) y aplícala a tu clúster local de Rancher:
+
+[,sh]
+----
+kubectl apply -f oidcclient.yaml
+----
+
+Rancher genera automáticamente un ID de cliente y un secreto de cliente para cada `OIDCClient`. Una vez que se crea el recurso, Rancher completa el campo de estado con el ID de cliente:
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: OIDCClient
+metadata:
+  name: oidc-client-test
+spec:
+  tokenExpirationSeconds: 600 # expiration of the id_token and access_token
+  refreshTokenExpirationSeconds: 3600 # expiration of the refresh_token
+  redirectURIs:
+    - "https://myredirecturl.com" # replace with your redirect url
+  scopes: # Optional: Restricts the scopes the client can request. Defaults to openid, profile, and offline_access if omitted.
+    - openid
+    - profile
+    - offline_access
+status:
+  clientID: client-xxx
+  clientSecrets:
+    client-secret-1:
+      createdAt: "xxx"
+      lastFiveCharacters: xxx
+----
+
+Rancher genera automáticamente un `Secret` de Kubernetes en el espacio de nombres `cattle-oidc-client-secrets` para cada recurso `OIDCClient`. El nombre del secreto coincide con el `OIDCClient` ID de cliente. Inicialmente, el `Secret` contiene un único secreto de cliente.
+
+Para recuperar el secreto de cliente:
+
+[,bash]
+----
+kubectl get secret client-xxx -n cattle-oidc-client-secrets -o jsonpath="{.data.client-secret-1}" | base64 -d
+----
+
+Salida:
+
+[,bash]
+----
+secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+----
+
+Ahora puedes utilizar este ID de cliente y secreto de cliente en tu aplicación cliente OIDC.
+
+[#_managing_client_secrets]
+==== Gestión de secretos de cliente
+
+Puedes gestionar múltiples secretos de cliente por `OIDCClient`. Utiliza anotaciones en el recurso `OIDCClient` para realizar operaciones con secretos:
+
+- Creación: Agregar la anotación `cattle.io/oidc-client-secret-create: true` desencadena la creación de un nuevo secreto de cliente.
+- Eliminación: Agregar la anotación `cattle.io/oidc-client-secret-remove:client-secret-1` elimina los secretos de cliente especificados.
+- Regeneración: Agregar la anotación `cattle.io/oidc-client-secret-regenerate:client-secret-1` regenera los secretos de cliente especificados.
+
+[#_rancher_ui]
+=== Interfaz de Rancher
+
+Crear un OIDCClient:
+
+. En la esquina superior izquierda, haz clic en **☰ > Usuarios y Autenticación**.
+. En el menú de navegación de la izquierda, haz clic en **Aplicaciones OIDC**.
+. Haz clic en **Añadir Aplicación**. Completa el formulario **Crear Aplicación OIDC**.
+. Haz clic en **Añadir Aplicación**.
+
+[#_managing_client_secrets_1]
+==== Gestión de secretos de cliente
+
+En la página de la Aplicación OIDC:
+
+- Creación: Haz clic en **Añadir nuevo secreto**.
+- Eliminación: Haz clic en **⋮ > Eliminar**.
+- Regeneración: Haz clic en **⋮ > Regenerar**.
+
+[#_signing_key]
+== Clave de firma
+
+Rancher crea un par de claves predeterminado para firmar los tokens `id_token`, `access_token` y `refresh_token` en un `Secret` llamado `oidc-signing-key` en el espacio de nombres `cattle-system`. Se utilizará una sola clave para firmar, pero se pueden devolver múltiples claves públicas en el punto final JWKS para evitar interrupciones al realizar una rotación de claves.
+
+[#_rotation_without_disruption]
+=== Rotación sin interrupciones
+
+Para crear un nuevo par de claves para firmar, necesitas crear manualmente un nuevo par de claves y añadirlo al `oidc-signing-key` `Secret`.
+
+Ejemplo:
+
+[,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+ name: oidc-signing-key
+type: Opaque
+data:
+ key2.pem: <base64-encoded-new-private-key>
+ key1.pub: <base64-encoded-old-public-key>
+ key2.pub: <base64-encoded-new-public-key>
+----
+
+Rancher firmará los tokens utilizando `key2.pem`, mientras que el punto final JWKS servirá tanto `key1.pub` como `key2.pub`. Esto asegura una rotación de claves fluida de `key1` a `key2` sin interrumpir la verificación de tokens existentes. Ten en cuenta que solo se puede almacenar una clave privada (.pem) en el secreto a la vez, y cada par de claves debe compartir el mismo nombre base, diferenciándose solo por su sufijo: .pem para la clave privada y .pub para la clave pública.
+
+[#_rotation_with_disruption]
+=== Rotación con interrupciones
+
+Eliminar el `oidc-signing-key` `Secret` hará que Rancher regenere la clave de firma en el próximo reinicio.
+
+[WARNING]
+====
+Esto invalidará todos los `id_token`, `access_token` y `refresh_token` tokens emitidos anteriormente, haciéndolos inutilizables.
+====

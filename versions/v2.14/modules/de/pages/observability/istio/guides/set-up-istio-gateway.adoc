@@ -1,0 +1,173 @@
+= Richten Sie das Istio-Gateway ein.
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-istio-gateway.adoc 
+:product-path: observability/istio/guides/set-up-istio-gateway.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-traffic-management-setup: xref:observability/istio/guides/set-up-traffic-management.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-traffic-management-setup: xref:how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] ist seit Rancher v2.12.0 ausgelaufen; wenden Sie sich an die https://apps.rancher.io[SUSE Application Collection] Version von Istio für verbesserte Sicherheit (in SUSE Rancher Prime-Abonnements enthalten).
+Detaillierte Informationen finden Sie in https://forums.suse.com/t/deprecation-of-rancher-istio/45043[dieser Ankündigung].
+====
+
+Das Gateway zu jedem Cluster kann seinen eigenen Port oder Load-Balancer haben, der nicht mit einem Service-Mesh verbunden ist. Standardmäßig hat jeder von Rancher bereitgestellte Cluster einen NGINX-Ingress-Controller, der den Datenverkehr in den Cluster ermöglicht.
+
+Sie können den Nginx-Ingress-Controller verwenden, unabhängig davon, ob Istio installiert ist oder nicht. Wenn dies das einzige Gateway zu Ihrem Cluster ist, kann Istio den Datenverkehr von Dienst zu Dienst leiten, aber Istio kann keinen Datenverkehr von außerhalb des Clusters empfangen.
+
+Damit Istio externen Datenverkehr empfangen kann, müssen Sie das Istio-Gateway aktivieren, das als Nord-Süd-Proxy für externen Datenverkehr fungiert. Wenn Sie das Istio-Gateway aktivieren, hat Ihr Cluster zwei Ingresses.
+
+Sie müssen auch ein Kubernetes-Gateway für Ihre Dienste einrichten. Diese Kubernetes-Ressource verweist auf die Implementierung des Ingress-Gateways von Istio in Ihrem Cluster.
+
+Sie können den Datenverkehr in das Service-Mesh mit einem Load-Balancer leiten oder das NodePort-Gateway von Istio verwenden. In diesem Abschnitt wird beschrieben, wie Sie das NodePort-Gateway einrichten.
+
+Für weitere Informationen zum Istio-Gateway lesen Sie die https://istio.io/docs/reference/config/networking/v1alpha3/gateway/[Istio-Dokumentation].
+
+image::istio-ingress.svg[In einem Istio-aktivierten Cluster, you can have two Ingresses: the default Nginx Ingress, and the default Istio controller.]
+
+[#_enable_an_istio_gateway]
+== Aktivieren Sie ein Istio-Gateway
+
+Das Ingress-Gateway ist ein Kubernetes-Dienst, der in Ihrem Cluster bereitgestellt wird. Das Istio-Gateway ermöglicht umfangreichere Anpassungen und Flexibilität.
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, den Sie erstellt haben, und klicken Sie auf *Erforschen*.
+. Klicken Sie in der linken Navigationsleiste auf menu:Istio[Gateways].
+. Klicken Sie auf *Erstellen aus YAML*.
+. Fügen Sie Ihre Istio-Gateway-YAML ein oder *Aus Datei lesen*.
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Das Gateway ist bereitgestellt und wird nun den Datenverkehr mit angewendeten Regeln leiten.
+
+[#_example_istio_gateway]
+== Beispiel Istio-Gateway
+
+Wir fügen die BookInfo-App-Implementierungen in Dienste ein, wenn wir das Workloads-Beispiel durchgehen. Als Nächstes fügen wir ein Istio-Gateway hinzu, damit die App von außerhalb Ihres Clusters zugänglich ist.
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, den Sie erstellt haben, und klicken Sie auf *Erforschen*.
+. Klicken Sie in der linken Navigationsleiste auf menu:Istio[Gateways].
+. Klicken Sie auf *Erstellen aus YAML*.
+. Kopieren Sie die unten bereitgestellte Gateway-YAML und fügen Sie sie ein.
+. Klicken Sie auf *Erstellen*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+----
+
+Um den VirtualService bereitzustellen, der das Traffic-Routing für das Gateway übernimmt:
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, den Sie erstellt haben, und klicken Sie auf *Erforschen*.
+. Klicken Sie in der linken Navigationsleiste auf menu:Istio[VirtualServices].
+. Kopieren Sie die unten bereitgestellte VirtualService-YAML und fügen Sie sie ein.
+. Klicken Sie auf *Erstellen*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: bookinfo
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - bookinfo-gateway
+  http:
+  - match:
+    - uri:
+        exact: /productpage
+    - uri:
+        prefix: /static
+    - uri:
+        exact: /login
+    - uri:
+        exact: /logout
+    - uri:
+        prefix: /api/v1/products
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+----
+
+*Ergebnis:* Sie haben Ihre Gateway-Ressource so konfiguriert, dass Istio Datenverkehr von außerhalb des Clusters empfangen kann.
+
+Bestätigen Sie, dass die Ressource existiert, indem Sie Folgendes ausführen:
+
+----
+kubectl get gateway -A
+----
+
+Das Ergebnis sollte etwa so aussehen:
+
+----
+NAME               AGE
+bookinfo-gateway   64m
+----
+
+[#_access_the_productpage_service_from_a_web_browser]
+=== Greifen Sie über einen Webbrowser auf den ProductPage-Dienst zu
+
+Um zu testen und zu sehen, ob die BookInfo-App korrekt bereitgestellt wurde, kann die App in einem Webbrowser unter Verwendung der Istio-Controller-IP und des Ports, kombiniert mit dem in Ihrer Kubernetes-Gateway-Ressource angegebenen Anforderungsnamen, angezeigt werden:
+
+`\http://<IP of Istio controller>:<Port of istio controller>/productpage`
+
+Um die URL und den Port des Ingress-Gateways zu erhalten,
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, den Sie erstellt haben, und klicken Sie auf *Erforschen*.
+. Klicken Sie in der linken Navigationsleiste auf *Workload*.
+. Scrollen Sie nach unten zum `istio-system` Namespace.
+. Innerhalb von `istio-system` gibt es eine Arbeitslast mit dem Namen `istio-ingressgateway`. Unter dem Namen dieser Arbeitslast sollten Sie Links sehen, wie z. B. `80/tcp`.
+. Klicken Sie auf einen dieser Links. Dies sollte Ihnen die URL des Ingress-Gateways in Ihrem Webbrowser anzeigen. Fügen Sie `/productpage` zur URL hinzu.
+
+*Ergebnis:* Sie sollten die BookInfo-App im Webbrowser sehen.
+
+Für Hilfe beim Überprüfen der Istio-Controller-URL und -Ports versuchen Sie die Befehle in der https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#determining-the-ingress-ip-and-ports[Istio-Dokumentation.]
+
+[#_troubleshooting]
+== Fehlerbehebung
+
+Die https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#troubleshooting[offizielle Istio-Dokumentation] schlägt `kubectl` Befehle vor, um den richtigen Ingress-Host und den Ingress-Port für externe Anfragen zu überprüfen.
+
+[#_confirming_that_the_kubernetes_gateway_matches_istios_ingress_controller]
+=== Bestätigung, dass das Kubernetes-Gateway mit dem Ingress-Controller von Istio übereinstimmt.
+
+Sie können die Schritte in diesem Abschnitt ausprobieren, um sicherzustellen, dass das Kubernetes-Gateway ordnungsgemäß konfiguriert ist.
+
+In der Gateway-Ressource bezieht sich der Selektor auf den standardmäßigen Ingress-Controller von Istio anhand seines Labels, wobei der Schlüssel `istio` und der Wert `ingressgateway` lautet.  Um sicherzustellen, dass das Label für das Gateway geeignet ist, gehen Sie wie folgt vor:
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, den Sie erstellt haben, und klicken Sie auf *Erforschen*.
+. Klicken Sie in der linken Navigationsleiste auf *Workload*.
+. Scrollen Sie nach unten zum `istio-system` Namespace.
+. Innerhalb von `istio-system` gibt es eine Arbeitslast mit dem Namen `istio-ingressgateway`. Klicken Sie auf den Namen dieser Arbeitslast und gehen Sie zum Abschnitt *Labels und Annotationen*. Sie sollten sehen, dass es den Schlüssel `istio` und den Wert `ingressgateway` hat. Dies bestätigt, dass der Selektor in der Gateway-Ressource mit dem standardmäßigen Ingress-Controller von Istio übereinstimmt.
+
+[#__xref_istio_traffic_management_setup_next_set_up_istios_components_for_traffic_management]
+=== {xref-istio-traffic-management-setup}[Weiter: Richten Sie die Istio-Komponenten für das Verkehrsmanagement ein]

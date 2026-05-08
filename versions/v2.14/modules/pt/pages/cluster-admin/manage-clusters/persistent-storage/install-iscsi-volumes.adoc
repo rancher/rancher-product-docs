@@ -1,0 +1,80 @@
+= Volumes iSCSI
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: como-fazer-guias/novos-guias-de-usuário/gerenciar-clusters/criar-armazenamento-persistente-kubernetes/gerenciar-armazenamento-persistente/instalar-volumes-iscsi.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/install-iscsi-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+Em {xref-launch-k8s-with-rancher}[Clusters Kubernetes Lançados pelo Rancher] que armazenam dados em volumes iSCSI, você pode enfrentar um problema onde os kubelets falham ao se conectar automaticamente com os volumes iSCSI. Essa falha é provavelmente devido a um problema de incompatibilidade envolvendo a ferramenta iniciadora iSCSI. Você pode resolver esse problema instalando a ferramenta iniciadora iSCSI em cada um dos nós do seu cluster.
+
+Os clusters Kubernetes Lançados pelo Rancher que armazenam dados em volumes iSCSI utilizam a http://www.open-iscsi.com/[ferramenta iniciadora iSCSI], que está embutida na imagem Docker `rancher/hyperkube` do kubelet. De cada kubelet (ou seja, o _iniciador_), a ferramenta descobre e inicia sessões com um volume iSCSI (ou seja, o _alvo_). No entanto, em algumas instâncias, as versões da ferramenta iniciadora iSCSI instaladas no iniciador e no alvo podem não coincidir, resultando em uma falha de conexão.
+
+Se você encontrar esse problema, pode contorná-lo instalando a ferramenta iniciadora em cada nó do seu cluster. Você pode instalar a ferramenta iniciadora iSCSI fazendo login nos nós do seu cluster e digitando um dos seguintes comandos:
+
+|===
+| plataforma | Nome do pacote | Comando de instalação
+
+| Ubuntu/Debian
+| `open-iscsi`
+| `sudo apt install open-iscsi`
+
+| RHEL
+| `iscsi-initiator-utils`
+| `yum install iscsi-initiator-utils -y`
+|===
+
+Após instalar a ferramenta iniciadora em seus nós, edite o YAML do seu cluster, ajustando a configuração do kubelet para montar o binário iSCSI e a configuração, conforme mostrado no exemplo abaixo.
+
+[NOTE]
+.Notes
+====
+
+* Antes de atualizar seu YAML do Kubernetes para montar o binário iSCSI e a configuração, certifique-se de que o pacote `open-iscsi` (deb) ou `iscsi-initiator-utils` (yum) esteja instalado em seus nós do cluster. Se esse pacote não estiver instalado _antes_ que as montagens bind sejam criadas no YAML do Kubernetes, o Docker criará automaticamente os diretórios e arquivos em cada nó e não permitirá que a instalação do pacote seja bem-sucedida.
+* O exemplo de YAML abaixo não se aplica ao K3s, mas apenas aos clusters RKE. Como o kubelet do K3s não é executado em um contêiner, adicionar montagens bind extras não é necessário. No entanto, todas as ferramentas iSCSI ainda devem ser instaladas em seus nós K3s.
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+----
+
+Se você estiver usando RHEL 7.9, precisa montar o arquivo `/usr/lib64/libcrypto.so.10` conforme mostrado no exemplo abaixo.
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.10:/usr/lib/libcrypto.so.10"
+----
+
+Se você estiver usando RHEL 8.6, precisa montar o arquivo `/usr/lib64/libcrypto.so.1.1` conforme mostrado no exemplo abaixo.
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.1.1:/usr/lib/libcrypto.so.1.1"
+----
+
+[TIP]
+====
+
+Para verificar se o iscsiadm está funcionando corretamente, você pode executar o comando `docker exec kubelet iscsiadm --version` em qualquer nó.
+====
+

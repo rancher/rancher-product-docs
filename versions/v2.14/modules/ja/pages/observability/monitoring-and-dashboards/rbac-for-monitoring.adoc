@@ -1,0 +1,375 @@
+= ロール（役割）ベースのアクセス制御
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc 
+:product-path: observability/monitoring-and-dashboards/rbac-for-monitoring.adoc
+
+このセクションでは、Rancher MonitoringのRBACに関する要件について説明します。
+
+[#_cluster_admins]
+== クラスター管理者
+
+デフォルトでは、クラスター管理者`ClusterRole`のみが次のことを行うことができます。
+
+* クラスターに`rancher-monitoring`アプリをインストールし、チャートのデプロイメントに関連するすべての設定を行います。
+ ** 例えば、デフォルトのダッシュボードが作成されるか、メトリクスを収集するためにクラスターにデプロイされるエクスポーターが何であるかなどです。
+* Prometheus CRを介してクラスター内のPrometheusデプロイメントを作成/変更/削除します。
+* Alertmanager CRを介してクラスター内のAlertmanagerデプロイメントを作成/変更/削除します。
+* 適切なネームスペースにConfigMapを作成することで、新しいGrafanaダッシュボードまたはデータソースを永続化します。
+* 特定のPrometheusメトリクスを`cattle-monitoring-system`ネームスペース内のSecretを介してk8sカスタムメトリクスAPIに公開します。
+
+[#_users_with_kubernetes_clusterrole_based_permissions]
+== Kubernetes ClusterRoleベースの権限を持つユーザー
+
+`rancher-monitoring`チャートは、以下の3つの`ClusterRoles`をインストールします。デフォルトでは、これらは対応するk8s `ClusterRoles`に集約されます：
+
+|===
+| ClusterRole | デフォルトのK8s ClusterRoleに集約
+
+| `monitoring-admin`
+| `admin`
+
+| `monitoring-edit`
+| `edit`
+
+| `monitoring-view`
+| `表示 `
+|===
+
+これらの`ClusterRoles`は、実行可能なアクションに基づいて、モニタリングCRDへの異なるレベルのアクセスを提供します：
+
+|===
+| CRD（monitoring.coreos.com） | 管理者 | 次のファイルを編集します。 | 表示
+
+| <ul><li>``prometheuses``</li><li>``alertmanagers``</li></ul>
+| 取得、リスト、監視
+| 取得、リスト、監視
+| 取得、リスト、監視
+
+| <ul><li>``servicemonitors``</li><li>``podmonitors``</li><li>``prometheusrules``</li></ul>
+| *
+| *
+| 取得、リスト、監視
+|===
+
+高レベルでは、以下の権限がデフォルトで割り当てられます。
+
+[#_users_with_kubernetes_admin_edit_permissions]
+=== Kubernetes管理者/編集権限を持つユーザー
+
+クラスター管理者、管理者、または編集 `ClusterRole` の権限を持つ者のみが次のことを行うことができます：
+
+* ServiceMonitor および PodMonitor CR を介して Prometheus デプロイメントのスクレイプ設定を変更する。
+* PrometheusRules CR を介して Prometheus デプロイメントのアラート/記録ルールを変更する。
+
+[#_users_with_kubernetes_view_permissions]
+=== Kubernetes ビュー権限を持つユーザー
+
+Kubernetes `ClusterRole` を持つ者のみが次のことを行うことができます：
+
+* クラスター内にデプロイされた Prometheus の構成を表示する。
+* クラスター内にデプロイされた Alertmanager の構成を表示する。
+* ServiceMonitor および PodMonitor CR を介して Prometheus デプロイメントのスクレイプ設定を表示する。
+* PrometheusRules CR を介して Prometheus デプロイメントのアラート/記録ルールを表示する。
+
+[#_additional_monitoring_roles]
+=== 追加の監視ロール
+
+監視は、デフォルトではユーザーに割り当てられていない追加の`Roles`をクラスター内に作成します。それを参照する `RoleBinding` をデプロイすることで、ネームスペースにバインドできます。Rancher を介さずに `RoleBinding` で `kubectl` を定義するには、<<_assigning_roles_and_clusterroles_with_kubectl,こちら>> をクリックしてください。
+
+管理者は、ユーザーに対してより細かいアクセスを提供するためにこれらのロールを使用するべきです：
+
+|===
+| Role | 目的
+
+| monitoring-config-admin
+| 管理者がユーザーに対して、cattle-monitoring-system ネームスペース内の Secrets および ConfigMaps を表示/変更できるようにロールを割り当てることを許可します。このネームスペース内の Secrets / ConfigMaps を変更すると、ユーザーがクラスターの Alertmanager 構成、Prometheus Adapter 構成、追加の Grafana データソース、TLS シークレットなどを変更できる可能性があります。
+
+| monitoring-config-edit
+| 管理者がユーザーに対して、cattle-monitoring-system ネームスペース内の Secrets および ConfigMaps を表示/変更できるようにロールを割り当てることを許可します。このネームスペース内の Secrets / ConfigMaps を変更すると、ユーザーがクラスターの Alertmanager 構成、Prometheus Adapter 構成、追加の Grafana データソース、TLS シークレットなどを変更できる可能性があります。
+
+| monitoring-config-view
+| 管理者がユーザーに対して、cattle-monitoring-system ネームスペース内の Secrets および ConfigMaps を表示できるようにロールを割り当てることを許可します。このネームスペース内の Secrets / ConfigMaps を表示すると、ユーザーがクラスターの Alertmanager 構成、Prometheus Adapter 構成、追加の Grafana データソース、TLS シークレットなどを観察できる可能性があります。
+
+| monitoring-dashboard-admin
+| 管理者がユーザーに対して、cattle-dashboards ネームスペース内の ConfigMaps を編集/表示できるようにロールを割り当てることを許可します。このネームスペース内の ConfigMaps は、クラスターに永続化される Grafana ダッシュボードに対応します。
+
+| monitoring-dashboard-edit
+| 管理者がユーザーに対して、cattle-dashboards ネームスペース内の ConfigMaps を編集/表示できるようにロールを割り当てることを許可します。このネームスペース内の ConfigMaps は、クラスターに永続化される Grafana ダッシュボードに対応します。
+
+| monitoring-dashboard-view
+| 管理者がユーザーにロールを割り当て、cattle-dashboards ネームスペース内の ConfigMaps を表示できるようにします。このネームスペース内の ConfigMaps は、クラスターに永続化される Grafana ダッシュボードに対応します。
+|===
+
+[#_assigning_monitoring_roles_through_custom_roles]
+=== カスタムロールを通じたモニタリングロールの割り当て
+
+管理者は、Rancher UIで管理、編集、モニタリングの表示のためのカスタムロールを割り当てることができます。これらの「ロール」は、モニタリングアプリがインストールされるとデフォルトで作成されます。さらに、これらのロールは、対応するKubernetesロール（管理、編集、表示`ClusterRoles`）にもデプロイされます。
+
+[NOTE]
+.重要
+====
+
+ユーザーがクラスターに追加されるとき、UIは`monitoring-admin`、`monitoring-edit`、および`monitoring-view`のオプションを提供しません。これらのモニタリングロールは、Project OwnerおよびProject Monitoring Viewロールを継承するカスタムロールを手動で作成することによってのみ割り当てることができます。
+====
+
+
+. カスタムロールを作成します：
+
+....
+1.1 Click **☰ > Users & Authentication > Roles**.
+
+1.2 Select the appropriate tab, e.g., **Cluster** role. Then click **Create Cluster Role**.
+
+1.3 In the **Name** field, create a custom role such as `View Monitoring`, `Edit Monitoring`, or `Admin Monitoring`.
+
+1.4 Click **Inherit From > Add Resource**, then select the Kubernetes role, as applicable, from the dropdown.
+
+1.5 Click **Create**.
+....
+
+. カスタムロールを新しいユーザーに割り当てます：
+
+....
+2.1 Click **☰ > Cluster Management > Cluster Explore > Cluster > Cluster Members > Add**.
+
+2.2 Search for your new user name from **Select Member** options displayed.
+
+2.3 Assign the new custom role from **Cluster Permissions** to the new user.
+
+2.4 Click **Create**.
+....
+
+*結果:*新しいユーザーは、モニタリングツールを見ることができるようになるはずです。
+
+[#_additional_monitoring_clusterroles]
+=== 追加のモニタリングClusterRoles
+
+モニタリングは、デフォルトでユーザーに割り当てられていない追加の`ClusterRoles`をクラスター内に作成します。デフォルトでは集約されませんが、`RoleBinding`または`ClusterRoleBinding`をデプロイしてそれを参照することによって、ネームスペースにバインドすることができます。Rancherを通じてではなく、`RoleBinding`を使用して`kubectl`を定義するには、<<_assigning_roles_and_clusterroles_with_kubectl,こちら>>をクリックします。
+
+|===
+| Role | 目的
+
+| monitoring-ui-view
+| このClusterRoleは、プロジェクトへの書き込みアクセス権を持つユーザーが、Rancher UIで指定されたクラスターのメトリクスグラフを表示できるようにします。これは、外部モニタリングUIへの読み取り専用アクセスを付与することによって行われます。このロールを持つユーザーは、Prometheus、Alertmanager、およびGrafanaのエンドポイントをリストし、Rancherプロキシを通じてPrometheus、Alertmanager、およびGrafana UIにGETリクエストを行う権限があります。 +
+ +
+このロールは、モニタリングエンドポイントへのアクセスを付与しません。その結果、この役割を持つユーザーはRancher UIでクラスターの監視グラフやダッシュボードを表示できませんが、提供されたリンクがあれば監視用のGrafana、Prometheus、AlertmanagerのUIにはアクセスできます。
+|===
+
+[NOTE]
+====
+
+*View Monitoring* Rancher役割と読み取り専用のプロジェクト権限にバインドされたユーザーは、Monitoring UIのリンクを表示できません。それでも、提供されたリンクがあれば外部の監視UIにはアクセスできます。*View Monitoring* 役割と読み取り専用のプロジェクト権限を持つユーザーにアクセスを許可したい場合は、`cattle-monitoring-system` ネームスペースをプロジェクトに移動してください。
+====
+
+
+[#_assigning_roles_and_clusterroles_with_kubectl]
+=== kubectlを使用した役割とClusterRoleの割り当て
+
+[#_using_kubectl_create]
+==== `kubectl create`の使用
+
+1つの方法は、`kubectl create clusterrolebinding`または`kubectl create rolebinding`を使用して`Role`または`ClusterRole`を割り当てることです。以下の例に示します:
+
+* 特定のユーザーに割り当てる:
+
+[tabs,sync-group-id=role-type]
+======
+clusterrolebinding::
++
+--
+[,plain]
+----
+kubectl create clusterrolebinding my-binding --clusterrole=monitoring-ui-view --user=u-l4npx
+----
+--
+
+rolebinding::
++
+--
+[,plain]
+----
+kubectl create rolebinding my-binding --clusterrole=monitoring-ui-view --user=u-l4npx --namespace=my-namespace
+----
+--
+======
+
+* すべての認証されたユーザーに割り当てる:
+
+[tabs,sync-group-id=role-type]
+======
+clusterrolebinding::
++
+--
+[,plain]
+----
+kubectl create clusterrolebinding my-binding --clusterrole=monitoring-ui-view --group=system:authenticated
+----
+--
+
+rolebinding::
++
+--
+[,plain]
+----
+kubectl create rolebinding my-binding --clusterrole=monitoring-ui-view --group=system:authenticated --namespace=my-namespace
+----
+--
+======
+
+[#_using_yaml_files]
+==== YAMLファイルを使用する
+
+別の方法は、作成したYAMLファイルにバインディングを定義することです。最初に、YAMLファイルを使用して`RoleBinding`または`ClusterRoleBinding`を設定する必要があります。次に、`kubectl apply`コマンドを実行して設定変更を適用します。
+
+* *Roles*:以下は、Kubernetesで`RoleBindings`を設定するのに役立つYAMLファイルの例です。以下に名前を入力する必要があります。
+
+[NOTE]
+====
+
+名前は大文字と小文字が区別されます。
+====
+
+
+[,yaml]
+----
+# monitoring-config-view-role-binding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: monitoring-config-view
+  namespace: cattle-monitoring-system
+roleRef:
+  kind: Role
+  name: monitoring-config-view
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: User
+  name: u-b4qkhsnliz # this can be found via `kubectl get users -A`
+  apiGroup: rbac.authorization.k8s.io
+----
+
+* *kubectl*:以下は、YAMLファイルで作成したバインディングを適用するために使用される`kubectl`コマンドの例です。YAMLファイル名を適切に記入することを忘れないでください。
++
+[,plain]
+----
+kubectl apply -f monitoring-config-view-role-binding.yaml
+----
+
+[#_users_with_rancher_based_permissions]
+== Rancherベースの権限を持つユーザー
+
+Rancherによってデプロイされたデフォルトの役割（すなわち、クラスターオーナー、クラスターメンバー、プロジェクトオーナー、プロジェクトメンバー）、デフォルトのKubernetes役割、およびrancher-monitoringチャートによってデプロイされた役割の関係は、以下の表に詳述されています：
+
+.デフォルトのRancher権限と対応するKubernetes ClusterRoles
+|===
+| Rancherロール | Kubernetes役割 | Monitoring ClusterRole / Role | ClusterRoleBindingまたはRoleBinding？
+
+| cluster-owner
+| cluster-admin
+| N/A
+| ClusterRoleBinding
+
+| cluster-member
+| admin
+| monitoring-admin
+| ClusterRoleBinding
+
+| project-owner
+| admin
+| monitoring-admin
+| プロジェクトネームスペース内のRoleBinding
+
+| project-member
+| 編集
+| monitoring-edit
+| プロジェクトネームスペース内のRoleBinding
+|===
+
+これらのデフォルトの役割に加えて、クラスターのメンバーに監視へのアクセスを提供するために適用できる以下のRancherプロジェクト役割があります。これらのRancher役割は、監視チャートによってデプロイされたClusterRolesに関連付けられています：
+
+.非デフォルトのRancher権限と対応するKubernetes ClusterRoles
+|===
+| Rancherロール | Kubernetes ClusterRole | Rancherでの利用可能性 | Monitoring v2での利用可能性
+
+| 監視を表示*
+| <<_additional_monitoring_clusterroles,monitoring-ui-view>>
+| 2.4.8+
+| 9.4.204+
+|===
+
+[NOTE]
+====
+
+*View Monitoring* Rancher役割と読み取り専用のプロジェクト権限にバインドされたユーザーは、Monitoring UIのリンクを表示できません。それでも、提供されたリンクがあれば外部の監視UIにはアクセスできます。*View Monitoring* 役割と読み取り専用のプロジェクト権限を持つユーザーにアクセスを許可したい場合は、`cattle-monitoring-system` ネームスペースをプロジェクトに移動してください。
+====
+
+
+[#_differences_in_2_5_x]
+=== 2.5.xの違い
+
+プロジェクトメンバーまたはプロジェクトオーナーの役割が割り当てられたユーザーは、Rancher 2.5.x ではクラスターレベルでのみ Grafana または Prometheus を作成するため、Prometheus または Grafana へのアクセスが与えられません。
+
+さらに、プロジェクトオーナーはデフォルトで自分のプロジェクトの名前空間内のリソースをスクレイプする ServiceMonitors / PodMonitors を追加できる一方で、PrometheusRules は単一の名前空間 / プロジェクトにスコープされていません。したがって、プロジェクトオーナーが自分のプロジェクトのネームスペース内で作成したアラートルールや記録ルールは、クラスタ全体に適用されますが、プロジェクトのネームスペース外で作成されたルールを表示 / 編集 / 削除することはできません。
+
+[#_assigning_additional_access]
+=== 追加アクセスの割り当て
+
+クラスタ管理者が rancher-monitoring チャートが提供する役割以外のユーザーに追加の管理 / 編集アクセスを提供したい場合、以下の表が潜在的な影響を示します：
+
+|===
+| CRD（monitoring.coreos.com） | ネームスペース / プロジェクトの外に影響を与える可能性がありますか？| 影響
+
+| `prometheuses`
+| はい、このリソースはクラスタ全体の任意のターゲットからメトリクスをスクレイプできます（オペレーター自体が別の設定になっていない限り）。
+| ユーザーは、クラスタ内で作成される新しいクラスターレベルの Prometheus デプロイメントの設定を定義できるようになります。
+
+| `alertmanagers`
+| いいえ
+| ユーザーは、クラスタ内で作成される新しいクラスターレベルの Alertmanager デプロイメントの設定を定義できるようになります。注意：ユーザーにルートやレシーバーのような設定を構成させたいだけの場合は、代わりに Alertmanager Config Secret へのアクセスを提供するべきです。
+
+| <ul><li>``servicemonitors``</li><li>``podmonitors``</li></ul>
+| いいえ、デフォルトではそうではありません；これは Prometheus CR の `ignoreNamespaceSelectors` を介して構成可能です。
+| ユーザーは、与えられた権限のあるネームスペース内のサービス / ポッドによって公開されたエンドポイントで Prometheus によるスクレイプを設定できるようになります。
+
+| `prometheusrules`
+| はい、PrometheusRules はクラスタスコープです。
+| ユーザーは、クラスタ全体で収集された任意のシリーズに基づいて Prometheus 上でアラートまたは記録ルールを定義できるようになります。
+|===
+
+|===
+| k8s リソース | ネームスペース | 名前空間 / プロジェクトの外に影響を与える可能性がありますか？| 影響
+
+| <ul><li>``secrets``</li><li>``configmaps``</li></ul>
+| `cattle-monitoring-system`
+| はい、このネームスペース内の Configs と Secrets は、全体の監視 / アラートパイプラインに影響を与える可能性があります。
+| ユーザーは、Alertmanager Config、Prometheus Adapter Config、TLS シークレット、追加の Grafana データソースなどの Secrets / ConfigMaps を作成または編集できるようになります。これは、クラスタの監視 / アラート全体に広範な影響を与える可能性があります。
+
+| <ul><li>``secrets``</li><li>``configmaps``</li></ul>
+| `cattle-dashboards`
+| はい、このネームスペース内のConfigsとSecretsは、クラスタ全体で収集されたすべてのメトリックに対してクエリを行うダッシュボードを作成できます。
+| ユーザーは新しいGrafanaダッシュボードを永続化するためのシークレットやコンフィグマップを作成できるようになります。
+|===
+
+[#_role_based_access_control_for_grafana]
+== Grafanaのためのロールベースのアクセス制御
+
+Rancherは、Kubernetesによって認証され、Rancher MonitoringチャートによってデプロイされたGrafanaサービスにアクセスできるすべてのユーザーがRancherダッシュボードUIを介してGrafanaにアクセスできるようにします。デフォルトでは、Grafanaにアクセスできるすべてのユーザーに https://grafana.com/docs/grafana/latest/permissions/organization_roles/#viewer-role[ビューア]の役割が与えられ、これによりRancherによってデプロイされたデフォルトのダッシュボードのすべてを表示できます。
+
+ただし、ユーザーは必要に応じて https://grafana.com/docs/grafana/latest/permissions/organization_roles/#admin-role[管理者]としてGrafanaにログインすることを選択できます。Grafanaインスタンスのデフォルトの管理者ユーザー名とパスワードは`admin`/`prom-operator`ですが、チャートのデプロイまたはアップグレード時に代替の認証情報も提供できます。
+
+Grafana UIを見るには、`rancher-monitoring`をインストールしてください。次のように動作します。
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *Clusters*ページで、視覚化を表示したいクラスターに移動し、*Explore*をクリックします。
+. 左のナビゲーションバーで*Monitoring*をクリックします。
+. *Grafana*をクリックしてください。
+
+.Grafanaのクラスターコンピュートリソースダッシュボード
+image::cluster-compute-resources-dashboard.png[Grafanaのクラスターコンピュートリソースダッシュボード]
+
+.Grafanaのデフォルトダッシュボード
+image::grafana-default-dashboard.png[Grafanaのデフォルトダッシュボード]

@@ -1,0 +1,108 @@
+= Habilitar Prometheus Federator
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: instrucciones-guides/advanced-user-guides/monitoring-alerting-guides/prometheus-federator-guides/habilitar-prometheus-federator.adoc 
+:product-path: observabilidad/monitoring-and-dashboards/prometheus-federator/habilitar-prometheus-federator.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-monitoring-and-dashboards: xref:observabilidad/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-enable-monitoring: xref:observabilidad/monitoring-and-dashboards/habilitar-monitoring.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-enable-monitoring: xref:how-to-guides/advanced-user-guides/monitoring-alerting-guides/enable-monitoring.adoc
+endif::[]
+
+[#_requirements]
+== Requisitos
+
+Por defecto, Prometheus Federator está configurado y destinado a ser desplegado junto a {xref-monitoring-and-dashboards}[rancher-monitoring], que despliega Prometheus Operator junto a un Cluster Prometheus que cada Stack de Monitoreo de Proyecto está configurado para federar métricas con alcance de espacio de nombres por defecto.
+
+Para instrucciones sobre la instalación de rancher-monitoring, consulta {xref-enable-monitoring}[esta página].
+
+La configuración por defecto ya debería ser compatible con tu stack de rancher-monitoring. Sin embargo, para optimizar la seguridad y usabilidad de Prometheus Federator en tu clúster, recomendamos realizar estas configuraciones adicionales a rancher-monitoring:
+
+* <<_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster,Asegúrate de que el espacio de nombres cattle-monitoring-system esté colocado en el Proyecto del Sistema>>.
+* <<_configure_rancher_monitoring_to_only_watch_for_resources_created_by_the_helm_chart_itself,Configura rancher-monitoring para que solo vigile los recursos creados por el propio gráfico de Helm>>.
+* <<_increase_the_cpu_memory_limits_of_the_cluster_prometheus,Aumenta los límites de CPU / memoria del Cluster Prometheus>>.
+
+[#_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster]
+=== Asegúrate de que el espacio de nombres cattle-monitoring-system esté colocado en el Proyecto del Sistema (o en un Proyecto igualmente restringido que tenga acceso a otros Proyectos en el clúster)
+
+image::install-in-system-project.png[Seleccionar Proyectos-Namespaces]
+
+El modelo de seguridad de Prometheus Operator espera que el espacio de nombres en el que se despliega (por ejemplo, `cattle-monitoring-system`) tenga acceso limitado para cualquier persona excepto los Administradores del Clúster para evitar la escalada de privilegios mediante la ejecución en Pods (como los Jobs que ejecutan operaciones de Helm). Además, desplegar Prometheus Federator y todos los stacks de Project Prometheus en el Proyecto del Sistema asegura que cada Project Prometheus pueda acceder a recolectar cargas de trabajo a través de todos los Proyectos, incluso si se definen Políticas de Red a través de Aislamiento de Red de Proyecto. También proporciona acceso limitado para Propietarios de Proyecto, Miembros de Proyecto y otros usuarios para que no puedan acceder a datos a los que no deberían tener acceso (es decir, se les permite ejecutar en pods, establecer la capacidad de recolectar espacios de nombres fuera de un Proyecto dado, etc.).
+
+. Abre el `System` proyecto para comprobar tus espacios de nombres:
++
+Haz clic en menu:Cluster[Projects/Namespaces] en la interfaz de usuario de Rancher. Esto mostrará todos los espacios de nombres en el `System` proyecto:
++
+image::cattle-monitoring-system.png[Seleccionar Proyectos-Namespaces]
+
+. Si tienes una instalación existente de Monitoring V2 dentro del espacio de nombres `cattle-monitoring-system`, pero ese espacio de nombres no está en el `System` proyecto, puedes mover el espacio de nombres `cattle-monitoring-system` al `System` proyecto o a otro proyecto de acceso limitado. Para hacerlo, puedes:
+ ** Arrastrar y soltar el espacio de nombres en el `System` proyecto o
+ ** Selecciona *⋮* a la derecha del espacio de nombres, haz clic en *Mover*, y luego elige `System` del menú desplegable *Proyecto de destino*.
++
+image::move-to-new-project.png[Mover a un nuevo proyecto]
+
+[#_configure_rancher_monitoring_to_only_watch_for_resources_created_by_the_helm_chart_itself]
+=== Configura rancher-monitoring para que solo vigile los recursos creados por el propio gráfico de Helm
+
+Dado que cada Stack de Monitoreo de Proyecto vigilará los otros espacios de nombres y recogerá métricas de carga de trabajo personalizadas o paneles adicionales, se recomienda configurar los siguientes ajustes en todos los selectores para asegurar que el Stack de Prometheus del Cluster solo monitoree los recursos creados por el propio gráfico de Helm:
+
+----
+matchLabels:
+  release: "rancher-monitoring"
+----
+
+Se recomienda que los siguientes campos de selector tengan este valor:
+
+* `.Values.alertmanager.alertmanagerSpec.alertmanagerConfigSelector`
+* `.Values.prometheus.prometheusSpec.serviceMonitorSelector`
+* `.Values.prometheus.prometheusSpec.podMonitorSelector`
+* `.Values.prometheus.prometheusSpec.ruleSelector`
+* `.Values.prometheus.prometheusSpec.probeSelector`
+
+Una vez que esta configuración esté activada, siempre puedes crear ServiceMonitors o PodMonitors que sean recogidos por el Cluster Prometheus añadiendo la etiqueta `release: "rancher-monitoring"` a ellos, en cuyo caso serán ignorados automáticamente por los Stacks de Monitoreo de Proyecto por defecto, incluso si el espacio de nombres en el que residen esos ServiceMonitors o PodMonitors no son espacios de nombres del sistema.
+
+[NOTE]
+====
+
+Si no deseas permitir que los usuarios puedan crear ServiceMonitors y PodMonitors que se agreguen al Cluster Prometheus en los espacios de nombres de Proyecto, puedes además establecer los namespaceSelectors en el gráfico para que solo apunten a espacios de nombres del sistema (que deben contener `cattle-monitoring-system` y `cattle-dashboards`, donde los recursos se despliegan por defecto por rancher-monitoring; también necesitarás monitorear el espacio de nombres `default` para obtener métricas de apiserver o crear un ServiceMonitor personalizado para recopilar métricas de apiserver del Servicio que reside en el espacio de nombres por defecto) para limitar tu Cluster Prometheus de recoger otros CRs de Prometheus Operator. En ese caso, se recomendaría activar `.Values.prometheus.prometheusSpec.ignoreNamespaceSelectors=true` para permitirte definir ServiceMonitors que puedan monitorear espacios de nombres no del sistema desde dentro de un espacio de nombres del sistema.
+====
+
+
+[#_increase_the_cpu_memory_limits_of_the_cluster_prometheus]
+=== Aumenta los límites de CPU / memoria del Cluster Prometheus
+
+Dependiendo de la configuración de un clúster, generalmente se recomienda asignar una gran cantidad de memoria dedicada al Cluster Prometheus para evitar reinicios debido a errores de falta de memoria (OOMKilled) que suelen ser causados por la rotación creada en el clúster que provoca que se generen y se ingieran un gran número de métricas de alta cardinalidad dentro de un bloque de tiempo. Esta es una de las razones por las que el stack de Monitoreo de Rancher por defecto espera alrededor de 4GB de RAM para poder operar en un clúster de tamaño normal. Sin embargo, al introducir Stacks de Monitoreo de Proyecto que están enviando todos `/federate` solicitudes al mismo Cluster Prometheus y dependen de que el Cluster Prometheus esté "activo" para federar esos datos del sistema en sus espacios de nombres, es aún más importante que el Cluster Prometheus tenga una cantidad suficiente de CPU / memoria asignada para prevenir una interrupción que pueda causar brechas de datos en todos los Prometheis de Proyecto en el clúster.
+
+[NOTE]
+====
+
+No hay recomendaciones específicas sobre cuánta memoria debe configurarse el Cluster Prometheus, ya que depende completamente de la configuración del usuario (es decir, la probabilidad de encontrar una alta tasa de rotación y la escala de métricas que podrían generarse en ese momento); generalmente varía según la configuración.
+====
+
+
+[#_install_the_prometheus_federator_application]
+== Instala la Aplicación Federadora de Prometheus
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster en el que deseas instalar Prometheus Federator y haz clic en *Explorar*.
+. Haz clic en *Apps \-> Charts*.
+. Haz clic en el gráfico de *Prometheus Federator*.
+. Haz clic en *Instalar*.
+. En la página de *Metadatos*, haz clic en *Siguiente*.
+. En el campo *Namespaces* > *ID del Proyecto de Namespace de Lanzamiento del Proyecto*, se utiliza el `System Project` como predeterminado, pero se puede anular con otro proyecto con acceso <<_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster,limitado>> similar. Los IDs de proyecto se pueden encontrar con el siguiente comando ejecutado en el clúster local de upstream:
+
+[,plain]
+----
+  kubectl get projects -A -o custom-columns="NAMESPACE":.metadata.namespace,"ID":.metadata.name,"NAME":.spec.displayName
+----
+
+. Haz clic en *Instalar*.
+
+*Resultado:* La app Prometheus Federator se despliega en el espacio de nombres `cattle-monitoring-system`.

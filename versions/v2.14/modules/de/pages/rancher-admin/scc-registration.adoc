@@ -1,0 +1,202 @@
+= Registrierung beim SUSE Customer Center
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+
+Seit Rancher v2.12.1 können SUSE Rancher Prime Kunden den Rancher Manager mit https://scc.suse.com/home[SUSE Customer Center (SCC)] registrieren. Diese Registrierung hilft Ihnen, die Nutzung der Abonnements Ihrer Organisation und der bereitgestellten Rancher Manager-Instanzen zu verfolgen.
+
+[#_prerequisites]
+== Voraussetzungen
+
+* Die Registrierung Ihrer Rancher Manager-Instanz bei SCC erfordert ein SUSE-Konto. Wenn Sie noch kein SUSE-Konto haben, https://www.suse.com/account/create/[erstellen Sie eines].
+* Sie müssen Zugang zu Ihrer Organisation haben. Bitten Sie den Administrator Ihrer Organisation, Sie zum Konto hinzuzufügen. Siehe die https://scc.suse.com/docs/userguide#UG-Requesting-Access-to-an-Organizations-Account[SCC-Dokumentation] und https://scc.suse.com/docs/help#how-to-add-user[SCC-FAQ] für Details. Wenn Sie den Registrierungscode Ihrer Organisation kennen, geben Sie ihn ein, wenn Sie dazu aufgefordert werden.
+
+[#_register_with_suse_customer_center]
+== Registrieren Sie sich beim SUSE Customer Center
+
+Gehen Sie im Rancher UI zu *Globale Einstellungen* > *Registrierung*. Sie können auch das Benachrichtigungszentrum (Glockensymbol) in der oberen rechten Ecke auf eine "Rancher Prime Registrierung"-Benachrichtigung prüfen und dann auf *Jetzt registrieren* klicken. Dies leitet Sie zur *Registrierungsseite* unter den *Globalen Einstellungen* weiter.
+
+Sie haben die Möglichkeit, Ihre Rancher Manager-Instanz mit SCC <<Online Registration,online>> oder <<Offline Registration,offline>> zu registrieren.
+
+[#_online_registration]
+=== Online-Registrierung
+
+Sie können sich online über die Rancher UI oder mit Helm registrieren.
+
+[#_obtain_registration_code]
+==== Registrierungscode erhalten
+
+Bevor Sie fortfahren, müssen Sie den Registrierungscode für Ihr Rancher Manager-Abonnement bei SCC erhalten. Um den Registrierungscode zu erhalten:
+
+. Melden Sie sich bei SCC an.
+. Navigieren Sie zu **Meine Organisationen** und klicken Sie auf die Organisation mit Ihrem Rancher Manager-Abonnement.
+. Finden Sie Ihren Registrierungscode unter *Organisation* > *Abonnements* > *Abonnementinformationen*.
+
+[#_rancher_ui]
+==== Rancher UI
+
+. Kopieren Sie den Registrierungscode in das Feld *Registrierungscode* aus der Rancher UI und klicken Sie auf *Registrieren*. Wenn erfolgreich, wird der *Status* zu *Aktiv*, und der *Produktname*, das *Ablaufdatum* und der *Registrierungsmodus* werden angezeigt.
++
+image::online-scc-registration.png[Registrieren Sie sich bei SCC mit der Online-Methode]
+
+[#_helm]
+==== Helm
+
+Nachdem Sie Ihren Registrierungscode von SCC erhalten haben, können Sie Ihre Rancher Manager-Instanz über Helm registrieren.
+
+[#_entrypoint_secret]
+===== Einstiegspunkt-Geheimnis
+
+Um bewährte Sicherheitspraktiken in Produktions- oder GitOps-Umgebungen zu befolgen, vermeiden Sie es, Registrierungscodes im Klartext zu speichern. Erstellen Sie stattdessen manuell ein Einstiegspunkt-Geheimnis vor der Installation, damit der SCC-Operator die Registrierungsdaten automatisch erkennen und verwenden kann.
+
+. Erstellen Sie den SCC-System-Namespace. Der SCC-Operator erwartet, dass die Registrierungsdaten im `cattle-scc-system` Namespace gespeichert sind.
++
+[,shell]
+----
+kubectl create namespace cattle-scc-system
+----
+
+. Erstellen Sie ein Geheimnis mit dem Namen `scc-registration`, das Ihren Registrierungscode enthält. Dieses Geheimnis kann über externe Geheimnismanager verwaltet werden, um es in Git verschlüsselt zu halten.
++
+[,shell]
+----
+kubectl create secret generic scc-registration \
+  --namespace cattle-scc-system \
+  --from-literal=regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+. Aktivieren Sie die Registrierung in Ihrem `values.yaml`, lassen Sie jedoch das Feld `regCode` leer. Wenn `registration.enabled` `true` ist und kein Code in den Werten angegeben ist, sucht der Operator nach einem vorhandenen `scc-registration` Geheimnis im `cattle-scc-system` Namespace.
++
+[,yaml]
+----
+registration:
+  enabled: true
+  regCode: ""
+----
+
+. Stellen Sie Rancher mit Ihrem aktualisierten `values.yaml` bereit:
++
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --values values.yaml
+----
+
+. Um zu überprüfen, ob die Registrierung erfolgreich war, indem das manuell erstellte Geheimnis verwendet wurde, überprüfen Sie die Protokolle des SCC-Operators oder den Status der Registrierung in der Rancher-Benutzeroberfläche unter *Globale Einstellungen* > *Registrierung*.
+
+[#_helm_parameters]
+===== Helm-Parameter 
+
+Für Test- oder Nicht-Produktionsumgebungen können Sie den Registrierungscode direkt während des Helm-Installationsbefehls übergeben:
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set registration.enabled=true \
+  --set registration.regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+Alternativ können Sie `values.yaml` aktualisieren, um die Registrierung zu aktivieren und Ihren Registrierungscode hinzuzufügen.
+
+[,yaml]
+----
+registration:
+  enabled: true
+  regCode: "<REGISTRATION-CODE>"
+----
+
+Stellen Sie dann Rancher mit der aktualisierten Werte-Datei bereit:
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher 
+  --namespace cattle-system 
+  --values values.yaml
+----
+
+[#_offline_registration]
+=== Offline-Registrierung
+
+Wenn Sie Rancher in einer Air-Gapped-Umgebung verwenden, können Sie sich offline über die Rancher-Benutzeroberfläche oder mit Helm registrieren.
+
+[#_rancher_ui_1]
+==== Rancher UI
+
+[IMPORTANT]
+====
+Ein SCC-Organisationsadministrator muss Ihr Registrierungszertifikat erhalten, da reguläre Benutzer keinen Zugriff haben.
+====
+
+. Klicken Sie in der Rancher-Benutzeroberfläche auf *Registrierungsanfrage herunterladen*, um die Datei der Registrierungsanfrage herunterzuladen.
+. Klicken Sie auf *Besuchen Sie SCC*, um das SCC-Offline-Registrierungstool zu verwenden und das Registrierungszertifikat zu erhalten. 
+.. Laden Sie die Datei der Registrierungsanfrage hoch.
+.. Wählen Sie Ihre *Organisation* und *Abonnement* aus.
+.. Klicken Sie auf *Offline-Zertifikat herunterladen* und speichern Sie die Datei des Registrierungszertifikats.
+. Gehen Sie zurück zur Rancher-Benutzeroberfläche, klicken Sie auf *Zertifikat hochladen und registrieren*, um das Registrierungszertifikat hochzuladen. Wenn erfolgreich, wird der *Status* zu *Aktiv*, und der *Produktname*, *Ablaufdatum* und *Registrierungsmodus* werden angezeigt.
++
+image::offline-scc-registration.png[Registrieren Sie sich bei SCC mit der Offline-Methode]
+
+[#_helm_1]
+==== Helm
+
+. Aktivieren Sie in `values.yaml` die Registrierung, kommentieren Sie `regCode` aus und setzen Sie `mode` auf `offline`.
++
+[,yaml]
+----
+registration:
+  enabled: true
+  # regCode: ""
+  mode: offline
+----
+
+. Führen Sie den Helm-Installationsbefehl `helm install rancher rancher-prime/rancher` aus und überprüfen Sie, ob die Installation erfolgreich ist. 
+. Bevor Sie fortfahren, verwenden Sie den folgenden Bash-Befehl, um zu überprüfen, ob der SCC-Operator erfolgreich ein Geheimnis im `cattle-scc-system` Namespace erstellt hat. Nachdem das Geheimnis erstellt wurde, wird `Secret created!` ausgegeben.
++
+[,bash]
+----
+for i in {1..100}; do kubectl wait --for=create secret/scc-registration -n cattle-scc-system --timeout=3s &> /dev/null && echo "Secret created!" && break || { echo "Not ready yet..."; sleep 3; }; done
+----
+
+. Verwenden Sie `kubectl`, um die Datei der Registrierungsanfrage abzurufen und lokal zu speichern.
++
+[,bash]
+----
+kubectl get secrets -n  cattle-scc-system \
+-l scc.cattle.io/secret-role=offline-request,scc.cattle.io/scc-hash=$(kubectl get secrets \
+-n cattle-scc-system scc-registration -o yaml|yq '.metadata.labels["scc.cattle.io/scc-hash"]') \
+-o yaml | yq '.items[0].data.request' > offline.base64
+----
++
+. Klicken Sie auf *Besuchen Sie SCC*, um das SCC-Offline-Registrierungstool zu verwenden. 
+.. Laden Sie die Datei der Registrierungsanfrage hoch.
+.. Wählen Sie Ihre *Organisation* und *Abonnement* aus.
+.. Klicken Sie auf *Offline-Zertifikat herunterladen* und speichern Sie die Datei des Registrierungszertifikats.
+. Laden Sie die Datei des Registrierungszertifikats in Ihre Rancher-Manager-Instanz mit `kubectl` oder Helm hoch.
+
+* *`kubectl`:*
++
+[,bash]
+----
+kubectl patch secret -n cattle-scc-system scc-registration  \
+--type='merge' -p "{\"data\": {\"certificate\": \"$(cat <your Offline Cert file> )\"}}"
+----
+* *Helm:*
++
+Fügen Sie Ihr Registrierungszertifikat mit dem `certificate` Wertfeld hinzu und `helm upgrade` Rancher.
++
+[,yaml]
+----
+certificate: {}
+----
+
+[#_deregister_from_suse_customer_center]
+== Von SUSE Customer Center abmelden
+
+Wenn Sie Ihre Registrierung entfernen oder aktualisieren müssen, können Sie Ihre Rancher Manager-Instanz vom SCC abmelden. 
+
+. Gehen Sie zu *Globale Einstellungen* > *Registrierung*.
+. Finden Sie Ihre Produktregistrierung unter *Online-Registrierung* oder *Offline-Registrierung* und klicken Sie auf *Abmelden*.

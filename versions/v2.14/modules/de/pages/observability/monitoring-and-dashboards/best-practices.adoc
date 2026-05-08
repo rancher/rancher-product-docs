@@ -1,0 +1,141 @@
+= Best Practices für Monitoring
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-18
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/monitoring-best-practices.adoc 
+:product-path: observability/monitoring-and-dashboards/best-practices.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio: xref:observability/istio/istio.adoc
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-compliance-scans-howto: xref:security/compliance-scans/how-to.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio: xref:integrations-in-rancher/istio/index.adoc
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-compliance-scans-howto: xref:how-to-guides/advanced-user-guides/compliance-scan-guides/index.adoc
+endif::[]
+
+Die Konfiguration sinnvoller Überwachungs- und Alarmierungsregeln ist entscheidend für den sicheren und zuverlässigen Betrieb von Produktionslasten. Das unterscheidet sich nicht, wenn man Kubernetes und Rancher verwendet. Glücklicherweise macht die integrierte Überwachungs- und Alarmierungsfunktionalität diesen gesamten Prozess erheblich einfacher.
+
+Die {xref-monitoring-and-dashboards}[Rancher-Monitoring-Dokumentation] beschreibt, wie Sie einen vollständigen Prometheus- und Grafana-Stack einrichten können. Out of the box werden damit Überwachungsdaten von allen System- und Kubernetes-Komponenten in Ihrem Cluster erfasst und es werden sinnvolle Dashboards und Alarme bereitgestellt, um zu beginnen. Für eine zuverlässige Einrichtung müssen Sie jedoch auch Ihre eigenen Arbeitslasten überwachen und Prometheus sowie Grafana an Ihre spezifischen Anwendungsfälle und Clustergrößen anpassen. Dieses Dokument zielt darauf ab, Ihnen Best Practices dafür zu geben.
+
+[#_what_to_monitor]
+== Was zu überwachen ist
+
+Kubernetes selbst sowie die darin laufenden Anwendungen bilden ein verteiltes System, in dem verschiedene Komponenten miteinander interagieren. Für das gesamte System und jede einzelne Komponente müssen Sie Leistung, Verfügbarkeit, Zuverlässigkeit und Skalierbarkeit sicherstellen. Eine gute Ressource mit weiteren Details und Informationen ist das kostenlose https://sre.google/sre-book/table-of-contents/[Site Reliability Engineering Buch] von Google, insbesondere das Kapitel über https://sre.google/sre-book/monitoring-distributed-systems/[Überwachung verteilter Systeme].
+
+[#_configuring_prometheus_resource_usage]
+== Konfiguration der Prometheus-Ressourcennutzung
+
+Bei der Installation des integrierten Überwachungs-Stacks ermöglicht Rancher die Konfiguration mehrerer Einstellungen, die von der Größe Ihres Clusters und den darin laufenden Arbeitslasten abhängen. Dieses Kapitel behandelt diese im Detail.
+
+[#_storage_and_data_retention]
+=== Speicherung und Datenaufbewahrung
+
+Die Menge an Speicher, die für Prometheus benötigt wird, korreliert direkt mit der Anzahl der Zeitreihen und Labels, die Sie speichern, sowie mit der konfigurierten Datenaufbewahrung. Es ist wichtig zu beachten, dass Prometheus nicht als langfristiger Metriken-Speicher gedacht ist. Die Datenaufbewahrungszeit beträgt in der Regel nur ein paar Tage und nicht Wochen oder Monate. Der Grund dafür ist, dass Prometheus keine Aggregation seiner gespeicherten Metriken durchführt. Das ist großartig, da Aggregation Daten verwässern kann, aber es bedeutet auch, dass der benötigte Speicherplatz im Laufe der Zeit linear ohne Aufbewahrung wächst.
+
+Eine Möglichkeit, den notwendigen Speicherplatz zu berechnen, besteht darin, die durchschnittliche Größe eines Speicherchunks in Prometheus mit dieser Abfrage zu betrachten.
+
+----
+rate(prometheus_tsdb_compaction_chunk_size_bytes_sum[1h]) / rate(prometheus_tsdb_compaction_chunk_samples_sum[1h])
+----
+
+Als Nächstes ermitteln Sie Ihre Datenaufnahmegeschwindigkeit pro Sekunde:
+
+----
+rate(prometheus_tsdb_head_samples_appended_total[1h])
+----
+
+und multiplizieren Sie dies dann mit der Aufbewahrungszeit, wobei Sie einige Prozentpunkte als Puffer hinzufügen:
+
+----
+average chunk size in bytes * ingestion rate per second * retention time in seconds * 1.1 = necessary storage in bytes
+----
+
+Weitere Informationen zur Berechnung des notwendigen Speichers finden Sie in diesem https://www.robustperception.io/how-much-disk-space-do-prometheus-blocks-use[Blogbeitrag].
+
+Sie können mehr über das Speicherkonzept von Prometheus in der https://prometheus.io/docs/prometheus/latest/storage[Prometheus-Dokumentation] lesen.
+
+[#_cpu_and_memory_requests_and_limits]
+=== CPU- und Arbeitsspeicheranforderungen und -grenzen
+
+In größeren Kubernetes-Clustern kann Prometheus eine beträchtliche Menge an Arbeitsspeicher verbrauchen. Die Menge an Arbeitsspeicher, die Prometheus benötigt, korreliert direkt mit der Anzahl der Zeitreihen und der Anzahl der Labels, die es speichert, sowie mit dem Abfrageintervall, in dem diese gefüllt werden.
+
+Weitere Informationen zur Berechnung des notwendigen Arbeitsspeichers finden Sie in diesem https://www.robustperception.io/how-much-ram-does-prometheus-2-x-need-for-cardinality-and-ingestion[Blogbeitrag].
+
+Die Anzahl der benötigten CPUs korreliert mit der Anzahl der Abfragen, die Sie durchführen.
+
+[#_federation_and_long_term_storage]
+=== Federation und Langzeitspeicherung
+
+Prometheus ist nicht dafür gedacht, Metriken über einen langen Zeitraum zu speichern, sondern sollte nur für die kurzfristige Speicherung verwendet werden.
+
+Um einige oder alle Metriken über einen langen Zeitraum zu speichern, können Sie die https://prometheus.io/docs/prometheus/latest/storage/#remote-storage-integrations[Lese/Schreib]-Funktionen von Prometheus nutzen, um es mit Speichersystemen wie https://thanos.io/[Thanos], https://www.influxdata.com/[InfluxDB], https://www.m3db.io/[M3DB] oder anderen zu verbinden. Ein Beispiel-setup finden Sie in diesem https://rancher.com/blog/2020/prometheus-metric-federation[Blogbeitrag].
+
+[#_scraping_custom_workloads]
+== Scraping benutzerdefinierter Workloads
+
+Während das integrierte Rancher Monitoring bereits Systemmetriken von den Knoten und Systemkomponenten eines Clusters abruft, sollten auch die benutzerdefinierten Workloads, die Sie auf Kubernetes bereitstellen, auf Daten abgerufen werden. Dazu können Sie Prometheus so konfigurieren, dass es in einem bestimmten Intervall eine HTTP-Anfrage an einen Endpunkt Ihrer Anwendungen sendet. Diese Endpunkte sollten dann ihre Metriken im Prometheus-Format zurückgeben.
+
+Im Allgemeinen möchten Sie Daten von allen Arbeitslasten in Ihrem Cluster abrufen, damit Sie diese für Warnungen oder zur Fehlersuche verwenden können. Oft erkennen Sie, dass Sie einige Daten nur dann benötigen, wenn Sie die Metriken während eines Vorfalls tatsächlich benötigen. Es ist gut, wenn es bereits abgerufen und gespeichert wurde. Da Prometheus nur als kurzfristiger Metrik-Speicher gedacht ist, ist das Abrufen und Speichern großer Datenmengen in der Regel nicht so teuer. Wenn Sie eine langfristige Speicherlösung mit Prometheus verwenden, können Sie dann immer noch entscheiden, welche Daten Sie tatsächlich dort speichern und aufbewahren.
+
+[#_about_prometheus_exporters]
+=== Über Prometheus-Exporter
+
+Viele Drittanbieter-Arbeitslasten, wie Datenbanken, Warteschlangen und Web-Server, unterstützen bereits das Bereitstellen von Metriken im Prometheus-Format oder bieten Exporter an, die zwischen den Metriken des Tools und einem Format, das Prometheus versteht, übersetzen. Sie können diese Exporter in der Regel als zusätzliche Sidecar-Container zu den Pods der Arbeitslast hinzufügen. Viele Helm-Charts enthalten bereits Optionen, um den richtigen Exporter bereitzustellen. Sie finden eine kuratierte Liste von Exportern auf https://exporterhub.io/[ExporterHub].
+
+[#_prometheus_support_in_programming_languages_and_frameworks]
+=== Prometheus-Unterstützung in Programmiersprachen und Frameworks
+
+Um Ihre eigenen benutzerdefinierten Anwendungsmetriken in Prometheus zu erhalten, müssen Sie diese Metriken direkt aus dem Code Ihrer Anwendung sammeln und bereitstellen. Glücklicherweise sind bereits Bibliotheken und Integrationen verfügbar, die dabei für die meisten gängigen Programmiersprachen und Frameworks helfen. Ein Beispiel dafür ist die Prometheus-Unterstützung im https://docs.spring.io/spring-metrics/docs/current/public/prometheus[Spring Framework].
+
+[#_servicemonitors_and_podmonitors]
+=== ServiceMonitors und PodMonitors
+
+Sobald alle Ihre Arbeitslasten Metriken im Prometheus-Format bereitstellen, müssen Sie Prometheus konfigurieren, um diese abzurufen. Im Hintergrund verwendet Rancher den https://github.com/prometheus-operator/prometheus-operator[prometheus-operator]. Das erleichtert das Hinzufügen von Abrufzielen mit ServiceMonitors und PodMonitors. Viele Helm-Charts enthalten bereits eine Option, um diese Monitore direkt zu erstellen. Sie finden auch weitere Informationen in der Rancher-Dokumentation.
+
+[#_prometheus_push_gateway]
+=== Prometheus Push Gateway
+
+Es gibt einige Arbeitslasten, die traditionell schwer von Prometheus zu scrapen sind. Beispiele hierfür sind kurzlebige Arbeitslasten wie Jobs und CronJobs oder Anwendungen, die das Teilen von Daten zwischen einzelnen bearbeiteten eingehenden Anfragen nicht erlauben, wie PHP-Anwendungen.
+
+Um dennoch Metriken für diese Anwendungsfälle zu erhalten, können Sie https://github.com/prometheus/pushgateway[prometheus-pushgateways] einrichten. Der CronJob oder die PHP-Anwendung würde Metrik-Updates an das Pushgateway senden. Das Pushgateway aggregiert und stellt sie über einen HTTP-Endpunkt zur Verfügung, der dann von Prometheus gescraped werden kann.
+
+[#_prometheus_blackbox_monitor]
+=== Prometheus Blackbox Monitor
+
+Manchmal ist es nützlich, Arbeitslasten von außen zu überwachen. Dafür können Sie den https://github.com/prometheus/blackbox_exporter[Prometheus blackbox-exporter] verwenden, der das Abfragen jeglicher Art von Endpunkten über HTTP, HTTPS, DNS, TCP und ICMP ermöglicht.
+
+[#_monitoring_in_a_micro_service_architecture]
+== Überwachung in einer (Mikro)Service-Architektur
+
+Wenn Sie eine (Mikro)Service-Architektur haben, in der mehrere individuelle Arbeitslasten innerhalb Ihres Clusters miteinander kommunizieren, ist es wirklich wichtig, detaillierte Metriken und Traces über diesen Verkehr zu haben, um zu verstehen, wie all diese Arbeitslasten miteinander kommunizieren und wo ein Problem oder Engpass auftreten könnte.
+
+Natürlich können Sie all diesen internen Verkehr in all Ihren Arbeitslasten überwachen und diese Metriken an Prometheus weitergeben. Aber das kann schnell sehr arbeitsintensiv werden. Service Meshes wie Istio, die mit {xref-istio}[einem Klick] in Rancher installiert werden können, können dies automatisch tun und reichhaltige Telemetrie über den Verkehr zwischen allen Diensten bereitstellen.
+
+[#_real_user_monitoring]
+== Echte Benutzerüberwachung
+
+Die Überwachung der Verfügbarkeit und Leistung all Ihrer internen Arbeitslasten ist von entscheidender Bedeutung, um stabile, zuverlässige und schnelle Anwendungen zu betreiben. Aber diese Metriken zeigen Ihnen nur Teile des Bildes. Um einen vollständigen Überblick zu erhalten, ist es auch notwendig zu wissen, wie Ihre Endbenutzer es tatsächlich wahrnehmen. Dafür können Sie sich verschiedene https://en.wikipedia.org/wiki/Real_user_monitoring[Lösungen zur Überwachung echter Benutzer] ansehen.
+
+[#_security_monitoring]
+== Sicherheitsüberwachung
+
+Neben der Überwachung von Arbeitslasten zur Erkennung von Leistungs-, Verfügbarkeits- oder Skalierbarkeitproblemen sollten auch der Cluster und die darin laufenden Arbeitslasten auf potenzielle Sicherheitsprobleme überwacht werden. Ein guter Ausgangspunkt ist es, regelmäßig {xref-compliance-scans-howto}[Compliance-Scans] durchzuführen und zu überwachen, die überprüfen, ob der Cluster gemäß den Sicherheitsbestimmungen konfiguriert ist.
+
+Für die Workloads können Sie sich Kubernetes- und Container-Sicherheitslösungen wie https://www.suse.com/products/neuvector/[NeuVector], https://falco.org/[Falco], https://www.aquasec.com/solutions/kubernetes-container-security/[Aqua Kubernetes Security] und https://sysdig.com/[SysDig] ansehen.
+
+[#_setting_up_alerts]
+== Einrichten von Warnungen
+
+Es ist großartig, alle Metriken in ein Überwachungssystem zu integrieren und sie in Dashboards zu visualisieren, aber Sie möchten auch proaktiv gewarnt werden, wenn etwas schiefgeht.
+
+Die integrierte Rancher-Überwachung konfiguriert bereits eine sinnvolle Auswahl an Warnungen, die in jedem Kubernetes-Cluster relevant sind. Sie sollten diese erweitern, um Ihre spezifischen Workloads und Anwendungsfälle abzudecken.
+
+Beim Einrichten von Warnungen konfigurieren Sie diese für alle Workloads, die für die Verfügbarkeit Ihrer Anwendungen entscheidend sind. Achten Sie jedoch auch darauf, dass sie nicht zu aufdringlich werden. Idealerweise sollte jede Warnung, die Sie erhalten, auf ein Problem hinweisen, das Ihre Aufmerksamkeit erfordert und behoben werden muss. Wenn Sie Warnungen haben, die ständig ausgelöst werden, aber nicht so kritisch sind, besteht die Gefahr, dass Sie beginnen, Ihre Warnungen insgesamt zu ignorieren und dann die wirklich wichtigen zu verpassen. Weniger kann hier mehr sein. Konzentrieren Sie sich zunächst auf die wirklich wichtigen Metriken, zum Beispiel eine Warnung, wenn Ihre Anwendung offline ist. Beheben Sie alle Probleme, die auftreten, und beginnen Sie dann, detailliertere Warnungen zu erstellen.
+
+Wenn eine Warnung ausgelöst wird, aber Sie im Moment nichts dagegen tun können, ist es auch in Ordnung, die Warnung für eine bestimmte Zeit zu stummschalten, damit Sie später darauf zurückkommen können.
+
+Weitere Informationen zum Einrichten von Warnungen und Benachrichtigungskanälen finden Sie in der {xref-monitoring-and-dashboards}[Rancher-Dokumentation].

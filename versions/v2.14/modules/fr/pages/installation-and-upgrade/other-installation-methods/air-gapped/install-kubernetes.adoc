@@ -1,0 +1,319 @@
+= 3. Installez Kubernetes (Sauter cette étape pour les installations Docker)
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-16
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/install-kubernetes.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/install-kubernetes.adoc
+ifeval::["{build-type}" != "community"]
+:url-rke2-install-ha: https://documentation.suse.com/cloudnative/rke2/latest/en/install/ha.html
+:url-rke2-containerd-reg-config: https://documentation.suse.com/cloudnative/rke2/latest/en/install/containerd_registry_configuration.html
+:url-rke2-install-airgap: https://documentation.suse.com/cloudnative/rke2/latest/en/install/airgap.html
+:url-rke2-cluster-access: https://documentation.suse.com/cloudnative/rke2/latest/en/cluster_access.html
+:xref-arch-rec: xref:about-rancher/architecture/recommendations.adoc
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-install-ha: https://docs.rke2.io/install/ha
+:url-rke2-containerd-reg-config: https://docs.rke2.io/install/private_registry
+:url-rke2-install-airgap: https://docs.rke2.io/install/airgap
+:url-rke2-cluster-access: https://docs.rke2.io/cluster_access
+:xref-arch-rec: xref:reference-guides/rancher-manager-architecture/architecture-recommendations.adoc
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-et-mise-à-niveau/install-upgrade-on-a-kubernetes-cluster/dépannage.adoc
+endif::[]
+
+[NOTE]
+====
+
+Sauter cette section si vous installez Rancher sur un nœud unique avec Docker.
+====
+
+
+Cette section décrit comment installer un cluster Kubernetes selon nos {xref-arch-rec}#_environment_for_kubernetes_installations[meilleures pratiques pour l'environnement du serveur Rancher.] Ce cluster doit être dédié à l'exécution uniquement du serveur Rancher.
+
+Rancher peut être installé sur n'importe quel cluster Kubernetes, y compris les fournisseurs de Kubernetes hébergés.
+
+Les étapes pour configurer un cluster Kubernetes isolé physiquement sur RKE2 ou K3s sont indiquées ci-dessous.
+
+[tabs]
+======
+K3s::
++
+--
+Dans ce guide, nous supposons que vous avez créé vos nœuds dans votre environnement isolé physiquement et que vous disposez d'un registre Docker privé sécurisé sur votre serveur bastion.
+
+[pass]
+<h2><a id="_1_prepare_images_directory"></a>1. Préparer le répertoire des images</h2>
+
+Obtenez le fichier tar des images pour votre architecture à partir de la page https://github.com/k3s-io/k3s/releases[releases] pour la version de K3s que vous allez exécuter.
+
+Placez le fichier tar dans le répertoire `images` avant de démarrer K3s sur chaque nœud, par exemple{nbsp}:
+
+[,sh]
+----
+sudo mkdir -p /var/lib/rancher/k3s/agent/images/
+sudo cp ./k3s-airgap-images-$ARCH.tar /var/lib/rancher/k3s/agent/images/
+----
+
+[pass]
+<h2><a id="_2_create_registry_yaml"></a>2. Créer le YAML du registre</h2>
+
+Créez le fichier registries.yaml à `/etc/rancher/k3s/registries.yaml`. Cela indiquera à K3s les détails nécessaires pour se connecter à votre registre privé.
+
+Le fichier registries.yaml devrait ressembler à ceci avant d'insérer les informations nécessaires{nbsp}:
+
+[,yaml]
+----
+---
+mirrors:
+  customreg:
+    endpoint:
+      - "https://ip-to-server:5000"
+configs:
+  customreg:
+    auth:
+      username: xxxxxx # this is the registry username
+      password: xxxxxx # this is the registry password
+    tls:
+      cert_file: <path to the cert file used in the registry>
+      key_file:  <path to the key file used in the registry>
+      ca_file: <path to the ca file used in the registry>
+----
+
+Notez qu'à ce moment, seuls les registres sécurisés sont pris en charge avec K3s (SSL avec CA personnalisé).
+
+Pour plus d'informations sur le fichier de configuration des registres privés pour K3s, référez-vous à la https://rancher.com/docs/k3s/latest/en/installation/private-registry/[documentation K3s.]
+
+[pass]
+<h2><a id="_3_install_k3s"></a>3. Installez K3s</h2>
+
+Rancher doit être installé sur une version Kubernetes prise en charge. Pour savoir quelles versions de Kubernetes sont prises en charge pour votre version de Rancher, veuillez vous référer à la https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Matrice de support Rancher].
+
+Pour spécifier la version K3s (Kubernetes), utilisez la variable d'environnement INSTALL_K3S_VERSION (par exemple, `INSTALL_K3S_VERSION="v1.24.10+k3s1"`) lors de l'exécution du script d'installation K3s.
+
+Obtenez le binaire K3s à partir de la page https://github.com/k3s-io/k3s/releases[releases], correspondant à la même version utilisée pour obtenir le fichier tar des images isolées physiquement.
+Obtenez également le script d'installation K3s à https://get.k3s.io
+
+Placez le binaire dans `/usr/local/bin` sur chaque nœud.
+Placez le script d'installation n'importe où sur chaque nœud et nommez-le `install.sh`.
+
+Installez K3s sur chaque serveur{nbsp}:
+
+----
+INSTALL_K3S_SKIP_DOWNLOAD=true INSTALL_K3S_VERSION=<VERSION> ./install.sh
+----
+
+Installez K3s sur chaque agent{nbsp}:
+
+----
+INSTALL_K3S_SKIP_DOWNLOAD=true INSTALL_K3S_VERSION=<VERSION> K3S_URL=https://<SERVER>:6443 K3S_TOKEN=<TOKEN> ./install.sh
+----
+
+Où `<SERVER>` est l'IP ou le DNS valide du serveur et `<TOKEN>` est le token de nœud du serveur trouvé à `/var/lib/rancher/k3s/server/node-token`.
+
+[NOTE]
+====
+
+K3s fournit également une option `--resolv-conf` pour les kubelets, ce qui peut aider à configurer le DNS dans les réseaux isolés physiquement.
+====
+
+[pass]
+<h2><a id="_4_save_and_start_using_the_kubeconfig_file"></a>4. Enregistrez et commencez à utiliser le fichier kubeconfig</h2>
+
+Lorsque vous avez installé K3s sur chaque nœud de serveur Rancher, un fichier `kubeconfig` a été créé sur le nœud à `/etc/rancher/k3s/k3s.yaml`. Ce fichier contient des informations d'identification pour un accès complet au cluster, et vous devez enregistrer ce fichier dans un endroit sûr.
+
+Pour utiliser ce fichier `kubeconfig`,
+
+. Installez https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl,], un outil de ligne de commande Kubernetes.
+. Copiez le fichier à `/etc/rancher/k3s/k3s.yaml` et enregistrez-le dans le répertoire `~/.kube/config` sur votre machine locale.
+. Dans le fichier kubeconfig, la directive `server` est définie comme hôte local. Configurez le serveur comme le DNS de votre équilibreur de charge, en vous référant au port 6443. (Le serveur API Kubernetes sera accessible au port 6443, tandis que le serveur Rancher sera accessible aux ports 80 et 443.) Voici un exemple `k3s.yaml`{nbsp}:
+
+[,yaml]
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*Résultat :* Vous pouvez maintenant utiliser `kubectl` pour gérer votre cluster K3s. Si vous avez plus d'un fichier kubeconfig, vous pouvez spécifier lequel vous souhaitez utiliser en passant le chemin du fichier lors de l'utilisation de `kubectl`{nbsp}:
+
+----
+kubectl --kubeconfig ~/.kube/config/k3s.yaml get pods --all-namespaces
+----
+
+Pour plus d'informations sur le fichier `kubeconfig`, consultez la https://rancher.com/docs/k3s/latest/en/cluster-access/[K3s documentation] ou la https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[documentation officielle de Kubernetes] sur l'organisation de l'accès au cluster à l'aide de fichiers `kubeconfig`.
+
+[pass]
+<h2><a id="_note_on_upgrading"></a>Remarque sur la mise à niveau</h2>
+
+La mise à niveau d'un environnement isolé physiquement peut être réalisée de la manière suivante{nbsp}:
+
+. Téléchargez les nouvelles images (fichier tar) isolées physiquement depuis la page https://github.com/k3s-io/k3s/releases[releases] pour la version de K3s vers laquelle vous allez mettre à niveau. Placez le tar dans le répertoire `/var/lib/rancher/k3s/agent/images/` sur chaque nœud. Supprimez l'ancien fichier tar.
+. Copiez et remplacez l'ancien binaire K3s dans `/usr/local/bin` sur chaque nœud. Copiez le script d'installation à https://get.k3s.io (car il est possible qu'il ait changé depuis la dernière version). Exécutez à nouveau le script comme vous l'aviez fait dans le passé avec les mêmes variables d'environnement.
+. Redémarrez le service K3s (s'il n'est pas redémarré automatiquement par l'installateur).
+--
+
+RKE2::
++
+--
+Dans ce guide, nous supposons que vous avez créé vos nœuds dans votre environnement isolé physiquement et que vous disposez d'un registre Docker privé sécurisé sur votre serveur bastion.
+
+[pass]
+<h2><a id="_1_create_rke2_configuration"></a>1. Créez la configuration RKE2</h2>
+
+Créez le fichier config.yaml à `/etc/rancher/rke2/config.yaml`. Cela contiendra toutes les options de configuration nécessaires pour créer un cluster RKE2 hautement disponible.
+
+Sur le premier serveur, la configuration minimale est{nbsp}:
+
+----
+token: my-shared-secret
+tls-san:
+  - loadbalancer-dns-domain.com
+----
+
+Sur chaque autre serveur, le fichier de configuration doit contenir le même token et indiquer à RKE2 de se connecter au premier serveur existant{nbsp}:
+
+----
+server: https://ip-of-first-server:9345
+token: my-shared-secret
+tls-san:
+  - loadbalancer-dns-domain.com
+----
+
+Pour plus d'informations, reportez-vous à la {url-rke2-install-ha}[documentation RKE2].
+
+[NOTE]
+====
+
+RKE2 fournit également une option `resolv-conf` pour les kubelets, ce qui peut aider à configurer le DNS dans les réseaux isolés physiquement.
+====
+
+[pass]
+<h2><a id="_2_create_registry_yaml"></a>2. Créer le YAML du registre :</h2>
+
+Créez le fichier registries.yaml à `/etc/rancher/rke2/registries.yaml`. Cela indiquera à RKE2 les détails nécessaires pour se connecter à votre registre privé.
+
+Le fichier registries.yaml devrait ressembler à ceci avant d'insérer les informations nécessaires{nbsp}:
+
+----
+---
+mirrors:
+  customreg:
+    endpoint:
+      - "https://ip-to-server:5000"
+configs:
+  customreg:
+    auth:
+      username: xxxxxx # this is the registry username
+      password: xxxxxx # this is the registry password
+    tls:
+      cert_file: <path to the cert file used in the registry>
+      key_file:  <path to the key file used in the registry>
+      ca_file: <path to the ca file used in the registry>
+----
+
+Pour plus d'informations sur le fichier de configuration des registres privés pour RKE2, reportez-vous à la {url-rke2-containerd-reg-config}[documentation RKE2.]
+
+[pass]
+<h2><a id="_3_install_rke2"></a>3. Installer RKE2</h2>
+
+Rancher doit être installé sur une version Kubernetes prise en charge. Pour savoir quelles versions de Kubernetes sont prises en charge pour votre version de Rancher, veuillez vous référer à la https://rancher.com/support-maintenance-terms/[conditions de maintenance du support.]
+
+Téléchargez le script d'installation, rke2, les images rke2 et les archives sha256sum depuis la release et téléversez-les dans un répertoire sur chaque serveur{nbsp}:
+
+----
+mkdir /tmp/rke2-artifacts && cd /tmp/rke2-artifacts/
+wget https://github.com/rancher/rke2/releases/download/v1.21.5%2Brke2r2/rke2-images.linux-amd64.tar.zst
+wget https://github.com/rancher/rke2/releases/download/v1.21.5%2Brke2r2/rke2.linux-amd64.tar.gz
+wget https://github.com/rancher/rke2/releases/download/v1.21.5%2Brke2r2/sha256sum-amd64.txt
+curl -sfL https://get.rke2.io --output install.sh
+----
+
+Ensuite, exécutez install.sh en utilisant le répertoire sur chaque serveur, comme dans l'exemple ci-dessous{nbsp}:
+
+----
+INSTALL_RKE2_ARTIFACT_PATH=/tmp/rke2-artifacts sh install.sh
+----
+
+Puis activez et démarrez le service sur tous les serveurs{nbsp}:
+
+`
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+`
+
+Pour plus d'informations, reportez-vous à la {url-rke2-install-airgap}[documentation RKE2].
+
+[pass]
+<h2><a id="_4_save_and_start_using_the_kubeconfig_file"></a>4. Enregistrez et commencez à utiliser le fichier kubeconfig</h2>
+
+Lorsque vous avez installé RKE2 sur chaque nœud de serveur Rancher, un fichier `kubeconfig` a été créé sur le nœud à `/etc/rancher/rke2/rke2.yaml`. Ce fichier contient des informations d'identification pour un accès complet au cluster, et vous devez enregistrer ce fichier dans un endroit sûr.
+
+Pour utiliser ce fichier `kubeconfig`,
+
+. Installez https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl], un outil de ligne de commande Kubernetes.
+. Copiez le fichier à `/etc/rancher/rke2/rke2.yaml` et enregistrez-le dans le répertoire `~/.kube/config` sur votre machine locale.
+. Dans le fichier kubeconfig, la directive `server` est définie comme hôte local. Configurez le serveur comme le DNS de votre équilibreur de charge, en vous référant au port 6443. (Le serveur API Kubernetes sera accessible au port 6443, tandis que le serveur Rancher sera accessible aux ports 80 et 443.) Voici un exemple `rke2.yaml` :
+
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*Résultat :* Vous pouvez maintenant utiliser `kubectl` pour gérer votre cluster RKE2. Si vous avez plus d'un fichier kubeconfig, vous pouvez spécifier lequel vous souhaitez utiliser en passant le chemin du fichier lors de l'utilisation de `kubectl`{nbsp}:
+
+----
+kubectl --kubeconfig ~/.kube/config/rke2.yaml get pods --all-namespaces
+----
+
+Pour plus d'informations sur le fichier `kubeconfig`, consultez la {url-rke2-cluster-access}[documentation RKE2] ou la https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[documentation officielle de Kubernetes] sur l'organisation de l'accès au cluster à l'aide de fichiers `kubeconfig`.
+
+[pass]
+<h2><a id="_note_on_upgrading"></a>Remarque sur la mise à niveau</h2>
+
+La mise à niveau d'un environnement isolé physiquement peut être réalisée de la manière suivante{nbsp}:
+
+. Téléchargez les nouveaux artefacts isolés physiquement et le script d'installation depuis la page https://github.com/rancher/rke2/releases[releases] pour la version de RKE2 vers laquelle vous allez mettre à niveau.
+. Exécutez à nouveau le script comme vous l'aviez fait dans le passé avec les mêmes variables d'environnement.
+. Redémarrez le service RKE2.
+--
+====== 
+
+[#_issues_or_errors]
+== Problèmes ou erreurs{nbsp}?
+
+Consultez la page {xref-install-upgrade-troubleshooting}[Dépannage].

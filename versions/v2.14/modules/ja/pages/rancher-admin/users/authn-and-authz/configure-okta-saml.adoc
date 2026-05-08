@@ -1,0 +1,165 @@
+= Okta (SAML) の設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-okta-saml.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-okta-saml.adoc
+ifeval::["{build-type}" != "community"]
+:xref-global-permissions: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/global-permissions.adoc
+:xref-openldap-reference: xref:rancher-admin/users/authn-and-authz/openldap/reference.adoc
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-global-permissions: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/global-permissions.adoc 
+:xref-openldap-reference: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/configure-openldap/openldap-config-reference.adoc
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+endif::[]
+
+組織がユーザー認証に Okta アイデンティティプロバイダー (IdP) を使用している場合、Rancher を設定してユーザーが IdP の資格情報を使用してログインできるようにすることができます。
+
+[NOTE]
+====
+
+Okta の統合は、サービスプロバイダーが開始するログインのみをサポートしています。
+====
+
+
+[#_prerequisites]
+== 前提条件
+
+Okta で、以下の設定を持つ SAML アプリケーションを作成します。ヘルプについては、 https://developer.okta.com/standards/SAML/setting_up_a_saml_application_in_okta[Okta ドキュメント] を参照してください。
+
+|===
+| 設定 | 値
+
+| `Single Sign on URL`
+| `https://yourRancherHostURL/v1-saml/okta/saml/acs`
+
+| `Audience URI (SP Entity ID)`
+| `https://yourRancherHostURL/v1-saml/okta/saml/metadata`
+|===
+
+[#_configuring_okta_in_rancher]
+== Rancher における Okta の設定
+
+Okta を Rancher と統合することで、認証されたユーザーがグループの権限を通じて Rancher リソースにアクセスできるようになります。Okta は、ユーザーを認証する SAML アサーションを返し、ユーザーが所属するグループを含みます。
+
+. 左上隅で、*☰ > ユーザーと認証*をクリックします。
+. 左側のナビゲーションメニューで、*認証プロバイダー*をクリックします。
+. *Okta* をクリックします。
+. *Okta アカウントの設定* フォームに入力してください。以下の例では、属性ステートメントから Rancher 内のフィールドに Okta 属性をマッピングする方法を説明します。
++
+|===
+| フィールド | 説明
+
+| 表示名フィールド
+| ユーザーの表示名を含む属性ステートメントからの属性名。
+
+| ユーザー名フィールド
+| ユーザー名/名を含む属性ステートメントからの属性名。
+
+| UID フィールド
+| すべてのユーザーに固有の属性ステートメントからの属性名。
+
+| グループフィールド
+| あなたのグループを公開するグループ属性ステートメント内の属性名。
+
+| Rancher APIホスト
+| あなたのRancherサーバーのURLです。
+
+| 秘密鍵 / 証明書
+| アサーション暗号化に使用されるキー/証明書ペア。
+
+| メタデータXML
+| アプリケーション`Identity Provider metadata``Sign On`セクションにあるファイル。
+|===
++
+
+[TIP]
+====
+openssl コマンドを使用してキー/証明書ペアを生成できます。次に例を示します。
+
+----
+ openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -keyout myservice.key -out myservice.crt
+----
+====
+
+
+. *Oktaアカウントの設定*フォームに入力した後、*有効化*をクリックします。
++
+RancherはIdPログインページにリダイレクトします。RancherのOkta設定を検証するために、Okta IdPで認証される資格情報を入力します。
++
+
+[NOTE]
+====
+何も起こらない場合は、ブラウザがポップアップをブロックしている可能性があります。Rancherドメインのポップアップブロッカーを無効にし、使用している他の拡張機能でホワイトリストに追加してください。
+====
+
+
+*結果:*RancherはOktaと連携するように設定されています。ユーザーはOktaのログインを使用してRancherにサインインできるようになりました。
+
+[NOTE]
+.SAMLプロバイダーの注意点
+====
+OpenLDAPなしでOktaを設定すると、ユーザーやグループを検索したり直接参照したりすることができません。これにはいくつかの注意点があります：
+
+* Rancherで権限を割り当てる際、ユーザーとグループは検証されません。
+* ユーザーを追加する際、正確なユーザーID（つまり`UID Field`）を正しく入力する必要があります。ユーザーIDを入力すると、他の一致するユーザーIDの検索は行われません。
+* グループを追加する際は、テキストボックスの隣にあるドロップダウンからグループを選択する必要があります。Rancherは、テキストボックスからの入力がユーザーであると仮定します。
+* グループのドロップダウンには、あなたがメンバーであるグループのみが表示されます。ただし、管理者権限または制限された管理者権限を持っている場合、メンバーでないグループに参加することができます。
+====
+
+[#_okta_with_openldap_search]
+== OpenLDAP検索を使用したOkta
+
+ユーザーとグループの検索を支援するためにOpenLDAPバックエンドを追加できます。RancherはOpenLDAPサービスから追加のユーザーとグループを表示します。これにより、ログインしているユーザーがまだメンバーでないグループに権限を割り当てることができます。
+
+[#_openldap_prerequisites]
+=== OpenLDAPの前提条件
+
+OktaをIdPとして使用する場合、Rancherが使用するための https://help.okta.com/en-us/Content/Topics/Directory/LDAP-interface-main.htm[LDAPインターフェースを設定]できます。外部のOpenLDAPサーバーを設定することもできます。
+
+アクセス権を持つユーザーやグループのLDAPエントリを検索および取得できるように、RancherはLDAPバインドアカウント（サービスアカウントとも呼ばれます）で構成する必要があります。LDAPバインドアカウントとして管理者アカウントや個人アカウントを使用しないでください。 https://help.okta.com/en-us/Content/Topics/users-groups-profiles/usgp-add-users.htm[作成] OpenLDAPで専用のアカウントを作成し、設定された検索ベースの下にあるユーザーとグループへの読み取り専用アクセスを付与してください。
+
+[CAUTION]
+.セキュリティ上の考慮事項
+====
+
+OpenLDAPサービスアカウントはすべての検索に使用されます。Rancherユーザーは、OpenLDAPサービスアカウントが表示できるユーザーとグループを確認できます。これは、各自のSAML権限に関係なく表示されます。
+====
+
+
+____
+*TLSを使用していますか？*
+
+OpenLDAPサーバーで使用される証明書が自己署名であるか、認識されていない証明書機関からのものである場合、RancherはCA証明書（中間証明書と連結されたもの）をPEM形式で必要とします。この証明書を設定中に提供してください。そうすれば、Rancherは証明書チェーンを検証できます。
+____
+
+[#_configure_openldap_in_rancher]
+=== RancherでOpenLDAPを設定する
+
+{xref-openldap-reference}[OpenLDAPサーバー、グループ、およびユーザーの設定を構成します]。ネストされたグループメンバーシップは利用できないことに注意してください。
+
+____
+設定を進める前に、{xref-authn-authz}#_external_authentication_configuration_and_principal_users[外部認証設定と主要ユーザー]に慣れておいてください。
+____
+
+. {xref-global-permissions}[管理者]ロール（つまり、_ローカルプリンシパル_）が割り当てられたローカルユーザーを使用してRancherにサインインします。
+. 左上隅で、*☰ > ユーザーと認証*をクリックします。
+. 左側のナビゲーションメニューで、*認証プロバイダー*をクリックします。
+. *Okta*をクリックするか、SAMLがすでに設定されている場合は、*Edit Config*をクリックしてください。
+. *User and Group Search*の下で、*OpenLDAPサーバーを設定する*を確認してください。
+
+OpenLDAPサーバーへの接続をテストする際に問題が発生した場合は、サービスアカウントの資格情報を正しく入力し、検索ベースを正しく設定したことを確認してください。Rancherのログを調査することで、ルート原因を特定するのに役立ちます。デバッグログには、エラーに関するより詳細な情報が含まれている場合があります。詳細については、xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[デバッグログを有効にするにはどうすればよいですか]を参照してください。
+
+[#_configuring_saml_single_logout_slo]
+== SAMLシングルログアウト（SLO）の設定
+
+include::shared:ROOT:partial$en/configure-slo.adoc[]
+
+[#_saml_and_openldap_group_permissions]
+== SAMLとOpenLDAPグループ権限
+
+include::shared:ROOT:partial$en/saml-openldap-group-permissions.adoc[]

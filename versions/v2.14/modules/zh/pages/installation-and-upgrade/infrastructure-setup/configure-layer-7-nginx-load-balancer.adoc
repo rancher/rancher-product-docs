@@ -1,45 +1,67 @@
-= 7 层 NGINX 负载均衡器上的 TLS 终止（Docker 安装）
+= 在第 7 层 NGINX 负载均衡器进行 TLS 终止的 Docker 安装
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+endif::[]
+:revdate: 2025-08-27
 :page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/configure-layer-7-nginx-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/configure-layer-7-nginx-load-balancer.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-air-gap: xref:installation-and-upgrade/other-installation-methods/air-gapped/air-gapped.adoc
+:xref-enable-api-audit-log: xref:observability/logging/enable-api-audit-log.adoc
+:xref-certificate-troubleshooting: xref:installation-and-upgrade/troubleshooting/certificate-troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-air-gap: xref:getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/index.adoc
+:xref-enable-api-audit-log: xref:how-to-guides/advanced-user-guides/enable-api-audit-log.adoc
+:xref-certificate-troubleshooting: xref:getting-started/installation-and-upgrade/other-installation-methods/rancher-on-a-single-node-with-docker/certificate-troubleshooting.adoc
+endif::[]
 
-如果你的开发或测试环境要求在负载均衡器上终止 TLS/SSL，而不是在 Rancher Server 上，请部署 Rancher 并配置负载均衡器。
+对于在负载均衡器上终止 TLS/SSL 而不是在 Rancher Server 容器中有特殊要求的开发和测试环境，部署 Rancher 并配置负载均衡器以与之协同工作。
 
-如果要在基础设施中对 TLS 集中进行终止，请使用 7 层负载均衡器。7 层负载均衡还能让你的负载均衡器基于 HTTP 属性（例如 cookie 等）做出决策，而 4 层负载均衡器则不能。
+如果您希望在基础设施中集中管理 TLS 终止，第 7 层负载均衡器可能会很有帮助。Layer-7 负载平衡器还提供了让负载平衡器基于 HTTP 属性（如 cookies 等）做出决策的能力，而 Layer-4 负载平衡器无法处理这些。
 
-本文中的安装步骤将引导你使用单个容器部署 Rancher，并提供 7 层 NGINX 负载均衡器的示例配置。
+此安装过程将引导您通过使用单个容器部署 Rancher，然后提供第 7 层 NGINX 负载均衡器的示例配置。
 
-== 操作系统，Docker，硬件和网络要求
+[#_requirements_for_os_docker_hardware_and_networking]
+== 操作系统、Docker、硬件和网络的要求
 
-请确保你的节点满足常规的xref:installation-and-upgrade/requirements/requirements.adoc[安装要求]。
+确保您的节点满足一般 {xref-install-reqs}[安装要求。]
 
-== 安装概要
+[#_installation_outline]
+== 安装大纲
 
-== 1. 配置 Linux 主机
+[#_1_provision_linux_host]
+== 1.配置 Linux 主机
 
-根据我们的xref:installation-and-upgrade/requirements/requirements.adoc[要求]配置一个 Linux 主机来启动 Rancher Server。
+根据我们的 {xref-install-reqs}[要求] 配置单个 Linux 主机以启动您的 Rancher Server。
 
-== 2. 选择一个 SSL 选项并安装 Rancher
+[#_2_choose_an_ssl_option_and_install_rancher]
+== 2.选择 SSL 选项并安装 Rancher
 
-出于安全考虑，使用 Rancher 时请使用 SSL（Secure Sockets Layer）。SSL 保护所有 Rancher 网络通信（如登录和与集群交互）的安全。
+出于安全考虑，使用 Rancher 时需要 SSL（安全套接字层）。SSL 保护所有 Rancher 网络通信，例如当您登录或与集群交互时。
 
 [NOTE]
-.你是否需要：
+.您想要..
 ====
 
-* 完成离线安装。
-* 记录所有 Rancher API 的事务。
+* 完成隔离安装吗？
+* 记录所有与 Rancher API 的交易吗？
 
-继续之前，请参见<<_高级选项,高级选项>>。
+在继续之前，请查看下面的 <<_advanced_options,高级选项>>。
 ====
 
 
-选择以下的选项之一：
+从以下选项中选择：
 
-.选项 A：使用你自己的证书 - 自签名
+.选项 A-自带证书：自签名
 [%collapsible]
 ======
-如果要使用自签名证书来加密通信，你必须在负载均衡器（后续步骤）和 Rancher 容器上安装证书。运行 Docker 命令部署 Rancher，将 Docker 指向你的证书。
+如果您选择使用自签名证书来加密通信，您必须在负载均衡器上安装该证书（稍后会进行）以及您的 Rancher 容器。运行 Docker 命令以部署 Rancher，并指向您的证书。
 
 [NOTE]
 .先决条件：
@@ -47,13 +69,13 @@
 
 创建自签名证书。
 
-* 证书文件的格式必须是 PEM。
+* 证书文件必须为 PEM 格式。
 ====
 
 
-*使用自签名证书安装 Rancher*：
+*使用自签名证书安装 Rancher：*
 
-. 在运行 Docker 命令部署 Rancher 时，将 Docker 指向你的 CA 证书文件。
+. 在运行 Docker 命令以部署 Rancher 时，请将 Docker 指向您的 CA 证书文件。
 +
 ----
 docker run -d --restart=unless-stopped \
@@ -63,77 +85,79 @@ docker run -d --restart=unless-stopped \
 ----
 +
 ======
-.选项 B：使用你自己的证书 - 可信 CA 签名的证书
+选项 B-自带证书：由认可的 CA 签名
 [%collapsible]
 ======
-如果你的集群面向公众，则最好使用由公认 CA 签署的证书。
+如果您的集群面向公众，最好使用由认可的 CA 签发的证书。
 
 [NOTE]
 .先决条件：
 ====
 
-* 证书文件的格式必须是 PEM。
+* 证书文件必须为 PEM 格式。
 ====
 
 
-*使用授信 CA 签发的证书安装 Rancher*：
+*使用由认可的 CA 签发的证书安装 Rancher：*
 
-如果你使用授信 CA 签发的证书，你无需在 Rancher 容器中安装证书。但是，请确保不要生成和存储默认的 CA 证书（你可以通过将 `--no-cacerts` 参数传递给容器来实现）。
+如果您使用由认可的 CA 签发的证书，则无需在 Rancher 容器中安装您的证书。我们必须确保没有生成和存储默认的 CA 证书，您可以通过将 `--no-cacerts` 参数传递给容器来实现。
 
-. 输入以下命令：
+. 输入以下命令。
 +
 ----
- docker run -d --restart=unless-stopped \
-   -p 80:80 -p 443:443 \
-   rancher/rancher:latest --no-cacerts
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  rancher/rancher:latest --no-cacerts
 ----
 +
 ======
 
-== 3. 配置负载均衡器
+[#_3_configure_load_balancer]
+== 3.配置负载均衡器
 
-在 Rancher 容器前使用负载均衡器时，容器无需从端口 80 或端口 443 重定向端口通信。你可以通过传递 `X-Forwarded-Proto: https` 标头禁用此重定向。
+在 Rancher 容器前使用负载均衡器时，容器无需将端口 80 或端口 443 的通信重定向。通过传递 `X-Forwarded-Proto: https` 头部，可以禁用此重定向。
 
-负载均衡器或代理必须支持以下内容：
+负载平衡器或代理必须配置以支持以下内容：
 
 * *WebSocket* 连接
 * *SPDY* / *HTTP/2* 协议
-* 传递/设置以下标头：
+* 传递/设置以下头部：
 +
 |===
-| 标头 | 值 | 描述
+| 信头 | 值 | 说明
 
 | `Host`
 | 用于访问 Rancher 的主机名。
-| 识别客户端所请求的服务器。
+| 识别客户端请求的服务器。
 
 | `X-Forwarded-Proto`
 | `https`
-| 识别客户端连接负载均衡器或代理时所用的协议。*注意*：如果此标头存在，`rancher/rancher` 不会将 HTTP 重定向到 HTTPS。
+| 识别客户端用于连接负载均衡器或代理的协议。*注意：*如果此头部存在，`rancher/rancher` 不会将 HTTP 重定向到 HTTPS。
 
 | `X-Forwarded-Port`
 | 用于访问 Rancher 的端口。
-| 识别客户端连接到负载均衡器或代理时所用的端口。
+| 识别客户端用于连接负载均衡器或代理的协议。
 
 | `X-Forwarded-For`
-| 客户端 IP 地址
-| 识别客户端的原始 IP 地址。
+| 客户端连接的 IP。
+| 识别客户端的源 IP 地址。
 |===
 
+[#_example_nginx_configuration]
 === 示例 NGINX 配置
 
-此 NGINX 配置已在 NGINX 1.14 上进行了测试。
+此 NGINX 配置在 NGINX 1.14 上进行了测试。
 
 [NOTE]
 ====
 
-此 NGINX 配置只是一个示例，可能不适合你的环境。如需查阅完整文档，请参见 https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/[NGINX 负载均衡 - HTTP 负载均衡]。
+此 NGINX 配置仅为示例，可能不适合您的环境。有关完整文档，请参见 https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/[NGINX 负载平衡 - HTTP 负载平衡]。
 ====
 
 
-* 将 `rancher-server` 替换为运行 Rancher 容器的节点的 IP 或主机名。
-* 将两处的 `FQDN` 均替换为 Rancher 的 DNS 名称。
-* 把 `/certs/fullchain.pem` 和 `/certs/privkey.pem` 分别替换为服务器证书和服务器证书密钥的位置。
+* 将 `rancher-server` 替换为运行 Rancher 容器的节点的 IP 地址或主机名。
+* 将 `FQDN` 的两个出现替换为 Rancher 的 DNS 名称。
+* 将 `/certs/fullchain.pem` 和 `/certs/privkey.pem` 替换为服务器证书和服务器证书密钥的位置。
 
 ----
 worker_processes 4;
@@ -168,7 +192,7 @@ http {
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
-            # 此项允许执行的 shell 窗口保持开启，最长可达15分钟。不使用此参数的话，默认1分钟后自动关闭。
+            # This allows the ability for the execute shell window to remain open for up to 15 minutes. Without this parameter, the default is 1 minute and will automatically close.
             proxy_read_timeout 900s;
             proxy_buffering off;
         }
@@ -182,42 +206,51 @@ http {
 }
 ----
 
-{blank} +
+{blank}
 
-== 后续操作
+[#_whats_next]
+== 下一步怎么办？
 
-* *推荐*：检查单节点xref:[备份]和xref:[恢复]。你可能暂时没有需要备份的数据，但是我们建议你在常规使用 Rancher 后创建备份。
-* 创建 Kubernetes 集群：xref:cluster-deployment/cluster-deployment.adoc[配置 Kubernetes 集群]。
+* *推荐：*查看单节点 xref:[备份] 和 xref:[恢复]。尽管您现在没有需要备份的数据，但我们建议在定期使用 Rancher 后创建备份。
+* 创建 Kubernetes 集群：{xref-cluster-deployment}[配置 Kubernetes 集群]。
 
-== 常见问题和故障排除
+{blank}
 
-如果你需要对证书进行故障排除，请参见xref:installation-and-upgrade/troubleshooting/certificate-troubleshooting.adoc[此章节]。
+[#_faq_and_troubleshooting]
+== 常见问题解答和故障排除
 
+有关帮助排查证书的问题，请参见 {xref-certificate-troubleshooting}[本节。]
+
+[#_advanced_options]
 == 高级选项
 
+[#_api_auditing]
 === API 审计
 
-如果你需要记录所有 Rancher API 事务，请将以下标志添加到安装命令中，从而启用 xref:observability/logging/enable-api-audit-log.adoc[API 审计]功能。
+如果您想记录所有与 Rancher API 的交易，请通过在安装命令中添加以下标志来启用 {xref-enable-api-audit-log}[API 审计] 功能。
 
  -e AUDIT_LEVEL=1 \
+ -e AUDIT_LOG_ENABLED=true \
  -e AUDIT_LOG_PATH=/var/log/auditlog/rancher-api-audit.log \
  -e AUDIT_LOG_MAXAGE=20 \
  -e AUDIT_LOG_MAXBACKUP=20 \
  -e AUDIT_LOG_MAXSIZE=100 \
 
-=== 离线环境
+[#_air_gap]
+=== 隔离
 
-如果你访问此页面是为了完成xref:installation-and-upgrade/other-installation-methods/air-gapped/air-gapped.adoc[离线安装]，则在运行安装命令时，先将你的私有镜像仓库 URL 附加到 Server 标志中。也就是说，在 `rancher/rancher:latest` 前面添加 `<REGISTRY.DOMAIN.COM:PORT>` 和私有镜像仓库 URL。
+如果您访问此页面是为了完成 {xref-air-gap}[隔离安装]，则在运行您选择的安装命令时，必须在服务器标签前添加您的私有注册表 URL。在 `<REGISTRY.DOMAIN.COM:PORT>` 前添加带有您私有注册表 URL 的 `rancher/rancher:latest`.
 
-*示例*：
+*示例：*
 
   <REGISTRY.DOMAIN.COM:PORT>/rancher/rancher:latest
 
-=== 持久化数据
+[#_persistent_data]
+=== 持久数据
 
-Rancher 使用 etcd 作为数据存储。如果 Rancher 是使用 Docker 安装的，Rancher 会使用嵌入式 etcd。持久化数据位于容器的 `/var/lib/rancher` 路径中。
+Rancher 使用 etcd 作为数据存储。当 Rancher 与 Docker 一起安装时，使用的是嵌入式 etcd。持久数据位于容器中的以下路径：`/var/lib/rancher`。
 
-你可以将主机卷挂载到该位置，来将数据保留在运行它的主机上：
+您可以将主机卷绑定挂载到此位置，以保留其运行所在主机上的数据：
 
 ----
 docker run -d --restart=unless-stopped \
@@ -227,14 +260,14 @@ docker run -d --restart=unless-stopped \
   rancher/rancher:latest
 ----
 
-此操作需要 xref:#_rancher_特权访问[privileged 访问]。
+此操作需要 xref:#_privileged_access_for_rancher[特权访问]。
 
-这个 7 层 NGINX 配置已经在 NGINX 1.13（Mainline）和 1.14（Stable）版本上进行了测试。
+此第 7 层 NGINX 配置已在 NGINX 版本 1.13（主线）和 1.14（稳定）上进行测试。
 
 [NOTE]
 ====
 
-此 NGINX 配置只是一个示例，可能不适合你的环境。如果需要查阅完整文档，请参见 https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/[NGINX 负载均衡 - TCP 和 UDP 负载均衡器]。
+此 NGINX 配置仅为示例，可能不适合您的环境。有关完整文档，请参见 https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/[NGINX 负载平衡 - TCP 和 UDP 负载平衡器]。
 ====
 
 
@@ -263,7 +296,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
-        # 此项允许执行的 shell 窗口保持开启，最长可达15分钟。不使用此参数的话，默认1分钟后自动关闭。
+        # This allows the ability for the execute shell window to remain open for up to 15 minutes. Without this parameter, the default is 1 minute and will automatically close.
         proxy_read_timeout 900s;
         proxy_buffering off;
     }
@@ -276,4 +309,4 @@ server {
 }
 ----
 
-{blank} +
+{blank}

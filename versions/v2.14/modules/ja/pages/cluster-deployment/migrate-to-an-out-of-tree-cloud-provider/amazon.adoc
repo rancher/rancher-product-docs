@@ -1,0 +1,222 @@
+= Amazonのインツリーからアウトオブツリーへの移行
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-amazon.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/amazon.adoc
+ifeval::["{build-type}" != "community"]
+:xref-cloud-provider-amazon: xref:cluster-deployment/set-up-cloud-providers/amazon.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cloud-provider-amazon: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/amazon.adoc
+endif::[]
+
+Kubernetesは、クラウドプロバイダーをインツリーで維持することから移行しています。Kubernetes v1.27以降では、インツリーのクラウドプロバイダーが削除されました。Rancher UIでは、インツリーからアウトオブツリーのプロバイダーに移行する際にKubernetes v1.27にアップグレードすることができます。
+
+ただし、手動で移行を行う場合、既存のクラスターは機能を維持するために移行後にKubernetes v1.27にアップグレードする必要があります。
+
+インツリーのクラウドプロバイダーからアウトオブツリーのAWSクラウドプロバイダーに移行するには、既存のクラスターのkubeコントローラーマネージャーを停止し、AWSクラウドコントローラーマネージャーをインストールする必要があります。これを行う方法はいくつかあります。詳細については、 https://cloud-provider-aws.sigs.k8s.io/getting_started/[外部クラウドコントローラーマネージャー]に関する公式AWSドキュメントを参照してください。
+
+移行中にダウンタイムが発生しても問題ない場合は、{xref-cloud-provider-amazon}#_using_the_out_of_tree_aws_cloud_provider[外部クラウドプロバイダーをセットアップする]の手順に従ってください。これらの手順は、新しくプロビジョニングされたクラスターのためにアウトオブツリーのクラウドプロバイダーを構成する方法を概説しています。セットアップ中は、古いクラウドプロバイダーが停止し、新しいクラウドプロバイダーが稼働を開始するまでの時間差があるため、ダウンタイムが発生します。
+
+セットアップがコントロールプレーンのダウンタイムを許容できない場合は、リーダー移行を有効にする必要があります。これにより、kubeコントローラーマネージャーのコントローラーからクラウドコントローラーマネージャーの対応するコントローラーへのスムーズな移行が促進されます。詳細については、 https://cloud-provider-aws.sigs.k8s.io/getting_started/[リーダー移行の使用]に関する公式AWSドキュメントを参照してください。
+
+[NOTE]
+.重要:
+====
+Kubernetesの https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#before-you-begin[クラウドコントローラー移行ドキュメント]によれば、同じKubernetesバージョンでの移行が可能ですが、移行はKubernetesのアップグレードの一部であると想定されています。移行前にセットアップをカスタマイズする必要があるかどうかを確認するには、Kubernetesのドキュメントの https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/[クラウドコントローラーマネージャーの使用に関する移行]を参照してください。 https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#default-configuration[移行設定値]を確認してください。クラウドプロバイダーがNode IPAMコントローラーの実装を提供している場合、IPAMコントローラーを https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#node-ipam-controller-migration[移行する必要があります]。
+====
+
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. クラスタ設定を更新してリーダー移行を有効にします：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+このステップでは、クラウドプロバイダーがまだ`aws`であることに注意してください：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: aws
+----
+
+. コントロールプレーンノードをcordon状態にして、AWSクラウドコントローラーポッドが外部クラウドプロバイダーにアップグレードされた後のみ各ノードで実行されるようにします：
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/control-plane=true"
+----
++
+. リーダー移行を有効にしたAWSクラウドコントローラーマネージャーをインストールするには、{xref-cloud-provider-amazon}#_using_the_out_of_tree_aws_cloud_provider[クラウドコントローラーマネージャーチャートのデプロイ]の手順1-3に従ってください。Kubernetes 1.22以降、kube-controller-managerはコントローラーからマネージャーへの移行を満たすデフォルト構成を利用します。リーダー移行を有効にするために、`aws-cloud-controller-manager`の下の`spec.rkeConfig.additionalManifest`のコンテナ引数を更新します：
++
+[,shell]
+----
+- '--enable-leader-migration=true'
+----
++
+. チャートをインストールし、Daemonset `aws-cloud-controller-manager`が正常にデプロイされたことを確認します：
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
++
+. プロビジョニングクラスタを更新してクラウドプロバイダーを変更し、kubeコントローラーからリーダー移行引数を削除します。
+Kubernetesのバージョンをアップグレードする場合は、クラスタYAMLファイルの`spec.kubernetesVersion`セクションでもKubernetesのバージョンを設定します。
++
+[NOTE]
+.重要
+====
+rke2スーパーバイザーにプロバイダーIDを正しく設定してもらうことに頼らない場合は、`cloud-provider-name: aws`を削除してください。
+====
++
+クラスタで有効にしたくない場合は、`enable-leader-migration`を削除してください：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: external
+----
++
+以下から`enable-leader-migration`を削除します：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+[TIP]
+====
+アップグレード後にリーダー移行を無効にすることもできます。リーダー移行は、クラウドコントローラーマネージャーが1つだけであるため、もはや必要ありません。
+チャートをアップグレードし、コンテナ引数から以下のセクションを削除します：
+
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+====
++
+以下のコマンドでクラウドコントローラーマネージャーの更新が正常に展開されたことを確認します：
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
++
+. クラウドプロバイダーはノードのProviderIDを設定する責任があります。すべてのノードがProviderIDで初期化されているか確認します：
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+--
+
+RKE::
++
+--
+. `cluster.yml`でリーダー移行を有効にするためにクラスタ設定を更新します：
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
++
+このステップでは、クラウドプロバイダーがまだ`aws`であることに注意してください：
++
+[,yaml]
+----
+cloud_provider:
+  name: aws
+----
+
+. コントロールプレーンノードをcordon状態にして、AWSクラウドコントローラーポッドが外部クラウドプロバイダーにアップグレードされた後のみ各ノードで実行されるようにします：
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/controlplane=true"
+----
+
+. AWSクラウドコントローラーマネージャーをインストールするには、リーダー移行を有効にし、新しいクラスタにAWSをインストールする際と同じ手順に従う必要があります。リーダー移行を有効にするには、{xref-cloud-provider-amazon}#_helm_chart_installation_from_ui[チャートをインストールする手順]に従って、ステップ7のコンテナ引数に以下を追加してください。
++
+[,yaml]
+----
+- '--enable-leader-migration=true'
+----
+
+. チャートがインストールされていることを確認しますが、新しいポッドはスケジューリング不可にされたコントロールプレーンノードのためにまだ実行されていません。次のステップでクラスターを更新した後、RKEは各ノードをアップグレードし、スケジューリング可能にし、`aws-controller-manager`ポッドをスケジュールします。
+. `cluster.yml`を更新してクラウドプロバイダーを変更し、kube-controllerからリーダー移行引数を削除します。
++
+*外部Amazon（アウトオブツリー）*を選択すると、`--cloud-provider=external`が設定され、`useInstanceMetadataHostname`を有効にすることができます。ノードドライバークラスタやカスタムクラスタの場合、`useInstanceMetadataHostname`でカスタムノード名を提供しないのであれば、`--node-name`を有効にする必要があります。`useInstanceMetadataHostname`を有効にすると、ec2メタデータサービスにクエリを実行し、`kubelet`および`kube-proxy`のために`/hostname`を`hostname-override`として設定します。
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true/false
+----
++
+クラスタで有効にしたくない場合は、`enable-leader-migration`を削除してください：
++
+[,yaml]
+----
+  services:
+    kube-controller:
+      extra_args:
+        enable-leader-migration: "true"
+----
++
+[TIP]
+====
+移行が完了した後、リーダー移行を無効にすることもできます。チャートをアップグレードし、コンテナ引数から以下のセクションを削除します：
+
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+====
+
+
+. クラスターのKubernetesバージョンをアップグレードしている場合は、Kubernetesバージョンも設定してください。
+. クラスターを更新します。`aws-cloud-controller-manager`ポッドは現在実行中であるべきです。
+--
+======

@@ -1,0 +1,293 @@
+= Keycloak (OIDC) を設定する
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-12-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-keycloak-oidc.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-keycloak-oidc.adoc
+:description: Keycloak OpenID Connect (OIDC) クライアントを作成し、Rancher が Keycloak と連携するように設定します。最終的に、ユーザーは Keycloak のログイン情報を使用して Rancher にサインインできるようになります。
+ifeval::["{build-type}" != "community"]
+:xref-keycloak-saml: xref:rancher-admin/users/authn-and-authz/configure-keycloak-saml.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-keycloak-saml: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-keycloak-saml.adoc
+endif::[]
+
+組織がユーザー認証に https://www.keycloak.org[Keycloak アイデンティティプロバイダー (IdP)] を使用している場合、Rancher を設定してユーザーが IdP の資格情報を使用してログインできるようにすることができます。Rancher は OpenID Connect (OIDC) プロトコルと SAML プロトコルを使用した Keycloak との統合をサポートしています。両方の実装は、Rancher で使用する際に機能的に同等です。このページでは、OIDC プロトコルを使用して Rancher を Keycloak と連携させるための設定手順を説明します。
+
+SAML プロトコルを使用して Keycloak を利用したい場合は、{xref-keycloak-saml}[このページ]を参照してください。
+
+既存の SAML プロトコルを使用した設定があり、OIDC プロトコルに切り替えたい場合は、<<_migrating_from_saml_to_oidc,このセクション>>を参照してください。
+
+[#_prerequisites]
+== 前提条件
+
+* Rancher では、Keycloak (SAML) は無効になっています。
+* https://www.keycloak.org/guides#getting-started[Keycloak IdP サーバー] を設定する必要があります。
+* 以下の設定で新しい OIDC クライアントを作成するには、 https://www.keycloak.org/docs/latest/server_admin/#proc-creating-oidc-client_server_administration_guide[Keycloak ドキュメント]に従ってください。
++
+|===
+| 設定 | 値
+
+| `Client ID`
+| <client-id> (例: `rancher`)
+
+| `Name`
+| <client-name> (例: `rancher`)
+
+| `Client type`
+| `OpenID Connect`
+
+| `Client authentication`
+| `ON`
+
+| `Valid Redirect URI`
+| `https://yourRancherHostURL/verify-auth`
+|===
+
+* 新しい OIDC クライアントで、ユーザーのフィールドを公開するために https://www.keycloak.org/docs/latest/server_admin/#_protocol-mappers[マッパー] を作成します。
+.. ナビゲーションメニューで、**クライアント** をクリックします。
+.. **クライアントリスト** タブをクリックします。
+.. 作成したクライアントを見つけてクリックします。
+.. **クライアントスコープ** タブをクリックします。
+.. `<client-name>-dedicated`とラベル付けされたリンクを見つけてクリックします。例えば、クライアントに`rancher`という名前を付けた場合、`rancher-dedicated`という名前のリンクを探します。
+.. **マッパー**タブをクリックします。
+.. **新しいマッパーを設定する**をクリックします。既存のマッパーが設定されている場合は、**Add mapper**の隣にある矢印をクリックして、**設定による**を選択します。このプロセスを繰り返し、次のマッパーを作成します：
+*** マッピングテーブルから、**グループメンバーシップ**を選択し、以下の設定で新しい「グループマッパー」を設定します。言及されていない設定については、デフォルト値を使用してください。
++
+|===
+| 設定 | 値
+
+| `Name`
+| `Groups Mapper`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `groups`
+
+| `Full group path`
+| `OFF`
+
+| `Add to ID token`
+| `OFF`
+
+| `Add to access token`
+| `OFF`
+
+| `Add to user info`
+| `ON`
+|===
+
+*** マッピングテーブルから、**オーディエンス**を選択し、以下の設定で新しい「クライアントオーディエンス」を設定します。言及されていない設定については、デフォルト値を使用してください。
++
+|===
+| 設定 | 値
+
+| `Name`
+| `Client Audience`
+
+| `Mapper Type`
+| `Audience`
+
+| `Included Client Audience`
+| <client-name>
+
+| `Add to ID token`
+| `OFF`
+
+| `Add to access token`
+| `ON`
+|===
+
+*** マッピングテーブルから、**グループメンバーシップ**を選択し、以下の設定で新しい「グループパス」を設定します。言及されていない設定については、デフォルト値を使用してください。
++
+|===
+| 設定 | 値
+
+| `Name`
+| `Group Path`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `full_group_path`
+
+| `Full group path`
+| `ON`
+
+| `Add to ID token`
+| `ON`
+
+| `Add to access token`
+| `ON`
+
+| `Add to user info`
+| `ON`
+|===
+
+* Keycloakユーザーをクエリする必要があるすべてのユーザーまたはグループに、次のロールマッピングを追加します。
++
+[tabs]
+======
+ユーザ::
++
+--
+.. ナビゲーションメニューで、**ユーザー**をクリックします。
+.. ロールマッピングを追加したいユーザーをクリックします。
+.. **ロールマッピング**タブをクリックします。
+.. **ロールを割り当てる**をクリックします。
+.. 次のロールを選択します：
+*** query-users
+*** query-groups
+*** view-users
+.. **割り当てる**をクリックします。
+--
+
+グループ::
++
+--
+.. ナビゲーションメニューで、**グループ**をクリックします。
+.. ロールマッピングを追加したいグループをクリックします。
+.. **ロールマッピング**タブをクリックします。
+.. **ロールを割り当てる**をクリックします。
+.. 次のロールを選択します：
+*** query-users
+*** query-groups
+*** view-users
+.. **割り当てる**をクリックします。
+--
+======
+
+[#_configuring_keycloak_in_rancher]
+== RancherでのKeycloakの設定
+
+. Rancher UIで、*☰ > ユーザーと認証*をクリックします。
+. 左のナビゲーションバーで、*認証プロバイダー*をクリックします。
+. *Keycloak (OIDC)*を選択します。
+. *Keycloak OIDCアカウントの設定*フォームに入力します。フォームの記入に関するヘルプは、<<_configuration_reference,設定リファレンス>>を参照してください。
++
+[NOTE]
+====
+**生成**オプションを使用して**エンドポイント**セクションを設定する際、Rancherは`/auth`を**発行者**および**認証エンドポイント**フィールドのコンテキストパスの一部として含めます。これはKeycloak 16またはそれ以前のバージョンにのみ有効です。 https://www.keycloak.org/docs/latest/release_notes/index.html#keycloak-17-0-0[Keycloak 17]以降のバージョンでは、**指定**オプションを使用してエンドポイントを設定する必要があります。これらは https://www.keycloak.org/migration/migrating-to-quarkus[Quarkusに移行された]ものです。
+====
+
+. *Keycloak OIDCアカウントの設定*フォームに入力した後、*有効化*をクリックします。
++
+RancherはIdPログインページにリダイレクトします。RancherのKeycloak設定を検証するために、Keycloak IdPで認証される資格情報を入力します。
++
+
+[NOTE]
+====
+IdPログインページを見るためにポップアップブロッカーを無効にする必要があるかもしれません。
+====
+
+
+*結果:*RancherはOIDCプロトコルを使用してKeycloakと連携するように設定されています。ユーザーはKeycloakのログイン情報を使用してRancherにサインインできるようになりました。
+
+[#_configuration_reference]
+== 構成リファレンス
+
+|===
+| フィールド | 説明
+
+| クライアントID
+| あなたのKeycloakクライアントの`Client ID`。
+
+| クライアントシークレット
+| あなたのKeycloakクライアントの生成された`Secret`。Keycloakコンソールで、*クライアント*を選択し、作成したクライアントを選択し、*資格情報*タブを選択して`Secret`フィールドの値をコピーします。
+
+| 秘密鍵 / 証明書
+| RancherとあなたのIdPの間に安全な接続を作成するための鍵/証明書ペアです。KeycloakサーバーでHTTPS/SSLが有効になっている場合は必須です。
+
+| エンドポイント
+| `Rancher URL`、`Issue`、および`Auth Endpoint`フィールドに生成された値を使用するか、誤っている場合は手動で上書きするかを選択してください。
+
+| Keycloak URL
+| あなたのKeycloakサーバーのURLです。
+
+| Keycloakレルム
+| Keycloakクライアントが作成されたレルムの名前です。
+
+| Rancher URL
+| あなたのRancherサーバーのURLです。
+
+| ［発行者］
+| あなたのIdPのURLです。
+
+| 認証エンドポイント
+| ユーザーが認証するためにリダイレクトされるURLです。
+|===
+
+[#_migrating_from_saml_to_oidc]
+== SAMLからOIDCへの移行
+
+このセクションでは、RancherをKeycloak（SAML）からKeycloak（OIDC）に移行するプロセスについて説明します。
+
+. Keycloakを再構成します。
+.. <<_prerequisites,前提条件>>に従って新しい`OpenID Connect`クライアントを構成します。同じ`Valid Redirect URIs`が設定されていることを確認してください。
+.. <<_prerequisites,前提条件>>に従って新しいクライアントのマッパーを構成します。
+. RancherをKeycloak（OIDC）を使用するように構成する前に、最初にKeycloak（SAML）を無効にする必要があります。
+.. Rancher UIで、**☰ > ユーザーと認証**をクリックします。
+.. 左のナビゲーションバーで、**認証プロバイダー**をクリックします。
+.. **Keycloak (SAML)**を選択します。
+.. **無効**をクリックします。
+. <<_configuring_keycloak_in_rancher,RancherにおけるKeycloakの設定>>の手順に従ってください。
++
+[WARNING]
+====
+設定が完了した後、Rancherのユーザー権限は自動的に移行されないため、再適用する必要があります。
+====
+
+[#_oidc_support_for_pkce_extension]
+== PKCE拡張のためのOIDCサポート
+
+include::shared:ROOT:partial$en/oidc-pkce-support.adoc[]
+
+[#_annex_troubleshooting]
+== 付録：トラブルシューティング
+
+Keycloakサーバーへの接続をテストしている際に問題が発生した場合は、まずOIDCクライアントの設定オプションを再確認してください。Rancherのログを確認して、問題の原因を特定する手助けをすることもできます。デバッグログには、エラーに関するより詳細な情報が含まれている場合があります。このドキュメントのxref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[デバッグログを有効にする方法]を参照してください。
+
+すべてのKeycloak関連のログエントリは、`[generic oidc]`または`[keycloak oidc]`で前置きされています。
+
+[#_you_are_not_redirected_to_keycloak]
+=== Keycloakにリダイレクトされません
+
+*Keycloak OIDCアカウントの設定*フォームに記入し、*有効化*をクリックすると、IdPにリダイレクトされません。
+
+Keycloakクライアントの設定を確認してください。
+
+[#_the_generated_issuer_and_auth_endpoint_are_incorrect]
+=== 生成された`Issuer`と`Auth Endpoint`は不正確です。
+
+*Keycloak OIDCアカウントの設定*フォームで、*エンドポイント*を`Specify (advanced)`に変更し、`Issuer`と`Auth Endpoint`の値を上書きしてください。値を見つけるには、Keycloakコンソールに移動し、*レルム設定*を選択し、*一般*タブを選択し、*OpenIDエンドポイント設定*をクリックします。JSON出力には、`issuer`と`authorization_endpoint`の値が表示されます。
+
+[#_keycloak_error_invalid_grant_type]
+=== Keycloakエラー："Invalid grant_type"
+
+場合によっては、このエラーメッセージは誤解を招く可能性があり、`Valid Redirect URI`を不正に設定したことが原因です。
+
+[#_unable_to_see_groups_when_assigning_global_roles]
+=== グローバルロールを割り当てる際にグループが見えない
+
+初期設定のためにグループに属さないユーザーを使用すると、グローバルロールを割り当てようとしたときにグループを検索できません。これを解決するには、次のいずれかを行うことができます：
+
+. `authconfig/keycloakoidc`オブジェクトを手動で編集して、グループ検索を有効にします。
+ .. Rancherサーバーで：
++
+[,bash]
+----
+  kubectl edit authconfigs.management.cattle.io keycloakoidc
+----
+ .. `groupSearchEnabled: true`を設定してください。
+ .. 変更を保存します。
+. Keycloakで少なくとも1つのグループに割り当てられたユーザーを使用して、Keycloak OIDCセットアップを再構成してください。
+
+[#_configuring_oidc_single_logout_slo]
+== OIDCシングルログアウト（SLO）の設定
+
+include::shared:ROOT:partial$en/configure-slo-oidc.adoc[]

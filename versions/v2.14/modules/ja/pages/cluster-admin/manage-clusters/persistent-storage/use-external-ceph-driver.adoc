@@ -1,0 +1,448 @@
+= 外部 Ceph ドライバーの使用
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/use-external-ceph-driver.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/use-external-ceph-driver.adoc
+:experimental:
+
+これらの手順は、RKE2 クラスターで外部 Ceph ドライバーを使用するためのものです。RKEを使用している場合は、追加の手順が必要です。詳しくは、<<_using_the_ceph_driver_with_rke,このセクションを参照してください。>>
+
+[#_requirements]
+== 要件
+
+SLEワーカーノードにceph-commonおよびxfsprogsパッケージがインストールされていることを確認してください。
+
+[#_using_the_ceph_driver_with_rke]
+== RKE での Ceph ドライバーの使用
+
+以下のリソースは RKE ベースのクラスターと完全に互換性がありますが、RKE のために追加の kubelet の設定が必要です。
+
+RKE クラスターでは、kubelet コンポーネントは Docker コンテナ内で実行されており、デフォルトでは rbd および libceph のホストのカーネルモジュールにアクセスできません。
+
+この制限を解決するために、ワーカーノードで `modprobe rbd` を実行するか、kubelet コンテナを構成してホストからコンテナに `/lib/modules` ディレクトリを自動的にマウントすることができます。
+
+kubelet の設定については、RKE クラスターのプロビジョニング前に `cluster.yml` ファイルに以下の行を追加してください。Rancher UI で `cluster.yml` を後で変更することもでき、menu:クラスターの編集[YAML として編集]をクリックしてワーカーノードを再起動します。
+
+[,yaml]
+----
+services:
+  kubelet:
+    extra_binds:
+      - '/lib/modules:/lib/modules:ro'
+----
+
+`extra_binds`ディレクティブに関する詳細は、 https://rancher.com/docs/rke/latest/en/config-options/services/services-extras/#extra-binds[このセクションを参照してください。]
+
+[#_installing_the_ceph_csi_driver_on_an_rke2_product_name_cluster]
+== {rke2-product-name}クラスターにceph-csiドライバーをインストールする
+
+[NOTE]
+====
+
+これらの手順は、動的RBDプロビジョニングのみに必要です。
+====
+
+
+`ceph-csi-rbd`チャートに関する詳細は、 https://github.com/ceph/ceph-csi/blob/devel/charts/ceph-csi-rbd/README.md[このページを参照してください。]
+
+SESクラスターの詳細を取得するには、次のコマンドを実行します：
+
+----
+ceph mon dump
+----
+
+その出力を確認してください:
+
+----
+dumped monmap epoch 3
+epoch 3
+fsid 79179d9d-98d8-4976-ab2e-58635caa7235
+last_changed 2021-02-11T10:56:42.110184+0000
+created 2021-02-11T10:56:22.913321+0000
+min_mon_release 15 (octopus)
+0: [v2:10.85.8.118:3300/0,v1:10.85.8.118:6789/0] mon.a
+1: [v2:10.85.8.123:3300/0,v1:10.85.8.123:6789/0] mon.b
+2: [v2:10.85.8.124:3300/0,v1:10.85.8.124:6789/0] mon.c
+----
+
+後でfsidおよびmonアドレスの値が必要になります。
+
+[#_install_the_ceph_csi_driver_using_helm]
+== Helm を使用して ceph-csi ドライバーをインストールする
+
+これらのコマンドを実行します:
+
+----
+helm repo add ceph-csi https://ceph.github.io/csi-charts
+helm repo update
+helm search repo ceph-csi -l
+helm inspect values ceph-csi/ceph-csi-rbd > ceph-csi-rbd-values.yaml
+----
+
+`ceph-csi-rbd-values.yaml`ファイルを修正し、必要な変更のみを残します:
+
+[,yaml]
+----
+# ceph-csi-rbd-values.yaml
+csiConfig:
+  - clusterID: "79179d9d-98d8-4976-ab2e-58635caa7235"
+    monitors:
+      - "10.85.8.118:6789"
+      - "10.85.8.123:6789"
+      - "10.85.8.124:6789"
+provisioner:
+  name: provisioner
+  replicaCount: 2
+----
+
+RKE2クラスターからcephモニターに到達できることを確認してください。例えば、pingを使用します。
+
+----
+kubectl create namespace ceph-csi-rbd
+helm install --namespace ceph-csi-rbd ceph-csi-rbd ceph-csi/ceph-csi-rbd --values ceph-csi-rbd-values.yaml
+kubectl rollout status deployment ceph-csi-rbd-provisioner -n ceph-csi-rbd
+helm status ceph-csi-rbd -n ceph-csi-rbd
+----
+
+Helm を介して直接設定を変更したい場合は、`ceph-csi-rbd-values.yaml` ファイルを編集し、次のように呼び出します:
+
+----
+helm upgrade \
+  --namespace ceph-csi-rbd ceph-csi-rbd ceph-csi/ceph-csi-rbd --values ceph-csi-rbd-values.yaml
+----
+
+[#_creating_rbd_ceph_resources]
+== RBD Cephリソースの作成
+
+----
+# cephプールを作成します:
+ceph osd pool create myPool 64 64
+
+# ブロックデバイスプールを作成します:
+rbd pool init myPool
+
+# ブロックデバイスイメージを作成します:
+rbd create -s 2G myPool/image
+
+# ブロックデバイスユーザーを作成し、キーを記録します:
+ceph auth get-or-create-key client.myPoolUser mon "allow r" osd "allow class-read object_prefix rbd_children, allow rwx pool=myPool" | tr -d '\n' | base64
+QVFDZ0R5VmdyRk9KREJBQTJ5b2s5R1E2NUdSWExRQndhVVBwWXc9PQ==
+
+# cephユーザーmyPoolUserをbase64ハッシュにエンコードします:
+echo "myPoolUser" | tr -d '\n' | base64
+bXlQb29sVXNlcg==
+
+# ブロックデバイス管理ユーザーを作成し、キーを記録します:
+ceph auth get-or-create-key client.myPoolAdmin mds 'allow *' mgr 'allow *' mon 'allow *' osd 'allow * pool=myPool' | tr -d '\n' | base64
+QVFCK0hDVmdXSjQ1T0JBQXBrc0VtcVhlZFpjc0JwaStIcmU5M3c9PQ==
+
+# cephユーザーmyPoolAdminをbase64ハッシュにエンコードします:
+echo "myPoolAdmin" | tr -d '\n' | base64
+bXlQb29sQWRtaW4=
+----
+
+[#_configure_rbd_ceph_access_secrets]
+== RBD Cephアクセスシークレットを設定します
+
+[#_user_account]
+=== ユーザーアカウント
+
+静的RBDプロビジョニングのために（cephプール内にイメージが存在する必要があります）、これらのコマンドを実行します:
+
+----
+cat > ceph-user-secret.yaml << EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ceph-user
+  namespace: default
+type: kubernetes.io/rbd
+data:
+  userID: bXlQb29sVXNlcg==
+  userKey: QVFDZ0R5VmdyRk9KREJBQTJ5b2s5R1E2NUdSWExRQndhVVBwWXc9PQ==
+EOF
+
+kubectl apply -f ceph-user-secret.yaml
+----
+
+[#_admin_account]
+=== 管理者アカウント
+
+動的RBDプロビジョニングのために（指定されたcephプール内での自動イメージ作成に使用されます）、これらのコマンドを実行します:
+
+----
+cat > ceph-admin-secret.yaml << EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ceph-admin
+  namespace: default
+type: kubernetes.io/rbd
+data:
+  userID: bXlQb29sQWRtaW4=
+  userKey: QVFCK0hDVmdXSjQ1T0JBQXBrc0VtcVhlZFpjc0JwaStIcmU5M3c9PQ==
+EOF
+
+kubectl apply -f ceph-admin-secret.yaml
+----
+
+[#_create_rbd_testing_resources]
+== RBDテストリソースを作成します
+
+[#_using_rbd_in_pods]
+=== PodsでRBDを使用する
+
+[,yaml]
+----
+# pod
+cat > ceph-rbd-pod-inline.yaml << EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ceph-rbd-pod-inline
+spec:
+  containers:
+  - name: ceph-rbd-pod-inline
+    image: busybox
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - mountPath: /mnt/ceph_rbd
+      name: volume
+  volumes:
+  - name: volume
+    rbd:
+      monitors:
+      - 10.85.8.118:6789
+      - 10.85.8.123:6789
+      - 10.85.8.124:6789
+      pool: myPool
+      image: image
+      user: myPoolUser
+      secretRef:
+        name: ceph-user
+      fsType: ext4
+      readOnly: false
+EOF
+
+kubectl apply -f ceph-rbd-pod-inline.yaml
+kubectl get pod
+kubectl exec pod/ceph-rbd-pod-inline -- df -k | grep rbd
+----
+
+[#_using_rbd_in_persistent_volumes]
+=== 永続ボリュームでRBDを使用する
+
+[,yaml]
+----
+# pod-pvc-pv
+cat > ceph-rbd-pod-pvc-pv-allinone.yaml << EOF
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ceph-rbd-pv
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  rbd:
+    monitors:
+    - 10.85.8.118:6789
+    - 10.85.8.123:6789
+    - 10.85.8.124:6789
+    pool: myPool
+    image: image
+    user: myPoolUser
+    secretRef:
+      name: ceph-user
+    fsType: ext4
+    readOnly: false
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: ceph-rbd-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ceph-rbd-pod-pvc-pv
+spec:
+  containers:
+  - name: ceph-rbd-pod-pvc-pv
+    image: busybox
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - mountPath: /mnt/ceph_rbd
+      name: volume
+  volumes:
+  - name: volume
+    persistentVolumeClaim:
+      claimName: ceph-rbd-pvc
+EOF
+
+kubectl apply -f ceph-rbd-pod-pvc-pv-allinone.yaml
+kubectl get pv,pvc,pod
+kubectl exec pod/ceph-rbd-pod-pvc-pv -- df -k | grep rbd
+----
+
+[#_using_rbd_in_storage_classes]
+=== ストレージクラスでRBDを使用する
+
+この例は動的プロビジョニングのためのものです。ceph-csiドライバーが必要です。
+
+[,yaml]
+----
+# pod-pvc-sc
+cat > ceph-rbd-pod-pvc-sc-allinone.yaml <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ceph-rbd-sc
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: rbd.csi.ceph.com
+parameters:
+   clusterID: 79179d9d-98d8-4976-ab2e-58635caa7235
+   pool: myPool
+   imageFeatures: layering
+   csi.storage.k8s.io/provisioner-secret-name: ceph-admin
+   csi.storage.k8s.io/provisioner-secret-namespace: default
+   csi.storage.k8s.io/controller-expand-secret-name: ceph-admin
+   csi.storage.k8s.io/controller-expand-secret-namespace: default
+   csi.storage.k8s.io/node-stage-secret-name: ceph-admin
+   csi.storage.k8s.io/node-stage-secret-namespace: default
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+mountOptions:
+   - discard
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: ceph-rbd-sc-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: ceph-rbd-sc
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ceph-rbd-pod-pvc-sc
+spec:
+  containers:
+  - name:  ceph-rbd-pod-pvc-sc
+    image: busybox
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - mountPath: /mnt/ceph_rbd
+      name: volume
+  volumes:
+  - name: volume
+    persistentVolumeClaim:
+      claimName: ceph-rbd-sc-pvc
+EOF
+
+kubectl apply -f ceph-rbd-pod-pvc-sc-allinone.yaml
+kubectl get pv,pvc,sc,pod
+kubectl exec pod/ceph-rbd-pod-pvc-sc -- df -k | grep rbd
+----
+
+[#__rke2_product_name_server_master_provisioning]
+=== {rke2-product-name} サーバー/マスタープロビジョニング
+
+----
+sudo su
+curl -sfL https://get.rke2.io | sh -
+systemctl enable --now rke2-server
+
+cat > /root/.bashrc << EOF +
+export PATH=$PATH:/var/lib/rancher/rke2/bin/ +
+export KUBECONFIG=/etc/rancher/rke2/rke2.yaml +
+EOF
+
+cat /var/lib/rancher/rke2/server/node-token
+token:K10ca0c38d4ff90d8b80319ab34092e315a8b732622e6adf97bc9eb0536REDACTED::server:ec0308000b8a6b595da000efREDACTED
+----
+
+[#__rke2_product_name_agent_worker_provisioning]
+=== {rke2-product-name} エージェント/ワーカープロビジョニング
+
+----
+mkdir -p /etc/rancher/rke2/
+
+cat > /etc/rancher/rke2/config.yaml << EOF
+server: https://10.100.103.23:9345
+token:K10ca0c38d4ff90d8b80319ab34092e315a8b732622e6adf97bc9eb0536REDACTED::server:ec0308000b8a6b595da000efREDACTED +
+EOF
+
+curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE="agent" sh -
+systemctl enable --now rke2-agent.service
+----
+
+クラスターをRancherにインポートするには、*☰ > クラスター管理*をクリックしてください。次に、*クラスター*ページで、*既存をインポート*をクリックしてください。次に、サーバー/マスターノードで提供されたkubectlコマンドを実行してください。
+
+[#_tested_versions]
+== テスト済みバージョン
+
+RKE2ノードを実行するためのOS：インストールされたkernel-default-5.3.18-24.49を持つJeOS SLE15-SP2
+
+----
+kubectl version
+Client Version: version.Info{Major:"1", Minor:"18", GitVersion:"v1.18.4", GitCommit:"c96aede7b5205121079932896c4ad89bb93260af", GitTreeState:"clean", BuildDate:"2020-06-22T12:00:00Z", GoVersion:"go1.13.11", Compiler:"gc", Platform:"linux/amd64"}
+Server Version: version.Info{Major:"1", Minor:"19", GitVersion:"v1.19.7+rke2r1", GitCommit:"1dd5338295409edcfff11505e7bb246f0d325d15", GitTreeState:"clean", BuildDate:"2021-01-20T01:50:52Z", GoVersion:"go1.15.5b5", Compiler:"gc", Platform:"linux/amd64"}
+
+helm version
+version.BuildInfo{Version:"3.4.1", GitCommit:"c4e74854886b2efe3321e185578e6db9be0a6e29", GitTreeState:"clean", GoVersion:"go1.14.12"}
+----
+
+RKE2クラスターのKubernetesバージョン：v1.19.7+rke2r1
+
+[#_troubleshooting]
+== トラブルシューティング
+
+SUSEのSES7に基づくceph-rookを使用している場合は、`rook-1.4.5/ceph/cluster.yaml`を編集して`spec.network.hostNetwork=true`を設定することで、hostNetwork上にモニターを公開することが有用かもしれません。
+
+ceph-rookクラスターを操作するためには、`kubectl apply -f rook-1.4.5/ceph/toolbox.yaml`でceph-rookがプロビジョニングされたKubernetesクラスターにツールボックスをデプロイすることが有用です。これにより、すべてのceph関連コマンドをツールボックスポッド内で実行でき、例えば`kubectl exec -it -n rook-ceph rook-ceph-tools-686d8b8bfb-2nvqp -- bash`を実行することで可能です。
+
+cephを操作するための基本コマンド：
+
+----
+ceph osd pool stats
+ceph osd pool delete myPool myPool --yes-i-really-really-mean-it
+rbd list -p myPool
+> csi-vol-f5d3766c-7296-11eb-b32a-c2b045952d38
+> image
+----
+
+イメージを削除する：`rbd rm csi-vol-f5d3766c-7296-11eb-b32a-c2b045952d38 -p myPool`
+
+rookツールボックス内のCephFSコマンド：
+
+----
+ceph -s
+ceph fs ls
+ceph fs fail cephfs
+ceph fs rm cephfs --yes-i-really-mean-it
+ceph osd pool delete cephfs_data cephfs_data --yes-i-really-really-mean-it
+ceph osd pool delete cephfs_metadata cephfs_metadata --yes-i-really-really-mean-it
+----
+
+cephfsファイルシステムを準備するには、rookクラスター上でこのコマンドを実行できます：
+
+----
+kubectl apply -f rook-1.4.5/ceph/filesystem.yaml
+----

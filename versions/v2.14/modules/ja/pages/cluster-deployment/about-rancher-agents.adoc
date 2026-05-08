@@ -1,0 +1,109 @@
+= {rancher-product-name} エージェント
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/launch-kubernetes-with-rancher/about-rancher-agents.adoc 
+:product-path: cluster-deployment/about-rancher-agents.adoc
+ifeval::["{build-type}" != "community"]
+:xref-hosted-k8s-clusters: xref:cluster-deployment/hosted-kubernetes/hosted-kubernetes.adoc
+:xref-rancher-architecture: xref:about-rancher/architecture/architecture.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-hosted-k8s-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-clusters-from-hosted-kubernetes-providers/index.adoc
+:xref-rancher-architecture: xref:reference-guides/rancher-manager-architecture/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+Rancher管理のクラスター上に、2種類のエージェントリソースがデプロイされています：
+
+* <<_cattle_cluster_agent,cattle-cluster-agent>>
+* <<_rancher_system_agent,rancher-system-agent>>
+
+Rancherサーバーがクラスターをプロビジョニングし、クラスターと通信する方法の概念的な概要については、{xref-rancher-architecture}[アーキテクチャ]を参照してください。
+
+[#_cattle_cluster_agent]
+== cattle-cluster-agent
+
+`cattle-cluster-agent`は、\link:[Rancher Launched Kubernetes]クラスターのKubernetes APIに接続するために使用されます。`cattle-cluster-agent`は、Deploymentリソースを用いてデプロイされます。
+
+[#_rancher_system_agent]
+== rancher-system-agent
+
+`rancher-system-agent`は、クラスターライフサイクル操作を実行する際に、RancherがプロビジョニングしたRKE2/K3s Kubernetesクラスター内のノードを管理するために使用されるデーモンです。クラスター操作の例には、Kubernetesバージョンのアップグレードやetcdスナップショットの作成/復元が含まれます。`rancher-system-agent`は、Rancherシステムにプランを適用するように設計されており、ローカルプランとリモートプランの両方をサポートできます。
+
+[#_requests]
+== 要求
+
+`cattle-cluster-agent`ポッドは、デフォルトのCPUおよびメモリ要求値を定義していません。基準として、CPU要求を`50m`、メモリ要求を`100Mi`に設定することをお勧めします。ただし、使用ケースを適切に評価し、ニーズに応じてクラスターに正しいリソースを割り当てることが重要です。
+
+RKE2/K3sクラスターのUIを通じて要求値を構成するには：
+
+. {xref-launch-k8s-with-rancher}[作成]または既存のクラスターを編集する際は、*クラスター構成*に移動します。
+. *クラスターエージェント*のサブセクションを選択します。
+. 必要に応じて、*CPU予約*および*メモリ予約*フィールドを使用して要求値を構成します。
+
+YAMLを介して構成することを希望する場合は、次のスニペットをRKE2/K3s設定ファイルに追加してください：
+
+[source,yaml]
+----
+spec:
+  clusterAgentDeploymentCustomization:
+    overrideResourceRequirements:
+      requests:
+        cpu: 50m
+        memory: 100Mi
+----
+
+[#_scheduling_rules]
+== スケジューリングルール
+
+`cattle-cluster-agent`は、固定された一連のトレランスを使用するか、コントロールプレーンノードに適用されたテイントに基づいて動的に追加されたトレランスを使用します。この構造により、 https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions[テイントに基づく追放]が`cattle-cluster-agent`に対して適切に機能します。
+
+クラスターにコントロールプレーンノードが存在する場合、デフォルトのトレランスはコントロールプレーンノードのテイントに一致するトレランスに置き換えられます。デフォルトのトレランスのセットは以下に説明されています。
+
+|===
+| コンポーネント | nodeAffinity nodeSelectorTerms | nodeSelector | トレランス
+
+| `cattle-cluster-agent`
+| `beta.kubernetes.io/os:NotIn:windows`
+| none
+| *注意:*これらはデフォルトのトレランスであり、コントロールプレーンノードに適用されたテイントに一致するトレランスに置き換えられます。 +
+ +
+`effect:NoSchedule` +
+`key:node-role.kubernetes.io/controlplane` +
+`value:true` +
+ +
+`effect:NoSchedule` +
+`key:node-role.kubernetes.io/control-plane` +
+`operator:Exists` +
+ +
+`effect:NoSchedule` +
+`key:node-role.kubernetes.io/master` +
+`operator:Exists`
+
+|===
+
+`cattle-cluster-agent` デプロイメントは `preferredDuringSchedulingIgnoredDuringExecution` を使用した優先スケジューリングルールを持ち、`controlplane` ノードにスケジュールされることを優先します。クラスター内にコントロールプレーンノードが表示されない場合（これは通常、{xref-hosted-k8s-clusters}[ホステッドKubernetesプロバイダーからのクラスター]を使用しているときに発生します）、ノードにラベル `cattle.io/cluster-agent=true` を追加して `cattle-cluster-agent` ポッドをそのノードにスケジュールすることを優先できます。
+
+スケジューリングルールに関する詳細情報を見つけるには、 https://kubernetes.io/docs/concepts/configuration/assign-pod-node/[Kubernetes: ポッドをノードに割り当てる] を参照してください。
+
+`preferredDuringSchedulingIgnoredDuringExecution` 設定は以下の表に示されています。
+
+|===
+| 重要度 | Expression
+
+| 100
+| `node-role.kubernetes.io/controlplane:In:"true"`
+
+| 100
+| `node-role.kubernetes.io/control-plane:In:"true"`
+
+| 100
+| `node-role.kubernetes.io/master:In:"true"`
+
+| 1
+| `cattle.io/cluster-agent:In:"true"`
+|===

@@ -1,0 +1,43 @@
+= Controle de acesso com base em função
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/prometheus-federator/rbac.adoc 
+:product-path: observability/monitoring-and-dashboards/prometheus-federator/rbac.adoc
+ifeval::["{build-type}" != "community"]
+:xref-prometheus-federator: xref:observability/monitoring-and-dashboards/prometheus-federator/prometheus-federator.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-prometheus-federator: xref:reference-guides/prometheus-federator/index.adoc
+endif::[]
+
+Esta seção descreve as expectativas para o controle de acesso com base em função (RBAC) para o Prometheus Federator.
+
+Conforme descrito na seção sobre {xref-prometheus-federator}[namespaces], o Prometheus Federator espera que os Proprietários de Projetos, Membros de Projetos e outros usuários no cluster com permissões em nível de Projeto (por exemplo, permissões em um determinado conjunto de namespaces identificados por um único seletor de rótulos) tenham permissões mínimas em quaisquer namespaces, exceto no Namespace de Registro de Projeto (que é importado para o projeto por padrão) e aqueles que já fazem parte de seus projetos. Portanto, para permitir que os Proprietários de Projetos atribuam permissões específicas de gráficos a outros usuários em seus namespaces de Projeto, o Operador de Projeto Helm irá automaticamente observar as seguintes vinculações:
+
+* ClusterRoleBindings
+* RoleBindings no Namespace de Lançamento do Projeto
+
+Ao observar uma mudança em um desses tipos de vinculações, o Operador de Projeto Helm verificará se o `roleRef` ao qual a vinculação aponta corresponde a um ClusterRole com o nome fornecido em:
+
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.admin`
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.edit`
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.view`
+
+Por padrão, esses roleRefs corresponderão a `admin`, `edit` e `view`, respectivamente, que são os https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[papéis padrão voltados para o usuário do Kubernetes].
+
+[NOTE]
+====
+
+Para usuários do Rancher RBAC, esses https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[papéis padrão voltados para o usuário do Kubernetes] correlacionam-se diretamente com os `Project Owner`, `Project Member` e `Read-Only` Modelos de Papel de Projeto padrão.
+====
+
+
+Se o `roleRef` corresponder, o Operador de Projeto Helm filtrará o `subjects` da vinculação para todos os Usuários e Grupos e usará isso para construir automaticamente um RoleBinding para cada Papel no Namespace de Lançamento do Projeto com o mesmo nome do papel e os seguintes rótulos:
+
+* `helm.cattle.io/project-helm-chart-role: {{ .Release.Name }}`
+* `helm.cattle.io/project-helm-chart-role-aggregate-from: <admin|edit|view>`
+
+Por padrão, `rancher-project-monitoring`, o gráfico subjacente implantado pelo Prometheus Federator, cria três papéis padrão por Namespace de Lançamento do Projeto que concedem aos usuários representados por `admin`, `edit` e `view` as permissões para visualizar as UIs do Prometheus, Alertmanager e Grafana da pilha de monitoramento do projeto, aplicando o princípio do menor privilégio. No entanto, se um Administrador de Cluster desejar atribuir permissões adicionais a determinados usuários, ele pode atribuir diretamente RoleBindings no Namespace de Lançamento do Projeto a esses usuários ou criar papéis com os dois rótulos acima para permitir que os Proprietários de Projetos controlem a atribuição desses papéis RBAC a usuários em seus Namespaces de Registro de Projeto.

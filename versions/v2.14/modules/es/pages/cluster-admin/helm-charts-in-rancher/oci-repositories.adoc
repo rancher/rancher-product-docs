@@ -1,0 +1,129 @@
+= Uso de repositorios de gráficos Helm basados en OCI
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/helm-charts-in-rancher/oci-repositories.adoc 
+:product-path: cluster-admin/helm-charts-in-rancher/oci-repositories.adoc
+ifeval::["{build-type}" != "community"]
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-logging-troubleshooting: xref:observabilidad/registro/troubleshooting.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-logging-troubleshooting: xref:troubleshooting/otros-consejos-de-solución-de-problemas/registro.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+endif::[]
+
+Helm v3 introdujo el almacenamiento de gráficos Helm como https://opencontainers.org/about/overview/[Iniciativa de Contenedores Abiertos (OCI)] artefactos en registros de contenedores. Con Rancher v2.9.0, puedes añadir https://helm.sh/docs/topics/registries/[repositorios de gráficos Helm basados en OCI] junto a repositorios basados en HTTP y Git. Esto significa que puedes desplegar apps que se almacenan como artefactos OCI.
+
+[#_add_an_oci_based_helm_chart_repository]
+== Añadir un repositorio de gráficos Helm basado en OCI
+
+Para añadir un repositorio de gráficos Helm basado en OCI a través de la interfaz de usuario de Rancher:
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Encuentra el nombre del clúster cuyos repositorios deseas acceder. Haz clic en *Explorar* al final de la fila del clúster.
+. En la barra de navegación izquierda, selecciona menu:Apps[Repositorios].
+. Haga clic en *Crear*.
+. Introduce un *Nombre* para el registro. Selecciona *Repositorio OCI* como el objetivo.
+. Introduce la *URL del Host del Repositorio OCI* para el registro. El punto final del registro no debe contener nada más que artefactos de gráficos Helm OCI. Todos los artefactos deben tener nombres únicos. Si intentas añadir un punto final que contenga cualquier otro tipo de archivos o artefactos, el repositorio OCI no será añadido.
+
+[NOTE]
+====
+Puedes usar el campo *URL OCI* para ajustar cuántos gráficos del registro están disponibles para instalación en Rancher. Los puntos finales más genéricos apuntan a más gráficos, como demuestran los siguientes ejemplos:
+
+....
+- `oci://<registry-host>`: Every chart in the registry becomes available for installation, regardless of namespace or tag.
+- `oci://<registry-host>/<namespace>`: Every chart in the specified namespace within the registry becomes available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>`: Only the specified chart and any associated tags or versions of that chart become available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>:<tag>`: Only the chart with the specified tag becomes available for installation.
+....
+====
+
+
+. Configura la autenticación. Selecciona *Autenticación básica* del campo de autenticación e introduce un nombre de usuario y una contraseña según sea necesario. De lo contrario, crea o selecciona un secreto de *Autenticación*. Consulta <<_authentication_for_oci_based_helm_chart_repositories,Autenticación>> para una descripción completa.
+. (opcional) Introduzca un certificado DER codificado en base64 en el campo *CA Cert Bundle*. Este campo es para casos en los que tiene un repositorio de gráficos Helm basado en OCI privado y necesita que Rancher confíe en sus certificados.
+. (opcional) Para permitir conexiones inseguras sin realizar una verificación SSL, seleccione *Skip TLS Verification*. Para forzar a Rancher a utilizar HTTP en lugar de HTTPS para enviar solicitudes al repositorio, seleccione *Insecure Plain Http*.
+. (opcional) Si su repositorio tiene una directiva de limitación de tasa y puede responder con el código de estado `429 Too Many Requests`, puede que desee completar los campos bajo *Exponential Back Off*:
+ ** *Min Wait*: La duración mínima en segundos que Rancher debe esperar antes de reintentar. El valor por defecto es 1 segundo.
+ ** *Max Wait*: La duración máxima en segundos que Rancher debe esperar antes de reintentar. El valor por defecto es 5 segundos.
+ ** *Max Number of Retries*: El valor por defecto es 5 reintentos.
+
++
+Una vez que estos valores están establecidos, Rancher responde al código de estado `429` escalonando las solicitudes en función de los valores de espera mínima y máxima. El tiempo de espera entre reintentos aumenta exponencialmente, hasta que Rancher ha enviado el número máximo de reintentos establecido. Consulte <<_rate_limiting_of_oci_based_helm_chart_repositories,Limitación de Tasa>> para más detalles.
+. Añade cualquier etiqueta y anotación.
+. Haga clic en *Crear*.
+
+Puede tardar un tiempo en activar el repositorio OCI. Esto es particularmente cierto si el punto final de OCI contiene múltiples espacios de nombres.
+
+[#_authentication_for_oci_based_helm_chart_repositories]
+== Autenticación para repositorios de gráficos Helm basados en OCI.
+
+Rancher admite BasicAuth para registros OCI. Debes crear un https://kubernetes.io/docs/concepts/configuration/secret/#basic-authentication-secret[*BasicAuth* secreto de Kubernetes]. También puedes {xref-secrets}[crear el secreto a través de la interfaz de usuario de Rancher].
+
+El CRD que está vinculado al repositorio Helm basado en OCI es `ClusterRepo`.
+
+[#_view_helm_charts_in_oci_based_helm_chart_repositories]
+== Ver gráficos Helm en repositorios de Helm basados en OCI
+
+Para ver los gráficos Helm en el repositorio de Helm basado en OCI después de que alcance un estado `Active`:
+
+. Haz clic en *☰*. Bajo *Explorar Clúster* en el menú de navegación izquierdo, selecciona un clúster.
+. Haz clic en menu:Aplicaciones[Gráficos].
+. Selecciona el repositorio de Helm basado en OCI del menú desplegable.
+
+[#_refresh_an_oci_based_helm_chart_repository]
+== Actualizar un repositorio de gráficos Helm basado en OCI
+
+Rancher actualiza automáticamente el repositorio de gráficos Helm basado en OCI cada 6 horas.
+
+Si necesitas actualizar de inmediato, puedes {xref-helm-charts-in-rancher}#_refresh_chart_repositories[realizar una actualización manual].
+
+[#_update_an_oci_based_helm_chart_repository_configuration]
+== Actualizar la configuración de un repositorio de gráficos Helm basado en OCI
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Encuentra el nombre del clúster cuyos repositorios deseas acceder. Haz clic en *Explorar* al final de la fila del clúster.
+. En la barra de navegación izquierda, selecciona menu:Apps[Repositorios].
+. Encuentra la fila asociada con el repositorio de gráficos Helm basado en OCI y haz clic en *⋮*.
+. Desde el submenú, selecciona *Editar Config*.
+
+[#_delete_an_oci_based_helm_chart_repository]
+== Eliminar un repositorio de gráficos Helm basado en OCI
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Encuentra el nombre del clúster cuyos repositorios deseas acceder. Haz clic en *Explorar* al final de la fila del clúster.
+. En la barra de navegación izquierda, selecciona menu:Apps[Repositorios].
+. Selecciona la fila asociada con el repositorio de gráficos Helm basado en OCI y haz clic en *Eliminar*.
+
+[#_size_limitations_of_oci_based_helm_chart_repositories_in_rancher]
+== Limitaciones de tamaño de los repositorios de gráficos Helm basados en OCI en Rancher
+
+Debido a preocupaciones de seguridad, existen limitaciones sobre el tamaño máximo de un gráfico Helm que puedas desplegar a través de un repositorio basado en OCI, y sobre la cantidad de metadatos que puedes utilizar para describir los gráficos Helm dentro de un único punto final de OCI.
+
+Rancher puede desplegar gráficos Helm OCI de hasta 20 MB.
+
+[#_rate_limiting_of_oci_based_helm_chart_repositories]
+== Limitación de tasa de los repositorios de gráficos Helm basados en OCI
+
+Diferentes registros OCI implementan la limitación de tasa de diferentes maneras.
+
+La mayoría de los servidores devuelven un encabezado `Retry-After`, indicando cuánto tiempo esperar antes de que se levante la limitación de tasa.
+
+Docker Hub devuelve un código de estado `429` cuando completa todas las solicitudes asignadas. También devuelve un encabezado `RateLimit-Remaining` que describe la directiva de limitación de tasa.
+
+Rancher actualmente verifica el encabezado `Retry-After`. También maneja respuestas al estilo de Docker Hub (código de estado `429` y el encabezado `RateLimit-Remaining`) y espera automáticamente antes de hacer una nueva solicitud. Al manejar respuestas `Retry-After` o al estilo de Docker Hub, Rancher ignora los valores `ExponentialBackOff`.
+
+Si tienes un repositorio de gráficos Helm basado en OCI que no implementa los encabezados `Retry-After` o `RateLimit-Remaining`, y crees que puedes estar limitado en algún momento, completa los campos bajo *Exponential Back Off* cuando añadas el repositorio.
+
+Por ejemplo, si tienes un repositorio de gráficos Helm basado en OCI que no devuelve un encabezado `Retry-After`, pero sabes que el servidor permite 50 solicitudes en 24 horas, puedes proporcionar a Rancher un valor de *Min Wait* de *86400* segundos, un valor de *Max Wait* de *90000* segundos, y un valor de *Max Number of Retries* de *1*. Entonces, si Rancher se ve limitado por el servidor, esperará 24 horas antes de volver a intentarlo. La solicitud debería tener éxito ya que Rancher no ha enviado ninguna otra solicitud en las 24 horas anteriores.
+
+[#_troubleshooting_oci_based_helm_registries]
+== Resolución de problemas de registros Helm basados en OCI.
+
+* Para mejorar la información de registro, {xref-logging-troubleshooting}#_kubernetes_install[habilita la opción de borrar] al desplegar Rancher.
+* Si hay alguna discrepancia entre los contenidos del repositorio y Rancher, deberías actualizar el repositorio del clúster como primer recurso. Si la discrepancia persiste, elimina el repositorio de gráficos Helm basado en OCI de Rancher y añádelo de nuevo. Eliminar el repositorio no eliminará ningún gráfico Helm que ya esté instalado.
+* Las apps instaladas a través de repositorios de gráficos Helm basados en OCI están sujetas a un problema conocido con la forma en que Rancher muestra la información de versiones actualizables. Consulta la sección {xref-helm-charts-in-rancher}#_limitations[Limitaciones] de *Gráficos Helm y apps* para más detalles.

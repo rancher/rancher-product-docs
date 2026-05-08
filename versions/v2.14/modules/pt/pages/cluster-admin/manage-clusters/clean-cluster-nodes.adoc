@@ -1,0 +1,463 @@
+= Removendo Componentes do Kubernetes dos Nós
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/clean-cluster-nodes.adoc 
+:product-path: cluster-admin/manage-clusters/clean-cluster-nodes.adoc
+:description: Saiba sobre a limpeza do cluster ao remover nós do seu cluster Kubernetes iniciado pelo Rancher. O que é removido, como fazer manualmente
+ifeval::["{build-type}" != "community"]
+:url-rke2-uninstall: https://documentation.suse.com/cloudnative/rke2/latest/en/install/uninstall.html
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-register-clusters: xref:cluster-deployment/register-existing-clusters.adoc
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-hosted-k8s-clusters: xref:cluster-deployment/hosted-kubernetes/hosted-kubernetes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-uninstall: https://docs.rke2.io/install/uninstall
+:xref-infra-providers: xref:guias-de-procedimentos/guias-para-novos-usuarios/lançar-kubernetes-com-rancher/utilizar-novos-nós-em-um-infra-provider/index.adoc
+:xref-register-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc
+:xref-custom-clusters: xref:guias-de-referência/configuração-do-cluster/configuração-do-servidor-rancher/utilizar-nós-existentes/index.adoc
+:xref-hosted-k8s-clusters: xref:guias-de-procedimentos/guias-para-novos-usuários/clusters-kubernetes-no-rancher/configuração-clusters-a-partir-de-provedores-de-kubernetes-hospedados/index.adoc
+endif::[]
+
+Esta seção descreve como desconectar um nó de um cluster Kubernetes iniciado pelo Rancher e remover todos os componentes do Kubernetes do nó. Este processo permite que você use o nó para outros fins.
+
+Quando você usa o Rancher para instalar o Kubernetes em novos nós em um provedor de infraestrutura, recursos (contêineres/interfaces de rede virtual) e itens de configuração (certificados/arquivos de configuração) são criados.
+
+Ao remover nós do seu cluster Kubernetes iniciado pelo Rancher (desde que estejam no estado `Active`), esses recursos são limpos automaticamente, e a única ação necessária é reiniciar o nó. Quando um nó se torna inacessível e o processo de limpeza automática não pode ser usado, descrevemos os passos que precisam ser executados antes que o nó possa ser adicionado a um cluster novamente.
+
+[#_what_gets_removed]
+== O que é removido?
+
+Ao limpar nós provisionados usando o Rancher, os seguintes componentes são excluídos com base no tipo de nó de cluster que você está removendo.
+
+|===
+| Componente Removido | {xref-infra-providers}[Nós Hospedados por Provedor de Infraestrutura] | {xref-custom-clusters}[Nós Personalizados] | {xref-hosted-k8s-clusters}[Cluster Hospedado] | {xref-register-clusters}[Nós Registrados]
+
+| O namespace de implantação do Rancher (`cattle-system` por padrão)
+| ✓
+| ✓
+| ✓
+| ✓
+
+| `serviceAccount`, `clusterRoles` e `clusterRoleBindings` rotulados pelo Rancher
+| ✓
+| ✓
+| ✓
+| ✓
+
+| Rótulos, Anotações e Finalizadores
+| ✓
+| ✓
+| ✓
+| ✓
+
+| Implantação do Rancher
+| ✓
+| ✓
+| ✓
+|
+
+| Máquinas, clusters, projetos e definições de recursos personalizados (CRDs)
+| ✓
+| ✓
+| ✓
+|
+
+| Todos os recursos criados sob o `management.cattle.io` Grupo de API
+| ✓
+| ✓
+| ✓
+|
+
+| Todos os CRDs criados pelo Rancher v2.x
+| ✓
+| ✓
+| ✓
+|
+|===
+
+[#_removing_a_node_from_a_cluster_by_rancher_ui]
+== Removendo um Nó de um Cluster pela Interface do Rancher
+
+Quando o nó está no estado `Active`, remover o nó de um cluster acionará um processo para limpar o nó. Por favor, reinicie o nó após o processo automático de limpeza ser concluído para garantir que quaisquer dados não persistentes sejam removidos corretamente.
+
+*Para reiniciar um nó:*
+
+----
+# using reboot
+$ sudo reboot
+
+# using shutdown
+$ sudo shutdown -r now
+----
+
+[#_removing_rancher_components_from_a_cluster_manually]
+== Removendo Componentes do Rancher de um Cluster Manualmente
+
+Quando um nó está inacessível e removido do cluster, o processo automático de limpeza não pode ser acionado porque o nó está inacessível. Por favor, siga os passos abaixo para remover manualmente os componentes do Rancher.
+
+[WARNING]
+====
+
+Os comandos listados abaixo removerão dados do nó. Certifique-se de ter criado um backup dos arquivos que deseja manter antes de executar qualquer um dos comandos, pois os dados serão perdidos.
+====
+
+
+[#_removing_rancher_components_from_registered_clusters]
+=== Removendo Componentes do Rancher de Clusters Registrados
+
+Para clusters registrados, o processo de remoção do Rancher é um pouco diferente. Você tem a opção de simplesmente excluir o cluster na interface do Rancher, ou pode executar um script que remove os componentes do Rancher dos nós. Ambas as opções realizam as mesmas exclusões.
+
+Após o cluster registrado ser desanexado do Rancher, as cargas de trabalho do cluster não serão afetadas e você pode acessar o cluster usando os mesmos métodos que usou antes do cluster ser registrado no Rancher.
+
+[tabs]
+======
+Por UI / API::
++
+--
+[WARNING]
+====
+Este processo removerá dados do seu cluster. Certifique-se de ter criado um backup dos arquivos que deseja manter antes de executar o comando, pois os dados serão perdidos.
+====
+
+Após iniciar a remoção de um cluster registrado usando a interface do Rancher (ou API), os seguintes eventos ocorrem.
+
+. O Rancher cria um `serviceAccount` que usa para remover os componentes do Rancher do cluster. Esta conta é atribuída às permissões https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole[clusterRole] e https://kubernetes.io/docs/reference/access-authn-authz/rbac/#rolebinding-and-clusterrolebinding[clusterRoleBinding], que são necessárias para remover os componentes do Rancher.
+. Usando o `serviceAccount`, o Rancher agenda e executa um https://kubernetes.io/docs/concepts/workloads/controllers/jobs-run-to-completion/[job] que limpa os componentes do Rancher do cluster. Esse job também faz referência ao `serviceAccount` e suas funções como dependências, então o job os exclui antes de sua conclusão.
+. O Rancher é removido do cluster. No entanto, o cluster persiste, executando a versão nativa do Kubernetes.
+
+*Resultado:* Todos os componentes listados para clusters registrados em <<_what_gets_removed,O Que é Removido?>> são excluídos.
+--
+
+Por script::
++
+--
+Em vez de limpar os nós do cluster registrado usando a interface do Rancher, você pode executar um script em vez disso.
+
+[NOTE]
+.Pré-requisitos
+====
+Instale https://kubernetes.io/docs/tasks/tools/install-kubectl/[kubectl].
+====
+
+. Abra um navegador da web, navegue até https://github.com/rancher/rancher/blob/main/cleanup/user-cluster.sh[GitHub] e baixe `user-cluster.sh`.
+. Torne o script executável executando o seguinte comando a partir do mesmo diretório que `user-cluster.sh`:
++
+----
+chmod +x user-cluster.sh
+----
+
+. *Ambientes de Air Gap Somente:* Abra `user-cluster.sh` e substitua `yaml_url` pela URL em `user-cluster.yml`.
++
+Se você não tiver um ambiente de air gap, pule esta etapa.
+
+. Do mesmo diretório, execute o script e forneça a versão da imagem `rancher/rancher-agent`, que deve ser igual à versão do Rancher usada para gerenciar o cluster. (`<RANCHER_VERSION>`):
++
+[TIP]
+====
+Adicione a flag `-dry-run` para visualizar o resultado do script sem fazer alterações.
+
+----
+./user-cluster.sh rancher/rancher-agent:<RANCHER_VERSION>
+----
+====
+
+*Resultado:* O script é executado. Todos os componentes listados para clusters registrados em <<_what_gets_removed,O Que é Removido?>> são excluídos.
+--
+====== 
+
+[#_cleaning_up_nodes]
+## Limpando Nós 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[NOTE]
+====
+Para instruções sobre como limpar nós em clusters RKE2 que não foram implantados pelo Rancher, consulte a {url-rke2-uninstall}[documentação oficial do RKE2] sobre desinstalação de clusters.
+====
+
+Você precisa remover os seguintes componentes dos nós RKE2 provisionados pelo Rancher:
+
+* O rancher-system-agent, que se conecta ao Rancher e instala e gerencia o RKE2.
+* RKE2 itself.
+
+[pass]
+<h3><a id="_removing_rancher-system-agent"></a>Removendo o rancher-system-agent</h3>
+
+
+Para remover o rancher-system-agent, execute o script https://github.com/rancher/system-agent/blob/main/system-agent-uninstall.sh[system-agent-uninstall.sh]:
+
+[source,shell]
+----
+curl https://raw.githubusercontent.com/rancher/system-agent/main/system-agent-uninstall.sh > system-agent-uninstall.sh
+sudo sh system-agent-uninstall.sh
+----
+
+[pass]
+<h3><a id="_removing_rke2"></a>Removendo o RKE2</h3>
+
+Para remover a instalação do RKE2, execute o script `rke2-uninstall` que já está presente no nó:
+
+----
+sudo rke2-uninstall.sh
+----
+--
+
+K3s::
++
+--
+Você precisa remover os seguintes componentes dos nós K3s provisionados pelo Rancher:
+
+* O rancher-system-agent, que se conecta ao Rancher e instala e gerencia o K3s.
+* K3s itself.
+
+[pass]
+<h3><a id="_removing_rancher-system-agent"></a>Removendo o rancher-system-agent</h3>
+
+
+Para remover o rancher-system-agent, execute o script https://github.com/rancher/system-agent/blob/main/system-agent-uninstall.sh[system-agent-uninstall.sh]:
+
+[source,shell]
+----
+curl https://raw.githubusercontent.com/rancher/system-agent/main/system-agent-uninstall.sh > system-agent-uninstall.sh
+sudo sh system-agent-uninstall.sh
+----
+
+[pass]
+<h3><a id="_removing_k3s"></a>Removendo o K3s</h3>
+
+
+Para remover a instalação do K3s, execute o script `k3s-uninstall` que já está presente no nó:
+
+```
+sudo k3s-uninstall.sh
+```
+--
+====== 
+
+[#_directories_and_files]
+=== Diretórios e arquivos
+
+Os seguintes diretórios são usados ao adicionar um nó a um cluster e devem ser removidos. Você pode remover um diretório usando `rm -rf /directory_name`.
+
+[IMPORTANT]
+====
+
+Dependendo do papel que você atribuiu ao nó, certos diretórios podem ou não estar presentes no nó.
+
+====
+
+[tabs]
+======
+RKE2::
++
+--
+[%autowidth]
+|===
+| Diretórios
+
+| `/etc/ceph`
+| `/etc/cni`
+| `/etc/kubernetes`
+| `/etc/rancher`
+| `/opt/cni`
+| `/run/calico`
+| `/run/flannel`
+| `/run/secrets/kubernetes.io`
+| `/var/lib/calico`
+| `/var/lib/cni`
+| `/var/lib/etcd`
+| `/var/lib/kubelet`
+| `/var/lib/rancher`
+| `/var/lib/weave`
+| `/var/log/containers`
+| `/var/log/pods`
+| `/var/run/calico`
+|===
+
+**Para limpar os diretórios:**
+
+[source,shell]
+----
+rm -rf /etc/ceph \
+       /etc/cni \
+       /etc/kubernetes \
+       /etc/rancher \
+       /opt/cni \
+       /run/calico \
+       /run/flannel \
+       /run/secrets/kubernetes.io \
+       /var/lib/calico \
+       /var/lib/cni \
+       /var/lib/etcd \
+       /var/lib/kubelet \
+       /var/lib/rancher \
+       /var/lib/weave \
+       /var/log/containers \
+       /var/log/pods \
+       /var/run/calico
+----
+--
+
+K3s::
++
+--
+[%autowidth]
+|===
+| Diretórios
+
+| `/etc/ceph`
+| `/etc/cni`
+| `/etc/kubernetes`
+| `/etc/rancher`
+| `/etc/systemd/system/k3s`
+| `/opt/cni`
+| `/run/calico`
+| `/run/flannel`
+| `/run/secrets/kubernetes.io`
+| `/usr/local/bin/k3s`
+| `/var/lib/calico`
+| `/var/lib/cni`
+| `/var/lib/etcd`
+| `/var/lib/kubelet`
+| `/var/lib/rancher`
+| `/var/lib/weave`
+| `/var/log/containers`
+| `/var/log/pods`
+| `/var/run/calico`
+|===
+
+**Para limpar os diretórios:**
+
+[source,shell]
+----
+rm -rf /etc/ceph \
+       /etc/cni \
+       /etc/kubernetes \
+       /etc/rancher \
+       /etc/systemd/system/k3s \
+       /opt/cni \
+       /run/calico \
+       /run/flannel \
+       /run/secrets/kubernetes.io \
+       /usr/local/bin/k3s \
+       /var/lib/calico \
+       /var/lib/cni \
+       /var/lib/etcd \
+       /var/lib/kubelet \
+       /var/lib/rancher \
+       /var/lib/weave \
+       /var/log/containers \
+       /var/log/pods \
+       /var/run/calico
+----
+--
+====== 
+
+[#_network_interfaces_and_iptables]
+=== Interfaces de Rede e Iptables
+
+Os dois componentes restantes que são alterados/configurados são as interfaces de rede (virtuais) e as regras do iptables. Ambos não são persistentes no nó, o que significa que serão limpos após uma reinicialização do nó. Para remover esses componentes, uma reinicialização é recomendada.
+
+*Para reiniciar um nó:*
+
+----
+# using reboot
+$ sudo reboot
+
+# using shutdown
+$ sudo shutdown -r now
+----
+
+Se você quiser saber mais sobre interfaces de rede (virtuais) ou regras do iptables, consulte os assuntos específicos abaixo.
+
+[#_network_interfaces]
+=== Interfaces de rede
+
+[NOTE]
+====
+
+Dependendo do provedor de rede configurado para o cluster do qual o nó fazia parte, algumas das interfaces estarão ou não presentes no nó.
+====
+
+
+|===
+| Interfaces
+
+| `flannel.1`
+| `cni0`
+| `tunl0`
+| `caliXXXXXXXXXXX` (nomes de interfaces aleatórias)
+| `vethXXXXXXXX` (nomes de interfaces aleatórias)
+|===
+
+*Para listar todas as interfaces:*
+
+----
+# Using ip
+ip address show
+
+# Using ifconfig
+ifconfig -a
+----
+
+*Para remover uma interface:*
+
+----
+ip link delete interface_name
+----
+
+[#_iptables]
+=== Iptables
+
+[NOTE]
+====
+
+Dependendo do provedor de rede configurado para o cluster do qual o nó fazia parte, algumas das cadeias estarão ou não presentes no nó.
+====
+
+
+As regras do iptables são usadas para rotear o tráfego de e para os contêineres. As regras criadas não são persistentes, portanto reiniciar o nó restaurará o iptables ao seu estado original.
+
+|===
+| Cadeias
+
+| `cali-failsafe-in`
+| `cali-failsafe-out`
+| `cali-fip-dnat`
+| `cali-fip-snat`
+| `cali-from-hep-forward`
+| `cali-from-host-endpoint`
+| `cali-from-wl-dispatch`
+| `cali-fw-caliXXXXXXXXXXX` (nomes de cadeias aleatórias)
+| `cali-nat-outgoing`
+| `cali-pri-kns.NAMESPACE` (cadeia por namespace)
+| `cali-pro-kns.NAMESPACE` (cadeia por namespace)
+| `cali-to-hep-forward`
+| `cali-to-host-endpoint`
+| `cali-to-wl-dispatch`
+| `cali-tw-caliXXXXXXXXXXX` (nomes de cadeias aleatórias)
+| `cali-wl-to-host`
+| `KUBE-EXTERNAL-SERVICES`
+| `KUBE-FIREWALL`
+| `KUBE-MARK-DROP`
+| `KUBE-MARK-MASQ`
+| `KUBE-NODEPORTS`
+| `KUBE-SEP-XXXXXXXXXXXXXXXX` (nomes de cadeias aleatórias)
+| `KUBE-SERVICES`
+| `KUBE-SVC-XXXXXXXXXXXXXXXX` (nomes de cadeias aleatórias)
+|===
+
+*Para listar todas as regras do iptables:*
+
+----
+iptables -L -t nat
+iptables -L -t mangle
+iptables -L
+----

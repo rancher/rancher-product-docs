@@ -1,0 +1,262 @@
+= ダウンストリームユーザークラスターとの通信
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc 
+:product-path: about-rancher/architecture/communicating-with-downstream-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+
+このセクションでは、Rancherがアプリやサービスを実行するダウンストリームユーザークラスターをどのようにプロビジョニングし、管理するかについて説明します。
+
+以下の図は、クラスターコントローラー、クラスターエージェント、およびRancherシステムエージェントがどのようにRancherにダウンストリームクラスターを制御させるかを示しています。
+
+.ダウンストリームクラスターとの通信
+image::rancher-architecture-cluster-controller.svg[Rancherコンポーネント]
+
+以下の説明は、上記の図の番号に対応しています：
+
+. <<_1_the_authentication_proxy,認証プロキシ>>
+. <<_2_cluster_controllers_and_cluster_agents,クラスターコントローラーとクラスターエージェント>>
+. <<_3_rancher_system_agent,Rancher System Agent>>
+. <<_4_authorized_cluster_endpoint,認可されたクラスターエンドポイント>>
+
+[#_1_the_authentication_proxy]
+== 1.認証プロキシ
+
+この図では、ボブという名前のユーザーが「ユーザークラスター1」と呼ばれるダウンストリームユーザークラスターで実行されているすべてのポッドを見たいと考えています。Rancher内から、彼はポッドを見るために`kubectl`コマンドを実行できます。ボブはRancherの認証プロキシを通じて認証されます。
+
+認証プロキシは、すべてのKubernetes API呼び出しをダウンストリームクラスターに転送します。それは、ローカル認証、Active Directory、GitHubなどの認証サービスと統合されています。すべてのKubernetes API呼び出しにおいて、認証プロキシは呼び出し元を認証し、呼び出しをKubernetesマスターに転送する前に適切なKubernetesのなりすましヘッダーを設定します。
+
+Rancherは https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/[サービスアカウント]を使用してKubernetesクラスターと通信します。Rancherの各ユーザーアカウントは、ダウンストリームクラスターに存在する対応するサービスアカウントと結び付けられます。Rancherはサービスアカウントを使用して https://kubernetes.io/docs/reference/access-authn-authz/authentication/#user-impersonation[なりすます]ことで、ユーザーが持つべきすべての権限を提供します。
+
+デフォルトでは、RancherはダウンストリームユーザークラスターのKubernetes APIサーバーに接続するためにRancherサーバーを介してプロキシするための資格情報を含む{xref-access-cluster-kubectl}[kubeconfigファイル]を生成します。kubeconfigファイル（`kube_config_rancher-cluster.yml`）には、クラスターへのフルアクセスが含まれています。
+
+[#_2_cluster_controllers_and_cluster_agents]
+== 2.クラスターコントローラーとクラスターエージェント
+
+各ダウンストリームユーザークラスターにはクラスターエージェントがあり、これがRancherサーバー内の対応するクラスターコントローラーへトンネルを開きます。
+
+各ダウンストリームクラスターには1つのクラスターコントローラーと1つのクラスターエージェントがあります。各クラスターコントローラー：
+
+* ダウンストリームクラスタのリソースの変更を監視する
+* ダウンストリームクラスタの現在の状態を目的の状態にする
+* クラスターとプロジェクトへのアクセス制御ポリシーを設定します。
+ifeval::["{build-type}" != "srfa"]
+* GKEなどの必要なDockerマシンドライバとKubernetesエンジンを呼び出してクラスターをプロビジョニングします。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+* 必要なDockerマシンドライバとKubernetesエンジンを呼び出してクラスターをプロビジョニングします。
+endif::[]
+
+デフォルトでは、Rancherがダウンストリームクラスターと通信できるようにするため、クラスターコントローラーはクラスターエージェントに接続します。クラスターエージェントが利用できない場合、クラスターコントローラーは代わりに<<_3_rancher_system_agent,Rancherシステムエージェント>>に接続できます。
+
+クラスターエージェント（`cattle-cluster-agent`とも呼ばれる）は、ダウンストリームユーザークラスター内で実行されるコンポーネントです。次のタスクを実行します：
+
+* Rancherで起動したKubernetesクラスターのKubernetes APIに接続します。
+* 各クラスター内のワークロード、ポッドの作成およびデプロイメントを管理します。
+* 各クラスターのグローバルポリシーで定義されたロールとバインディングを適用します。
+* イベント、統計、ノード情報、健康状態に関して、クラスターとRancherサーバー（クラスターコントローラーへのトンネル経由）間で通信します。
+
+[#_3_rancher_system_agent]
+== 3.Rancher System Agent
+
+クラスターエージェント（`cattle-cluster-agent`とも呼ばれる）が利用できない場合、Rancherシステムエージェントはクラスターコントローラーへのトンネルを作成してRancherと通信します。
+
+`rancher-system-agent`はRKE2およびK3s Kubernetesクラスターのすべてのノードで実行されます。クラスター操作を実行する際にノードと対話するために使用されます。クラスター操作の例には、Kubernetesバージョンのアップグレードやetcdスナップショットの作成または復元が含まれます。
+
+[#_4_authorized_cluster_endpoint]
+== 4.認可されたクラスターエンドポイント
+
+認可されたクラスターエンドポイント（ACE）は、ユーザーがRancher認証プロキシを介さずに、ダウンストリームクラスターのKubernetes APIサーバーに接続できるようにします。
+
+____
+ACEは、Rancherでプロビジョニングまたは登録されたRKE2およびK3sクラスターで利用可能です。ホスティングされたKubernetesプロバイダー、例えばAmazonのEKSのクラスターでは利用できません。
+____
+
+ユーザーが認可されたクラスターエンドポイントを必要とする主な理由は2つあります：
+
+* Rancherがダウンしている間にダウンストリームユーザークラスターにアクセスするため
+* Rancherサーバーとダウンストリームクラスターが長距離で分離されている場合にレイテンシを減少させるため
+
+`kube-api-auth`マイクロサービスは、認可されたクラスターエンドポイントのユーザー認証機能を提供するためにデプロイされています。`kubectl`を使用してユーザークラスターにアクセスすると、クラスターのKubernetes APIサーバーは`kube-api-auth`サービスをウェブフックとして使用してあなたを認証します。
+
+認可されたクラスターエンドポイントと同様に、`kube-api-auth`認証サービスもRancherが起動したKubernetesクラスターにのみ利用可能です。
+
+____
+*例のシナリオ：*Rancherサーバーがアメリカにあり、ユーザークラスター1がオーストラリアにあるとしましょう。ユーザーのアリスもオーストラリアに住んでいます。アリスはRancher UIを使用してユーザークラスター1のリソースを操作できますが、彼女のリクエストはオーストラリアからアメリカのRancherサーバーに送信され、その後ダウンストリームユーザークラスターがあるオーストラリアにプロキシ経由で戻される必要があります。地理的な距離は大きなレイテンシを引き起こす可能性があり、アリスは認可されたクラスターエンドポイントを使用することでこれを減少させることができます。
+____
+
+このエンドポイントがダウンストリームクラスターに対して有効になっている場合、Rancherはクラスターに直接接続するためにkubeconfigファイルに追加のKubernetesコンテキストを生成します。このファイルには`kubectl`と`helm`の資格情報が含まれています。
+
+[NOTE]
+====
+
+kubeconfigでACEコンテキストを使用するには、有効にした後に`kubectl use-context <ace context name>`を実行してください。
+====
+
+
+詳細については、{xref-access-cluster-kubectl}[kubectlとkubeconfigファイルを使用してクラスターにアクセスするセクション]を参照してください。
+
+Rancherがダウンした場合でも、ファイル内の資格情報を使用してクラスターにアクセスできるように、kubeconfigファイルをエクスポートすることをお勧めします。
+
+[#_impersonation]
+== 偽装
+
+ユーザーは技術的に上流クラスターにのみ存在します。Rancherは、ダウンストリームクラスターに実際のユーザーリソースが存在しないにもかかわらず、Rancherユーザーを参照する https://kubernetes.io/docs/reference/access-authn-authz/rbac/#rolebinding-and-clusterrolebinding[RoleBindingsとClusterRoleBindings]を作成します。
+
+ユーザーが認証プロキシを介してダウンストリームクラスターと対話する際には、そのリクエストのアクターとして機能するエンティティがダウンストリームに必要です。Rancherは、そのエンティティとして機能するサービスアカウントを作成します。各サービスアカウントには、所属するユーザーを*なりすます*ための1つの権限のみが付与されます。もし、任意のユーザーをなりすますことができるサービスアカウントが1つだけ存在した場合、悪意のあるユーザーがそのアカウントを改ざんし、別のユーザーになりすますことで権限を昇格させる可能性があります。この問題は https://github.com/rancher/rancher/security/advisories/GHSA-pvxj-25m6-7vqr[CVE]の基礎となりました。
+
+[#_impersonation_troubleshooting]
+=== なりすましのトラブルシューティング
+
+ダウンストリームクラスターでは、5つのリソースがなりすましを処理します：
+
+* namespace: `cattle-impersonation-system`
+* サービスアカウント: `cattle-impersonation-system/cattle-impersonation-<user ID>`
+* アカウントトークンシークレット: `cattle-impersonation-system/cattle-impersonation-<user ID>-token-<hash>`
+* クラスター役割: `cattle-impersonation-<user ID>`
+* クラスター役割バインディング: `cattle-impersonation-<user ID>`
+
+この典型的ななりすましクラスター役割の例では、システムは`github`を認証プロバイダーとして使用するように構成されています：
+
+[,yaml]
+----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+ creationTimestamp: "2021-10-06T18:20:13Z"
+ labels:
+   authz.cluster.cattle.io/impersonator: "true"
+   cattle.io/creator: norman
+ name: cattle-impersonation-user-abcde
+ resourceVersion: "3528"
+ uid: a7478731-72a0-4343-b09f-c3bf12552d77
+rules:
+# allowed to impersonate user user-abcde
+- apiGroups:
+ - ""
+ resourceNames:
+ - user-abcde
+ resources:
+ - users
+ verbs:
+ - impersonate
+# allowed to impersonate listed groups
+- apiGroups:
+ - ""
+ resourceNames:
+ - github_team://123 # group from GitHub auth provider
+ - system:authenticated # automatic group from Kubernetes
+ - system:cattle:authenticated # automatic group from Rancher
+ resources:
+ - groups
+ verbs:
+ - impersonate
+# allowed to impersonate principal ID github_user://098
+- apiGroups:
+ - authentication.k8s.io
+ resourceNames:
+ - github_user://098 # principal ID from GitHub auth provider
+ resources:
+ - userextras/principalid
+ verbs:
+ - impersonate
+# allowed to impersonate username example
+- apiGroups:
+ - authentication.k8s.io
+ resourceNames:
+ - example # username from GitHub auth provider
+ resources:
+ - userextras/username
+ verbs:
+ - impersonate
+----
+
+なりすましの問題をトラブルシューティングする際には、これらのリソースがユーザーに存在するかどうか、またクラスター役割のルールが上記と似ているかどうかを確認してください。次に例を示します。
+
+[,bash]
+----
+kubectl --namespace cattle-impersonation-system get serviceaccount cattle-impersonation-<user ID>
+kubectl --namespace cattle-impersonation-system get secret cattle-impersonation-<user ID>-token-<hash>
+kubectl get clusterrole cattle-impersonation-<user ID> --output yaml
+kubectl get clusterrolebinding cattle-impersonation-<user ID>
+----
+
+UIで「なりすまし」に関連するエラーが表示された場合は、エラーメッセージの_終了する_部分に注意を払い、リクエストが失敗した本当の理由を確認してください。
+
+[#_important_files]
+== 重要なファイル
+
+以下に示すファイルは、クラスターの維持、トラブルシューティング、およびアップグレードに必要です。
+
+* `config.yaml`:RKE2およびK3sクラスター設定ファイル。
+* `rke2.yaml` または `k3s.yaml`：あなたのRKE2またはK3sクラスターのKubeconfigファイル。このファイルには、クラスタにフルアクセスするための資格情報が含まれます。もしRancherがダウンした場合でも、このファイルを使用して、Rancherが起動したKubernetesクラスターに認証できます。
+
+Rancher認証プロキシなしでクラスターに接続する方法やその他の設定オプションについての詳細は、{xref-access-cluster-kubectl}[kubeconfigファイル]のドキュメントを参照してください。
+
+[#_tools_for_provisioning_kubernetes_clusters]
+== Kubernetesクラスターのプロビジョニングツール
+
+Rancherがダウンストリームのユーザークラスターをプロビジョニングするために使用するツールは、プロビジョニングされるクラスターの種類によって異なります。
+
+[#_rancher_launched_kubernetes_for_nodes_hosted_in_an_infrastructure_provider]
+=== インフラストラクチャプロバイダーにホストされたノードのためのRancher起動Kubernetes
+
+ifeval::["{build-type}" != "srfa"]
+Rancherは、Amazon EC2、DigitalOcean、Azure、またはvSphereなどのプロバイダーでノードを動的にプロビジョニングし、その上にKubernetesをインストールできます。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+RancherはAmazon EC2でノードを動的にプロビジョニングし、その上にKubernetesをインストールできます。
+endif::[]
+
+Rancherはこのタイプのクラスターを https://github.com/rancher/machine[docker-machine.]を使用してプロビジョニングします。
+
+[#_rancher_launched_kubernetes_for_custom_nodes]
+=== カスタムノードのためのRancher起動Kubernetes
+
+このタイプのクラスターを設定する際、Rancherは既存のノードにKubernetesをインストールし、カスタムクラスターを作成します。
+
+Rancherはこのタイプのクラスターを https://github.com/rancher/rke2[RKE2]または https://github.com/rancher/k3s[K3s]を使用してプロビジョニングします。
+
+[#_hosted_kubernetes_providers]
+=== ホストされているKubernetesプロバイダ
+
+ifeval::["{build-type}" != "srfa"]
+このタイプのクラスターを設定する際、KubernetesはGoogle Kubernetes Engine、Amazon Elastic Container Service for Kubernetes、またはAzure Kubernetes Serviceなどのプロバイダーによってインストールされます。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+このタイプのクラスターを設定する際、KubernetesはAmazon Elastic Container Service for Kubernetesによってインストールされます。
+endif::[]
+
+Rancherはこのタイプのクラスターを https://github.com/rancher/kontainer-engine[kontainer-engine.]を使用してプロビジョニングします。
+
+[#_imported_kubernetes_clusters]
+=== インポート済みKubernetesクラスタ
+
+このタイプのクラスターでは、Rancherはすでに設定されたKubernetesクラスターに接続します。したがって、RancherはKubernetesをプロビジョニングせず、クラスターと通信するためにRancherエージェントを設定するだけです。
+
+[#_rancher_server_components_and_source_code]
+== Rancherサーバーコンポーネントとソースコード
+
+この図は、Rancherサーバーが構成されている各コンポーネントを示しています：
+
+image::rancher-architecture-rancher-components.svg[Rancherコンポーネント]
+
+RancherのGitHubリポジトリは、以下のリンクで見つけることができます。
+
+* https://github.com/rancher/rancher[メインRancherサーバーリポジトリ]
+* https://github.com/rancher/ui[Rancher UI]
+* https://github.com/rancher/api-ui[Rancher API UI]
+* https://github.com/rancher/norman[ノーマン,] RancherのAPIフレームワーク
+* https://github.com/rancher/types[種類]
+* https://github.com/rancher/cli[Rancher CLI]
+* https://github.com/rancher/helm[カタログアプリケーション]
+
+これは主なRancherリポジトリの一部を示したリストです。Rancherのソースコードに関する詳細については、xref:contribute-to-rancher.adoc#_rancher_repositories[Rancherへの貢献に関するセクションを参照してください。]Rancherで使用されているすべてのライブラリやプロジェクトについては、 https://github.com/rancher/rancher/blob/master/go.mod[`go.mod`ファイル]が`rancher/rancher`リポジトリにありますので、ご参照ください。

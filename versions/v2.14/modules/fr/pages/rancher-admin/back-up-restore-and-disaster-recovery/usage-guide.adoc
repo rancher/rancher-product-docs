@@ -1,0 +1,216 @@
+= Guide d'utilisation de la sauvegarde et de la restauration
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-restore-usage-guide.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/usage-guide.adoc
+ifeval::["{build-type}" != "community"]
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-upgrades: xref:installation-and-upgrade/upgrades.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-backup-cluster: xref:how-to-guides/nouveaux-guides-utilisateurs/sauvegarde-restauration-et-récupération-en-cas-de-sinistre/sauvegarde-rancher.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-rancher-backup-config: xref:reference-guides/backup-restore-configuration/backup-configuration.adoc
+:xref-rancher-upgrades: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/upgrades.adoc
+endif::[]
+
+Le chart Rancher Backups est notre solution pour la récupération après sinistre et la migration. Ce chart vous permet d'effectuer des sauvegardes de vos ressources Kubernetes et de les enregistrer dans divers emplacements de stockage persistant.
+
+Ce chart est un outil très simple qui intervient dans de nombreux domaines de l'écosystème Rancher. En conséquence, des cas particuliers ont émergé, entraînant des fonctionnalités non documentées. L'objectif de ce document est de mettre en évidence l'utilisation appropriée et définie des sauvegardes Rancher, ainsi que de discuter de certains de ces cas particuliers que nous avons rencontrés.
+
+[#_functionality_overview]
+== Aperçu des fonctionnalités
+
+[#_backup]
+=== Sauvegarde
+
+L'opérateur collecte toutes les ressources capturées par le resourceSet dans le chart sous forme d'objets non structurés en mémoire. Après la collecte des ressources, un fichier tar compressé des ressources est enregistré sous forme de collection de manifests en JSON, puis téléchargé dans un stockage d'objets défini par l'utilisateur. Cette sauvegarde peut être programmée de manière répétée et peut également être chiffrée. Cette option de chiffrement est importante car certaines ressources sont sensibles et les valeurs sont stockées en texte clair sans chiffrement.
+
+Voir la {xref-rancher-backup-config}[documentation de configuration de sauvegarde] pour plus d'informations sur les options, y compris le chiffrement, pour configurer une sauvegarde.
+
+[NOTE]
+====
+
+Comme indiqué dans la {xref-backup-cluster}[documentation de sauvegarde de Rancher], vous devez enregistrer manuellement le contenu du fichier de configuration de chiffrement car l'opérateur ne *le* sauvegardera pas.
+====
+
+
+[#_restore]
+=== Restauration
+
+Il existe deux scénarios principaux de restauration{nbsp}: restaurer vers un cluster avec Rancher en cours d'exécution et restaurer vers un nouveau cluster. Vous ne pouvez restaurer un cluster avec Rancher en cours d'exécution que si c'est le même cluster d'où la sauvegarde a été effectuée et si l'option {xref-rancher-restore-config}#_prune_during_restore[`prune` option] est activée lors de la restauration. Une restauration a des entrées similaires à une sauvegarde. Elle nécessite un nom de fichier de sauvegarde, le nom du secret encryptionConfigSecret et l'emplacement de stockage.
+
+Les ressources sont restaurées dans cet ordre{nbsp}:
+
+. Définitions de ressources personnalisées (CRDs)
+. Ressources à portée de cluster
+. Ressources d'espace de noms
+
+Voir la {xref-rancher-restore-config}[documentation de configuration de restauration] pour plus d'informations sur les options de configuration d'une restauration.
+
+[#_resource_sets]
+=== Ensembles de ressources
+
+Le resourceSet détermine quelles ressources l'opérateur de sauvegarde-restauration collecte dans une sauvegarde. C'est un ensemble de ResourceSelectors, qui définissent les exigences de sélection en utilisant des correspondances clé/valeur, des correspondances d'expressions régulières ou le labelSelector du client Kubernetes.
+
+Voici les différents champs disponibles pour un resourceSelector{nbsp}:
+
+* apiVersion
+* excludeKinds
+* excludeResourceNameRegexp
+* kinds
+* kindsRegexp
+* labelSelectors
+* namespaceRegexp
+* namespaces
+* resourceNameRegexp
+* resourceNames
+
+Le chart des sauvegardes Rancher contient un https://github.com/rancher/backup-restore-operator/tree/release/v3.0/charts/rancher-backup/files/default-resourceset-contents[resourceSet par défaut], qui est une combinaison de fichiers YAML qui sont ajoutés à un grand resourceSet lorsque le chart est installé. L'ordre des fichiers n'a pas d'importance. Les ensembles de ressources peuvent différer entre les versions.
+
+[CAUTION]
+====
+
+Si vous souhaitez apporter des modifications à l'ensemble de ressources, veuillez le modifier *avant* d'installer le chart.
+====
+
+
+[#_proper_usage]
+== Utilisation appropriée
+
+Cette section décrit les directives pour l'utilisation appropriée du chart Rancher Backups selon son cas d'utilisation.
+
+[#_all_cases]
+=== Tous les cas
+
+* Rancher Backups doit être installé sur la grappe locale.
+ ** REMARQUE : Rancher Backups ne gère aucun autre cluster que la grappe locale. Il peut restaurer les ressources du cluster qui se trouvent sur la grappe locale, mais ne communiquera pas avec les clusters en aval ni ne les sauvegardera.
+* La version de Rancher à laquelle on restaure doit correspondre à la version de Rancher à partir de laquelle la sauvegarde a été effectuée.
+* La version de Kubernetes doit être prise en compte, car vous pourriez restaurer des ressources obsolètes (ressources obsolètes par rapport à la version de Kubernetes à laquelle vous restaurez).
+
+[#_backups]
+=== Sauvegardes
+
+* Certaines ressources générées par les utilisateurs ne seront pas sauvegardées à moins qu'elles ne soient capturées par l'ensemble de ressources par défaut ou que l'ensemble de ressources ait été modifié pour les capturer.
+ ** Nous fournissons une étiquette `resources.cattle.io/backup:true` qui, lorsqu'elle est ajoutée à un secret dans n'importe quel espace de noms, entraînera sa sauvegarde.
+* Les sauvegardes n'entraînent aucune modification.
+* Les sauvegardes ne concernent que la grappe locale.
+
+[#_restores]
+=== Restaurations
+
+* Une restauration fait référence à la restauration d'une sauvegarde sur la grappe locale d'où elle a été prise. Cela peut se faire avec Rancher installé (*prune doit être activé*) ou sans qu'il soit installé (aucune instruction spéciale).
+* Une chose à noter lors de la restauration est que vous pourriez avoir besoin de "`wipe`" le cluster de toutes les ressources Rancher. Cela peut être fait en déployant le https://github.com/rancher/rancher-cleanup[script de nettoyage Rancher] en tant que tâche sur le cluster. Cela vous permet d'installer à nouveau Rancher Backups et de restaurer un cluster complètement neuf.
+ ** Assurez-vous d'utiliser kubectl pour déployer les scripts.
+
+[#_migrations]
+=== Migrations
+
+La migration présente plus de nuances car nous restaurons sur un cluster différent. Voici quelques éléments à retenir qui sont souvent négligés ou oubliés.
+
+* Le domaine Rancher doit être le même lors de la migration. Cela signifie que le nom de domaine de votre ancien cluster doit maintenant pointer vers le nouveau cluster.
+* Rancher ne doit *pas* déjà être en cours d'exécution sur le cluster vers lequel vous migrez. Cela peut causer de nombreux problèmes avec les sauvegardes Rancher et certains services Rancher également.
+* Installez la *même* version de Rancher à partir de la sauvegarde *après* que la sauvegarde a été restaurée.
+* Si vous choisissez de provisionner le nouveau cluster sur une version Kubernetes différente, sachez que cela peut entraîner une grande variété de comportements non pris en charge car l'API Kubernetes disponible peut être différente de celle à partir de laquelle vous avez effectué une sauvegarde. Cela peut conduire à la restauration de ressources obsolètes, ce qui causera des problèmes.
+* Vous ne devriez *pas* effectuer de mises à niveau pendant une migration.
+
+[#_edge_cases_and_improper_usage]
+== Cas particuliers et utilisation incorrecte
+
+Voici quelques exemples d'utilisations ou d'attentes *incorrectes* de Rancher Backups.
+
+[#_upgrades]
+=== Mises à niveau
+
+* Utiliser Rancher Backups pour mettre à niveau les versions de Rancher n'est pas un cas d'utilisation valide. La procédure recommandée est de faire une sauvegarde de la version actuelle, puis de mettre à niveau votre instance Rancher en utilisant {xref-rancher-upgrades}[ces instructions], et ensuite de faire *une autre* sauvegarde après que la mise à niveau soit terminée. De cette façon, si la mise à niveau échoue, vous avez une sauvegarde à laquelle vous pouvez restaurer, et la seconde sauvegarde sera valide pour restaurer la version mise à niveau de Rancher.
+* Utiliser Rancher Backups pour mettre à niveau les versions de Kubernetes n'est pas non plus un cas d'utilisation valide. Parce que l'API Kubernetes et les ressources disponibles sont liées à la version, la mise à niveau par restauration de sauvegarde peut entraîner des problèmes avec des ensembles de ressources mal alignés qui peuvent être obsolètes, non pris en charge ou mis à jour. Comment mettre à niveau la version de votre cluster dépendra de la manière dont il a été provisionné{nbsp}; cependant, le même format que ci-dessus est recommandé (sauvegarde, mise à niveau, sauvegarde).
+
+[#_resourceset]
+=== ResourceSet
+
+* En raison de l'évolution des ressources et des services de diverses équipes, les développeurs doivent prendre note si de nouvelles ressources doivent être ajoutées ou supprimées de l'ensemble de ressources par défaut.
+* Les sauvegardes Rancher ne sauvegardent que ce qui est capturé par les ensembles de ressources par défaut (sauf modification).  Nous avons ajouté une étiquette spécifique pour les secrets créés par l'utilisateur qui sauvegardera un secret de n'importe quel nom et espace de noms ayant cette étiquette (voir <<_backups,Utilisation appropriée des sauvegardes>>).
+
+[#_downstream_clusters]
+=== Clusters en aval
+
+* Les sauvegardes Rancher *ne sauvegardent* que les ressources Kubernetes sur le cluster local. Cela signifie que les clusters en aval ne sont *pas* touchés ou sauvegardés, sauf leur présence dans les ressources du cluster local. La mise à jour et la communication des clusters en aval incombent à l'agent Rancher et au webhook Rancher.
+
+[#_restoring_deleted_resources]
+=== Restauration des ressources supprimées
+
+* Certaines ressources produisent des résultats externes, comme le provisionnement d'un cluster en aval. Supprimer un cluster en aval et restaurer la ressource de cluster sur le cluster local n'entraîne *pas* la reprovision de ce cluster par Rancher. Selon la ressource, la restauration peut ne pas ramener complètement la ressource à un état disponible.
+* Le cas particulier de "restaurer un cluster supprimé" n'est *pas* une fonctionnalité prise en charge. En ce qui concerne les clusters en aval, qu'ils soient provisionnés ou importés, les supprimer entraîne une série de tâches de nettoyage qui ne permettent pas à l'utilisateur de restaurer les clusters supprimés. Les clusters provisionnés auront leurs nœuds et les ressources de provisionnement liées à Rancher détruites, et les clusters importés auront probablement leurs agents Rancher et d'autres ressources/services liés à l'enregistrement avec une grappe locale détruits.
+
+[CAUTION]
+====
+
+Essayer de supprimer et de restaurer un cluster en aval peut entraîner une variété de problèmes avec Rancher, les sauvegardes Rancher, le webhook Rancher, Fleet, et plus encore. Il n'est pas recommandé de faire cela.
+====
+
+
+[#__fleet_product_name_harvester_product_name_and_other_services]
+=== {fleet-product-name}, {harvester-product-name}, et autres services
+
+D'autres services, qui sont sauvegardés par les sauvegardes Rancher, changent et évoluent souvent. Au fur et à mesure que cela se produit, leurs ressources et leurs besoins en sauvegarde peuvent également changer. Certaines ressources peuvent ne pas avoir besoin d'être sauvegardées et certaines peuvent ne pas être sauvegardées du tout. Il est important que les équipes prennent cela en compte dans leur processus de développement et évaluent si leurs ensembles de ressources associés capturent correctement l'ensemble approprié de ressources pour que leurs services soient restaurés correctement.
+
+[#_monitoring_backups_and_restores]
+== Surveillance des sauvegardes et des restaurations
+
+Rancher propose des fonctionnalités de surveillance prêtes à l'emploi pour l'opérateur de sauvegarde. Elles sont désactivées par défaut mais peuvent être facilement activées lors du déploiement du Helm Chart de l'opérateur.
+
+[#_metrics]
+=== Métriques
+
+Les métriques peuvent être activées en définissant `monitoring.metrics.enabled: true` et `monitoring.serviceMonitor.enabled: true` dans les valeurs du Helm Chart. Lorsqu'elles sont activées, l'opérateur exporte les métriques suivantes. Notez que *rancher-monitoring* doit être installé au préalable pour que les métriques soient correctement exportées.
+
+[cols="1,1"]
+|===
+|**Nom de la métrique** |**Description**
+
+|`rancher_backup_info`
+|Détails sur un CR de sauvegarde Rancher spécifique (étiquettes{nbsp}: `name`, `status`, `resourceSetName`, `retentionCount`, `backupType`, `filename`, `storageLocation`, `nextSnapshot`, `lastSnapshot`). Type *GaugeVec*.
+
+|`rancher_backup_count`
+|Nombre de CR de sauvegarde Rancher existants. Type *Gauge*.
+
+|`rancher_backups_attempted_total`
+|Nombre total de sauvegardes Rancher traitées par l'opérateur (étiquettes{nbsp}: `name`). Type *CounterVec*.
+
+|`rancher_backups_failed_total`
+|Nombre total de sauvegardes Rancher échouées traitées par cet opérateur (étiquettes{nbsp}: `name`). Type *CounterVec*.
+
+|`rancher_backup_duration_seconds`
+|Durée de chaque sauvegarde traitée par l'opérateur en secondes (étiquettes{nbsp}: `name`). Type *HistogramVec*, les buckets peuvent être personnalisés par l'utilisateur.
+
+|`rancher_backup_last_processed_timestamp_seconds`
+|Temps Unix du dernier traitement de sauvegarde (en secondes) (étiquettes{nbsp}: `name`). Type *GaugeVec*.
+
+|`rancher_restore_info`
+|Détails sur un CR de restauration Rancher spécifique (étiquettes{nbsp}: `name`, `status`, `fileName`, `prune`, `storageLocation`, `restoreTime`). Type *GaugeVec*.
+
+|`rancher_restore_count`
+|Nombre de CR de restauration Rancher existants. Type *Gauge*.
+|===
+
+[#_alerting]
+=== Alertes
+
+Une seule alerte est fournie par défaut, 'BackupFailed', qui avertit les utilisateurs lorsqu'une sauvegarde échoue à être traitée par l'Opérateur. Elle peut être activée en définissant `monitoring.prometheusRules.defaultAlert.enabled: true`.
+
+Les utilisateurs peuvent également déployer leurs propres règles d'alerte en définissant `monitoring.prometheusRules.customRules.enabled: true` et en les configurant sous `monitoring.prometheusRules.customRules.rules`.
+
+[#_dashboards]
+=== Tableaux de bord
+
+Rancher fournit également des tableaux de bord Grafana pour aider à surveiller la santé de l'Opérateur de sauvegarde. Ceux-ci, cependant, ne peuvent être déployés que par le Chart Helm *rancher-monitoring*. Pour ce faire, `rancherBackupMonitoring.dashboards.enabled: true` doit être défini.
+
+[#_conclusion]
+== Conclusion
+
+Rancher Backups est un outil très utile, cependant, il est quelque peu limité dans sa portée et ses objectifs prévus. Afin d'éviter d'éventuelles difficultés, il est important de suivre les procédures spécifiques décrites pour garantir le bon fonctionnement du chart.

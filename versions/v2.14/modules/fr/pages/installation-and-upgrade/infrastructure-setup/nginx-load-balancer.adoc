@@ -1,0 +1,107 @@
+= Mise en place d'un équilibreur de charge NGINX
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+
+NGINX sera configuré comme un équilibreur de charge de couche 4 (TCP) qui redirige les connexions vers l'un de vos nœuds Rancher.
+
+Dans cette configuration, l'équilibreur de charge est positionné devant vos nœuds. L'équilibreur de charge peut être n'importe quel hôte capable d'exécuter NGINX.
+
+[NOTE]
+====
+
+N'utilisez pas l'un de vos nœuds Rancher comme équilibreur de charge.
+====
+
+
+____
+Ces exemples montrent l'équilibreur de charge configuré pour diriger le trafic vers trois nœuds Rancher. Si Rancher est installé sur un cluster Kubernetes RKE, trois nœuds sont nécessaires. Si Rancher est installé sur un cluster Kubernetes K3s, seuls deux nœuds sont nécessaires.
+____
+
+[#_install_nginx]
+== Installer NGINX
+
+Commencez par installer NGINX sur le nœud que vous souhaitez utiliser comme équilibreur de charge. NGINX a des paquets disponibles pour tous les systèmes d'exploitation connus. Les versions testées sont `1.14` et `1.15`. Pour obtenir de l'aide pour installer NGINX, consultez leur https://www.nginx.com/resources/wiki/start/topics/tutorials/install/[documentation d'installation].
+
+Le module `stream` est requis, ce qui est présent lors de l'utilisation des paquets officiels de NGINX. Veuillez vous référer à la documentation de votre système d'exploitation pour savoir comment installer et activer le module NGINX `stream`.
+
+[#_create_nginx_configuration]
+== Créer une configuration NGINX
+
+Après avoir installé NGINX, vous devez mettre à jour le fichier de configuration NGINX, `nginx.conf`, avec les adresses IP de vos nœuds.
+
+. Copiez et collez l'exemple de code ci-dessous dans votre éditeur de texte préféré. Enregistrez-le sous le nom `nginx.conf`.
+. Depuis `nginx.conf`, remplacez les deux occurrences (port 80 et port 443) de `<IP_NODE_1>`, `<IP_NODE_2>` et `<IP_NODE_3>` par les adresses IP de vos nœuds.
++
+[NOTE]
+====
+Voir https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/[Documentation NGINX{nbsp}: Équilibrage de la charge TCP et UDP] pour toutes les options de configuration.
+====
++
+.Exemple de configuration NGINX
+----
+worker_processes 4;
+worker_rlimit_nofile 40000;
+
+events {
+    worker_connections 8192;
+}
+
+stream {
+    upstream rancher_servers_http {
+        least_conn;
+        server <IP_NODE_1>:80 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_2>:80 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_3>:80 max_fails=3 fail_timeout=5s;
+    }
+    server {
+        listen 80;
+        proxy_pass rancher_servers_http;
+    }
+
+}
+
+http {
+
+    upstream rancher_servers_https {
+        least_conn;
+        server <IP_NODE_1>:443 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_2>:443 max_fails=3 fail_timeout=5s;
+        server <IP_NODE_3>:443 max_fails=3 fail_timeout=5s;
+    }
+    server {
+        listen 443 ssl;
+        ssl_certificate /path/to/tls.crt;
+        ssl_certificate_key /path/to/key.key;
+        location / {
+            proxy_pass https://rancher_servers_https;
+            proxy_set_header Host <rancher UI URL>;
+            proxy_ssl_server_name on;
+            proxy_ssl_name <rancher UI URL>
+        }
+    }
+}
+----
+
+. Enregistrez `nginx.conf` sur votre équilibreur de charge à l'emplacement suivant{nbsp}: `/etc/nginx/nginx.conf`.
+. Chargez les mises à jour de votre configuration NGINX en exécutant la commande suivante{nbsp}:
++
+----
+# nginx -s reload
+----
+
+[#_option_run_nginx_as_docker_container]
+== Option - Exécutez NGINX en tant que conteneur Docker
+
+Au lieu d'installer NGINX en tant que paquet sur le système d'exploitation, vous pouvez plutôt l'exécuter en tant que conteneur Docker. Enregistrez le *Exemple de configuration NGINX* modifié sous `/etc/nginx.conf` et exécutez la commande suivante pour lancer le conteneur NGINX{nbsp}:
+
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v /etc/nginx.conf:/etc/nginx/nginx.conf \
+  nginx:1.14
+----

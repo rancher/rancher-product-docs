@@ -1,0 +1,238 @@
+= Migration von Azure In-tree zu Out-of-tree
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-azure.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/azure.adoc
+ifeval::["{build-type}" != "community"]
+:xref-azure-cloud-provider: xref:cluster-deployment/set-up-cloud-providers/azure.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-azure-cloud-provider: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/azure.adoc
+endif::[]
+
+Kubernetes entfernt sich von der Pflege von Cloud-Anbietern im Baum.
+
+Beginnend mit Kubernetes 1.29 wurden interne Cloud Provider deaktiviert. Sie müssen `DisableCloudProviders` und `DisableKubeletCloudCredentialProvider` deaktivieren, um den in-tree Azure-Cloud-Provider zu verwenden oder vom in-tree Cloud-Provider zu einem out-of-tree Provider zu migrieren. Sie können die erforderlichen Feature-Gates deaktivieren, indem Sie `feature-gates=DisableCloudProviders=false` als zusätzliches Argument für den Kubelet, Controller-Manager und API-Server des Clusters in der erweiterten Clusterkonfiguration festlegen. Zusätzlich setzen Sie `DisableKubeletCloudCredentialProvider=false` in den Argumenten des Kubelet ein, um die in-tree Funktionalität zur Authentifizierung bei Azure-Container-Registries für Image-Pull-Anmeldeinformationen zu aktivieren. Siehe https://github.com/kubernetes/kubernetes/pull/117503[Upstream-Dokumentation] für weitere Details.
+
+In Kubernetes v1.30 und später wurden die in-tree Cloud-Anbieter entfernt. Rancher ermöglicht es Ihnen, auf Kubernetes v1.30 zu aktualisieren, wenn Sie von einem in-tree zu einem out-of-tree Anbieter migrieren.
+
+Um vom in-tree Cloud-Provider zum out-of-tree Azure-Cloud-Provider zu migrieren, müssen Sie den Kube-Controller-Manager des bestehenden Clusters stoppen und den Azure-Cloud-Controller-Manager installieren.
+
+Wenn es akzeptabel ist, während der Migration eine gewisse Ausfallzeit zu haben, folgen Sie den Anweisungen, um {xref-azure-cloud-provider}#_using_the_out_of_tree_azure_cloud_provider[einen externen Cloud-Provider einzurichten]. Diese Anweisungen beschreiben, wie der externe Cloud-Anbieter für einen neu bereitgestellten Cluster konfiguriert wird. Während der Einrichtung wird es eine gewisse Ausfallzeit geben, da es eine Zeitspanne gibt, in der der alte Cloud-Anbieter nicht mehr läuft und der neue Cloud-Anbieter zu laufen beginnt.
+
+Wenn Ihr Setup keine Ausfallzeit der Control Plane tolerieren kann, müssen Sie die Führungsmigration aktivieren. Dies erleichtert einen reibungslosen Übergang von den Controllern im Kube-Controller-Manager zu ihren Gegenstücken im Cloud-Controller-Manager.
+
+[NOTE]
+.Wichtig:
+====
+Die Kubernetes https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#before-you-begin[Dokumentation zur Migration des Cloud-Controllers] besagt, dass es möglich ist, mit derselben Kubernetes-Version zu migrieren, geht jedoch davon aus, dass die Migration Teil eines Kubernetes-Upgrades ist. Verweisen Sie auf die Kubernetes-Dokumentation zu https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/[Migration zur Verwendung des Cloud-Controller-Managers], um zu sehen, ob Sie Ihre Einrichtung vor der Migration anpassen müssen. Bestätigen Sie Ihre https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#default-configuration[Werte der Migrationskonfiguration]. Wenn Ihr Cloud-Anbieter eine Implementierung des Node IPAM-Controllers bereitstellt, müssen Sie auch https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#node-ipam-controller-migration[den IPAM-Controller migrieren].
+
+Beginnend mit Kubernetes v1.26 sind die in-tree Persistent Volume-Typen `kubernetes.io/azure-disk` und `kubernetes.io/azure-file` als veraltet markiert und werden nicht mehr unterstützt. Es gibt keine Pläne, diese Treiber nach ihrem Auslaufen zu entfernen, jedoch sollten Sie auf die entsprechenden CSI-Treiber `disk.csi.azure.com` und `file.csi.azure.com` migrieren. Um die Migrationsoptionen für Ihre Speicherklassen zu überprüfen und Ihr Cluster auf die Verwendung von Azure Disks und Azure Files CSI-Treibern zu upgraden, finden Sie weitere Informationen unter https://learn.microsoft.com/en-us/azure/aks/csi-migrate-in-tree-volumes[Migration von In-Tree- zu CSI-Treibern].
+====
+
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. Aktualisieren Sie die Clusterkonfiguration, um die Führungsmigration zu aktivieren:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+Beachten Sie, dass der Cloud-Anbieter in diesem Schritt weiterhin `azure` ist:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: azure
+----
+
+. Sperren Sie die Steuerungsknoten, damit die Azure Cloud-Controller-Pods nur nach dem Upgrade auf den externen Cloud-Anbieter auf den Knoten ausgeführt werden.
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/control-plane=true"
+----
+
+. Um den Azure Cloud-Controller-Manager bereitzustellen, verwenden Sie eine der verfügbaren Optionen:
+ ** UI: Befolgen Sie die Schritte 1-10 von {xref-azure-cloud-provider}#_helm_chart_installation_from_ui[Helm-Chart-Installation über die UI], um das Cloud-Controller-Manager-Chart zu installieren.
+ ** CLI: Befolgen Sie die Schritte 1-4 von {xref-azure-cloud-provider}#_helm_chart_installation_from_cli[Helm-Chart-Installation über die CLI].
+ ** Aktualisieren Sie das zusätzliche Manifest des Clusters: Befolgen Sie die Schritte 2-3, um {xref-azure-cloud-provider}#_using_the_out_of_tree_azure_cloud_provider[das Cloud-Controller-Manager-Chart zu installieren].
+
++
+Bestätigen Sie, dass das Chart installiert ist, die neuen Pods jedoch aufgrund der gesperrten Steuerungsknoten noch nicht ausgeführt werden.
+
+. Um die Führungsmigration zu aktivieren, fügen Sie `--enable-leader-migration` zu den Containerargumenten von `cloud-controller-manager` hinzu:
++
+[,shell]
+----
+kubectl -n kube-system patch deployment cloud-controller-manager \
+--type=json \
+-p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-leader-migration"}]'
+----
+
+. Aktualisieren Sie das Provisionierungs-Cluster, um den Cloud-Anbieter zu ändern und die Argumente für die Führungsmigration aus dem Kube-Controller-Manager zu entfernen.
+Wenn Sie die Kubernetes-Version aktualisieren, setzen Sie auch die Kubernetes-Version im Abschnitt `spec.kubernetesVersion` der Cluster-YAML-Datei.
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: external
+----
++
+Entfernen Sie `enable-leader-migration` aus dem Kube-Controller-Manager:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
+
+. Entcordonieren Sie die Steuerungsknotenknoten, damit die Azure Cloud-Controller-Pods jetzt auf den Knoten ausgeführt werden:
++
+[,shell]
+----
+kubectl uncordon -l "node-role.kubernetes.io/control-plane=true"
+----
+
+. Aktualisieren Sie das Cluster. Die `cloud-controller-manager` Pods sollten jetzt ausgeführt werden.
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. Der Cloud-Anbieter ist verantwortlich für die Festlegung der ProviderID des Knotens. Überprüfen Sie, ob alle Knoten mit der ProviderID initialisiert sind:
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+. (Optional) Sie können die Führungsmigration nach dem Upgrade auch deaktivieren, da die Führungsmigration mit nur einem Cloud-Controller-Manager nicht erforderlich ist.
+ Aktualisieren Sie die `cloud-controller-manager` Implementierung, um die Führungsmigration aus den Containerargumenten zu entfernen:
++
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+--
+
+RKE::
++
+--
+. Aktualisieren Sie die Clusterkonfiguration, um die Führungsmigration in `cluster.yml` zu aktivieren:
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
++
+Beachten Sie, dass der Cloud-Anbieter in diesem Schritt weiterhin `azure` ist:
++
+[,yaml]
+----
+cloud_provider:
+  name: azure
+----
+
+. Sperren Sie die Steuerungsknotenknoten, damit die Azure-Cloud-Controller-Pods nur nach dem Upgrade auf den externen Cloud-Anbieter auf den Knoten ausgeführt werden:
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/controlplane=true"
+----
+
+. Um den Azure-Cloud-Controller-Manager zu installieren, befolgen Sie die gleichen Schritte wie bei der Installation des Azure-Cloud-Anbieters in einem neuen Cluster:
+ ** UI: Befolgen Sie die Schritte 1-10 von {xref-azure-cloud-provider}#_helm_chart_installation_from_ui[Helm-Chart-Installation über die UI], um das Cloud-Controller-Manager-Chart zu installieren.
+ ** CLI: Befolgen Sie die Schritte 1-4 von {xref-azure-cloud-provider}#_helm_chart_installation_from_cli[Helm-Chart-Installation über die CLI], um das Cloud-Controller-Manager-Chart zu installieren.
+. Bestätigen Sie, dass das Chart installiert ist, die neuen Pods jedoch aufgrund der gesperrten Steuerungsknoten noch nicht ausgeführt werden. Nach der Aktualisierung des Clusters im nächsten Schritt wird RKE jeden Knoten upgraden, entcordonieren und `cloud-controller-manager` Pods planen.
+. Um die Führungsmigration zu aktivieren, fügen Sie `--enable-leader-migration` zu den Containerargumenten von `cloud-controller-manager` hinzu:
++
+[,shell]
+----
+kubectl -n kube-system patch deployment cloud-controller-manager \
+--type=json \
+-p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-leader-migration"}]'
+----
+
+. Aktualisieren Sie `cluster.yml`, um den Cloud-Anbieter auf `external` zu ändern und die Argumente zur Führungsmigration aus dem kube-controller zu entfernen.
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external
+----
++
+Entfernen Sie `enable-leader-migration`, wenn Sie es in Ihrem Cluster nicht aktiviert haben wollen:
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
+
+. Wenn Sie die Kubernetes-Version des Clusters upgraden, setzen Sie auch die Kubernetes-Version.
+. Aktualisieren Sie das Cluster. Die `cloud-controller-manager` Pods sollten jetzt ausgeführt werden.
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. Der Cloud-Anbieter ist verantwortlich für die Festlegung der ProviderID des Knotens. Überprüfen Sie, ob alle Knoten mit der ProviderID initialisiert sind:
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+. (Optional) Sie können die Führungsmigration nach dem Upgrade auch deaktivieren, da die Führungsmigration mit nur einem Cloud-Controller-Manager nicht erforderlich ist.
+Aktualisieren Sie die `cloud-controller-manager` Implementierung, um die Führungsmigration aus den Containerargumenten zu entfernen:
++
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+--
+======

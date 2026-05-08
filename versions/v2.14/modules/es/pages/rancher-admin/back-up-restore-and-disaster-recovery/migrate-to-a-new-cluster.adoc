@@ -1,0 +1,286 @@
+= Migrando {rancher-product-name} a un nuevo clúster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-16
+:page-revdate: {revdate}
+:community-path: instrucciones/nuevos-usuarios/copia-de-seguridad-restauración-y-recuperación/migrar-rancher-a-nuevo-cluster.adoc
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+ifeval::["{build-type}" != "community"]
+:url-k3s-installation: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/installation.html
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-ds-backup-restore: xref:cluster-admin/backups-and-restore/backups-and-restore.adoc
+:xref-backup-configuration: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-installation: https://docs.k3s.io/installation
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-backup-cluster: xref:guías-de-cómo/nuevas-guías-de-usuario/copia-de-seguridad-recuperación-y-recuperación-de-desastres/copia-de-seguridad-rancher.adoc
+:xref-ds-backup-restore: xref:getting-started/installation-and-upgrade/upgrade-and-roll-back-kubernetes.adoc
+:xref-backup-configuration: xref:guías-de-referencia/configuración-de-copia-de-seguridad-y-restauración/configuración-de-copia-de-seguridad.adoc
+endif::[]
+
+Si estás migrando Rancher a un nuevo clúster de Kubernetes, no necesitas instalar Rancher en el nuevo clúster primero. Si Rancher se restaura en un nuevo clúster con Rancher ya instalado, puede causar problemas.
+
+[#_prerequisites]
+== Requisitos previos
+
+Estas instrucciones asumen que has {xref-backup-cluster}[creado una copia de seguridad] y ya has instalado un nuevo clúster de Kubernetes donde se desplegará Rancher. La copia de seguridad es específica para la aplicación Rancher y solo puede migrar la aplicación Rancher.
+
+[CAUTION]
+====
+
+Debes usar el mismo nombre de host que se estableció como la URL del servidor en el clúster original. Si no lo haces, los clústeres downstream aparecerán como no disponibles en la página de gestión del clúster de la interfaz de usuario, y no podrás hacer clic dentro del clúster o en el botón *Explorar* del clúster.
+====
+
+
+La versión de Rancher debe ser v2.5.0 o superior
+
+Rancher se puede instalar en cualquier clúster de Kubernetes, incluidos clústeres de Kubernetes alojados como los clústeres de Amazon EKS. Para ayuda instalando Kubernetes, consulta la documentación de la distribución de Kubernetes. Se pueden usar distribuciones de Kubernetes creadas por Rancher, como, pero no limitadas a, https://rke.docs.rancher.com/installation[RKE] o {url-k3s-installation}[K3s].
+
+Dado que Rancher se puede instalar en cualquier clúster de Kubernetes, puedes usar este método de copia de seguridad y restauración para migrar Rancher de un clúster de Kubernetes a cualquier otro clúster de Kubernetes. Este método _solo_ migra recursos relacionados con Rancher y no afectará a otras aplicaciones en el clúster. Consulta la https://www.suse.com/lifecycle/[matriz de soporte] para identificar qué tipos y versiones de clústeres de Kubernetes son compatibles con tu versión de Rancher.
+
+[#_1_install_the_rancher_backup_helm_chart]
+== 1. Instala el gráfico Helm rancher-backup
+
+Instala el https://github.com/rancher/backup-restore-operator/tags[`rancher-backup chart`]:
+
+. Añade el repositorio de Helm:
++
+[,bash]
+----
+helm repo add rancher-charts https://charts.rancher.io
+helm repo update
+----
+
+. Establece una variable `CHART_VERSION`, seleccionando una versión de chart `rancher-backup` compatible con tu versión de Rancher. Consulta la https://www.suse.com/suse-rancher/support-matrix/all-supported-versions[matriz de soporte], dentro de la sección *Rancher Apps / Herramientas de Clúster*, para ver qué versiones de `rancher-backup` son compatibles:
++
+[,bash]
+----
+CHART_VERSION=<chart-version>
+----
+
+. Instala los charts:
++
+[,bash]
+----
+helm install rancher-backup-crd rancher-charts/rancher-backup-crd -n cattle-resources-system --create-namespace --version $CHART_VERSION
+helm install rancher-backup rancher-charts/rancher-backup -n cattle-resources-system --version $CHART_VERSION
+----
++
+
+[NOTE]
+====
+Lo anterior asume un entorno con conectividad saliente a Docker Hub.
+
+Para un *entorno aislado*, utiliza los siguientes valores de Helm para extraer las imágenes `backup-restore-operator` y `kubectl` de tu registro privado cuando instales el chart de rancher-backup.
+
+[,bash]
+----
+--set image.repository=<registry>/rancher/backup-restore-operator --set global.kubectl.repository=<registry>/rancher/kubectl
+----
+
+Si el host que ejecuta los comandos de Helm está *también aislado y no puede acceder a charts.rancher.io*, descarga los charts en un host no aislado y luego instálalos desde archivos locales en el host aislado.
+
+En un host no aislado:
+
+[,bash]
+----
+helm repo add rancher-charts https://charts.rancher.io
+helm repo update
+helm fetch rancher-charts/rancher-backup-crd --version $CHART_VERSION
+helm fetch rancher-charts/rancher-backup --version $CHART_VERSION
+----
+
+Copia los archivos `rancher-backup-crd-<chart-version>.tgz` y `rancher-backup-<chart-version>.tgz` al host aislado, luego utilízalos para instalar los charts:
+
+[,bash]
+----
+helm install rancher-backup-crd ./rancher-backup-crd-<chart-version>.tgz -n cattle-resources-system --create-namespace
+helm install rancher-backup ./rancher-backup-<chart-version>.tgz -n cattle-resources-system --set image.repository=<registry>/rancher/backup-restore-operator --set global.kubectl.repository=<registry>/rancher/kubectl
+----
+====
+
+
+[#_2_restore_from_backup_using_a_restore_custom_resource]
+== 2. Restaura desde la copia de seguridad utilizando un recurso personalizado de restauración
+
+. Al utilizar almacenamiento de objetos S3 como fuente de copia de seguridad para una restauración que requiere credenciales, crea un objeto `Secret` en este clúster para añadir las credenciales de S3. Los datos secretos deben tener dos claves: `accessKey` y `secretKey`, que contienen las credenciales de S3.
++
+El secreto puede ser creado en cualquier espacio de nombres, este ejemplo utiliza el espacio de nombres por defecto.
++
+[,bash]
+----
+kubectl create secret generic s3-creds \
+  --from-literal=accessKey=<access key> \
+  --from-literal=secretKey=<secret key>
+----
++
+
+[NOTE]
+====
+Añade tu clave de acceso y clave secreta como valores para `accessKey` y `secretKey` en el comando anterior.
+====
+
+
+. Crea un objeto `Restore`:
++
+Durante una migración, `prune` debe ser establecido en `false`. Consulta el ejemplo a continuación:
++
+[,yaml]
+----
+# restore-migration.yaml
+apiVersion: resources.cattle.io/v1
+kind: Restore
+metadata:
+  name: restore-migration
+spec:
+  backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+  // highlight-next-line
+  prune: false
+  // highlight-next-line
+  encryptionConfigSecretName: encryptionconfig
+  storageLocation:
+    s3:
+      credentialSecretName: s3-creds
+      credentialSecretNamespace: default
+      bucketName: backup-test
+      folder: ecm1
+      region: us-west-2
+      endpoint: s3.us-west-2.amazonaws.com
+----
++
+
+[NOTE]
+.Importante
+====
+El campo `encryptionConfigSecretName` debe ser utilizado solo si tu copia de seguridad fue creada con la encriptación habilitada.
+
+Si esto aplica, proporciona el nombre del objeto `Secret` que contiene el archivo de configuración de encriptación. Si solo tienes el archivo de configuración de encriptación, pero no tienes el secreto creado en este clúster, utiliza los siguientes pasos para crear el secreto:
+
+ .. Crea un {xref-backup-configuration}#_encryption[archivo de configuración de encriptación]
+ .. El comando a continuación utiliza un archivo llamado `encryption-provider-config.yaml`, con la bandera `--from-file`. Ejecuta lo siguiente una vez que el `EncryptionConfiguration` esté guardado en un archivo llamado `encryption-provider-config.yaml`:
++
+[,bash]
+----
+kubectl create secret generic encryptionconfig \
+  --from-file=./encryption-provider-config.yaml \
+  -n cattle-resources-system
+----
+
++
+====
+
+
+. Aplica el manifiesto y supervisa el estado de restauración:
+.. Aplica el recurso objeto `Restore`:
++
+[,bash]
+----
+kubectl apply -f restore-migration.yaml
+----
+
+.. Supervisa el estado de restauración:
++
+[,bash]
+----
+kubectl get restore
+----
+
+.. Supervisa los registros de restauración:
++
+[,bash]
+----
+kubectl logs -n cattle-resources-system --tail 100 -f -l app.kubernetes.io/instance=rancher-backup
+----
+
+.. Una vez que el recurso de restauración tenga el estado `Completed`, puedes continuar con la instalación de cert-manager y Rancher.
++
+[IMPORTANT]
+====
+Al migrar Rancher entre dos distribuciones de Kubernetes diferentes (por ejemplo, de K3s a RKE2), el objeto que representa el clúster local debe ser modificado para permitir que Rancher detecte la nueva distribución. Después de que la restauración se complete, y **antes** de iniciar Rancher en el nuevo clúster, edita el objeto del clúster local:
+
+[,bash]
+----
+kubectl edit clusters.management.cattle.io local
+----
+
+. Cambia el valor de `status.driver` a `imported`.
+. Elimina `status.provider`.
+. Elimina todo el mapa `status.version`.
+. Elimina la etiqueta con la clave `provider.cattle.io` en `metadata.labels`.
+. Elimina la anotación con la clave `management.cattle.io/current-cluster-controllers-version` en `metadata.annotations`.
+. Elimina todo el mapa `spec.rke2Config` o `spec.k3sConfig`, si está presente.
+. Guarde los cambios.
+
+Ten en cuenta que eliminar `spec.rke2Config` o `spec.k3sConfig` borrará tu configuración de actualización específica de la distribución para el clúster local. Puede ser {xref-ds-backup-restore}[reconfigurado] si la nueva distribución es configurable para el clúster local.
+====
+
+[#_3_install_cert_manager]
+== 3. Instala cert-manager
+
+Sigue los pasos para {xref-install-rancher}#_4_install_cert_manager[instalar cert-manager] en la documentación sobre la instalación de cert-manager en Kubernetes.
+
+[#_4_bring_up_rancher_with_helm]
+== 4. Inicia Rancher con Helm
+
+Utiliza la misma versión de Helm para instalar Rancher, que se utilizó en el primer clúster.
+
+[,bash,subs="attributes+"]
+----
+helm install rancher {rancher-helm-repo}/rancher \
+  --namespace cattle-system \
+  --set hostname=<same hostname as the server URL from the first Rancher server> \
+  --version x.y.z
+----
+
+[NOTE]
+====
+
+Si el entorno original de Rancher está en funcionamiento, puedes recopilar los valores actuales con un kubeconfig para el entorno original:
+
+[,bash]
+----
+helm get values rancher -n cattle-system -o yaml > rancher-values.yaml
+----
+
+Estos valores se pueden reutilizar utilizando el archivo `rancher-values.yaml`. Asegúrate de cambiar el kubeconfig al nuevo entorno de Rancher.
+
+[,bash,subs="attributes+"]
+----
+helm install rancher {rancher-helm-repo}/rancher -n cattle-system -f rancher-values.yaml --version x.y.z
+----
+====
+
+
+[#_5_redirect_traffic_to_the_new_cluster]
+== 5. Redirigir el tráfico al nuevo clúster
+
+Una vez que la migración se complete, actualiza tus registros DNS y cualquier balanceador de carga, para que el tráfico se dirija correctamente al clúster migrado. Recuerda que debes utilizar el mismo nombre de host que se estableció como la URL del servidor en el clúster original.
+
+Las instrucciones completas sobre cómo redirigir el tráfico al clúster migrado varían según tu entorno específico. Consulta la documentación de tu proveedor de alojamiento para más detalles.
+
+[#_6_scale_down_the_original_rancher_instance]
+== 6. Reducir la escala de la instancia original de Rancher
+
+Después de redirigir el tráfico al nuevo entorno de Rancher, *reduce la escala de la instancia original de Rancher a 0 réplicas* para que ya no contacte con tus clústeres downstream.
+
+Dejar el antiguo servidor activo puede hacer que los agentes sigan contactando el original `server-url`, lo que a menudo deja los clústeres atascados en *Actualizando* en el nuevo entorno.
+
+[,bash]
+----
+kubectl scale deployment rancher -n cattle-system --replicas=0
+----
+
+[NOTE]
+====
+Si deseas mantener el entorno original de Rancher en funcionamiento, también puedes reiniciar los pods de `cattle-cluster-agent` en cada clúster conectado a tu entorno de Rancher.
+
+[,bash]
+----
+kubectl rollout restart deployment cattle-cluster-agent -n cattle-system
+----
+
+Esto desencadena un reinicio gradual del agente para que restablezca la conexión con el nuevo entorno de Rancher.
+====

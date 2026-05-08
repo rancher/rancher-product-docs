@@ -1,0 +1,155 @@
+= スケールでの{rancher-product-name}の調整とベストプラクティス
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/tuning-and-best-practices-for-rancher-at-scale.adoc 
+:product-path: installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc
+ifeval::["{build-type}" != "community"]
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/communicating-with-downstream-clusters.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+:xref-tips-for-running-rancher: xref:installation-and-upgrade/best-practices/tips-for-running-rancher.adoc
+:xref-tuning-etcd-for-large-installs: xref:installation-and-upgrade/best-practices/tuning-etcd-for-large-installs.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+:xref-tips-for-running-rancher: xref:reference-guides/best-practices/rancher-server/tips-for-running-rancher.adoc
+:xref-tuning-etcd-for-large-installs: xref:how-to-guides/advanced-user-guides/tune-etcd-for-large-installs.adoc
+endif::[]
+
+このガイドでは、Rancherのセットアップをスケールさせるためのベストプラクティスと調整アプローチ、およびそれに伴う課題について説明します。システムが成長するにつれて、パフォーマンスは自然に低下しますが、Rancherにかかる負荷を最小限に抑え、より大きなインフラを管理するRancherの能力を最適化するための手順があります。
+
+[#_optimizing_rancher_performance]
+== Rancherパフォーマンスの最適化
+
+* Rancherをパッチリリースで常に最新の状態に保ちます。私たちは、パフォーマンスの向上とバグ修正を通じてRancherを継続的に改善しています。最新のRancherリリースには、パフォーマンスと安定性の向上に関するすべての改善が含まれており、開発者の経験やユーザーのフィードバックに基づく更新も含まれています。
+* 常に徐々にスケールアップし、その際の動作の変化を監視してください。パフォーマンスの問題は、他の問題が根本原因を隠す前に、表面化したらすぐに解決する方が通常は容易です。
+* アップストリームのRancherクラスターとダウンストリームのクラスター間の低レイテンシを可能な限り低減させます。遅延は、他の要因の中でも地理的距離の影響を受けることに注意してください。世界中にクラスターやノードを必要とする場合は、複数のRancherインストールを検討してください。
+
+[#_minimizing_load_on_the_upstream_cluster]
+== アップストリームクラスターへの負荷の最小化
+
+Rancherをスケールアップする際の一般的なボトルネックは、上流（ローカル）Kubernetesクラスターにおけるリソースの成長です。アップストリームクラスターには、すべてのダウンストリームクラスターに関する情報が含まれています。ダウンストリームクラスターに適用される多くの操作は、アップストリームクラスターに新しいオブジェクトを作成し、アップストリームクラスターで実行されているハンドラーからの計算を必要とします。
+
+[#_minimizing_third_party_software_on_the_upstream_cluster]
+=== アップストリームクラスターでのサードパーティソフトウェアの最小化
+
+{xref-tips-for-running-rancher}#_minimize_third-party_software_on_the_upstream_cluster[一般的なRancherの推奨事項]に示されている推奨事項は、大規模な環境において特に重要です。
+
+[#_managing_your_object_counts]
+=== オブジェクト数の管理
+
+EtcdはKubernetesおよびRancherのバックエンドデータベースです。データベースは、最終的に保存できる単一のKubernetesリソースタイプの数に制限に直面する可能性があります。正確な制限はさまざまな要因に依存します。しかし、経験上、単一のリソースタイプのオブジェクト数が60,000を超えると、パフォーマンスの問題が頻繁に発生することが示されています。そのタイプはしばしば`RoleBinding`です。
+
+これはRancherでは典型的で、多くの操作が上流クラスターで新しい`RoleBinding`オブジェクトを副作用として作成します。
+
+アップストリームクラスターの`RoleBindings`の数を以下の方法で減らすことができます：
+
+* 必要な場合にのみ、クラスターやプロジェクトにユーザーを追加してください。
+* もはや必要でないクラスターやプロジェクトは削除してください。
+* 必要な場合にのみカスタムロールを使用してください。
+* カスタムロールではできるだけ少ないルールを使用してください。
+* ユーザーにロールを追加することが冗長であるかどうかを考慮してください。
+* 少ないがより強力なクラスターを使用することを検討してください。
+* Kubernetesの権限は常に「加算的」（許可リスト）であり、「減算的」（拒否リスト）ではありません。クラスター、プロジェクト、または名前空間のすべての側面にアクセスを与える設定を最小限に抑えるようにしてください。そうしないと、大量の`RoleBinding`オブジェクトが作成されます。
+* 新しいプロジェクトやクラスターを作成することで、特定のユースケースに対して`RoleBindings`が少なくなるかどうかを実験してみてください。
+
+[#_using_external_authentication]
+=== 外部認証の使用
+
+ユーザーが50人以上いる場合は、{xref-authn-authz}[外部認証プロバイダー]を設定する必要があります。これは、より良いパフォーマンスのために必要です。
+
+外部認証を設定した後は、個々のユーザーではなくグループに権限を割り当てることを確認してください。これにより、`RoleBinding`オブジェクトの数が減少します。
+
+[#_rolebinding_count_estimation]
+=== RoleBindingの数の推定
+
+特定の設定が生成する`RoleBinding`オブジェクトの数を予測することは複雑です。しかし、以下の考慮事項が大まかな推定を提供することができます：
+
+* 最小推定を行うには、式`32C + U + 2UaC + 8P + 5Pa`を使用してください。
+ ** `C`はクラスターの合計数です。
+ ** `U`はユーザーの合計数です。
+ ** `Ua`はクラスターにメンバーシップを持つユーザーの平均数です。
+ ** `P`はプロジェクトの合計数です。
+ ** `Pa`はプロジェクトにメンバーシップを持つユーザーの平均数です。
+* `RoleBindings`の数は、クラスター、プロジェクト、ユーザーの数に対して線形に増加します。
+
+[#_using_new_apps_over_legacy_apps]
+=== レガシーアプリより新しいアプリの使用
+
+Rancherは2つのKubernetesアプリリソースを使用します：`apps.projects.cattle.io`と`apps.cattle.cattle.io`。レガシーアプリは`apps.projects.cattle.io`で表され、以前のクラスターマネージャーUIで導入され、現在は時代遅れです。現在のアプリは`apps.catalog.cattle.io`で表され、それぞれのクラスターのクラスターエクスプローラーUIにあります。`Apps.cattle.cattle.io`アプリは、データがダウンストリームのクラスターに存在するため、アップストリームのクラスターのリソースを解放するので好ましいです。
+
+クラスター・マネージャーUIに表示される残りのレガシーアプリを削除し、クラスター・エクスプローラーUIのアプリに置き換えるべきです。新しいアプリはクラスター・エクスプローラーUIでのみ作成してください。
+
+[#_using_the_authorized_cluster_endpoint_ace]
+=== 認可されたクラスタエンドポイント（ACE）の使用
+
+{xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[認可されたクラスター・エンドポイント]（ACE）は、Rancherが提供するRKE2およびK3sクラスターのKubernetes APIへのアクセスを提供します。有効にすると、ACEはクラスタ用に生成されたkubeconfigファイルにコンテキストを追加します。このコンテキストは、クラスターへの直接エンドポイントを使用し、Rancherをバイパスします。これは、仲介されていないAPIアクセスが許可されるか好ましい場合に、Rancherへの負荷を軽減します。詳細情報と設定手順については、{xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[Authorized Cluster Endpoint]を参照してください。
+
+[#_reducing_event_handler_executions]
+=== イベントハンドラーの実行を削減する
+
+Rancherのロジックの大部分は、イベントハンドラーで発生します。これらのイベントハンドラーは、オブジェクトが更新されるたび、またRancherが起動されるときにオブジェクト上で実行されます。さらに、Rancherがキャッシュを同期する際に、10時間ごとに実行されます。スケールされたセットアップでは、これらのスケジュールされた実行は大きなパフォーマンスコストを伴います。なぜなら、すべてのハンドラーがすべての適用可能なオブジェクトで実行されるからです。ただし、スケジュールされたハンドラーの実行は、`CATTLE_SYNC_ONLY_CHANGED_OBJECTS`環境変数を使用して無効にできます。10時間ごとにリソース割り当てのスパイクが見られる場合、この設定が役立ちます。
+
+`CATTLE_SYNC_ONLY_CHANGED_OBJECTS`の値は、以下のオプションのカンマ区切りリストであることができます。これらの値は、ハンドラーおよびコントローラーのタイプを指します（ハンドラーを含み実行する構造体）。コントローラーのタイプを変数に追加すると、そのコントローラーのセットがキャッシュの再同期の一部としてハンドラーを実行しないようになります。
+
+* `mgmt`は、1つのRancherノードでのみ実行される管理コントローラーを指します。
+* `user`は、すべてのクラスターで実行されるユーザーコントローラーを指します。これらの一部は管理コントローラーと同じノードで実行され、他はダウンストリームクラスターで実行されます。このオプションは前者を対象としています。
+* `scaled`は、すべてのRancherノードで実行されるスケールされたコントローラーを指します。この値を設定することは避けるべきです。なぜなら、スケールされたハンドラーは重要な機能を担当しており、変更がクラスターの安定性を損なう可能性があるからです。
+
+要するに、10時間ごとにCPU使用率のピークが見られる場合は、`CATTLE_SYNC_ONLY_CHANGED_OBJECTS`環境変数をRancherのデプロイメントに追加してください（`spec.containers.env`リスト内）し、値を`mgmt,user`に設定します。
+
+[#_optimizations_outside_of_rancher]
+== Rancher外での最適化
+
+重要な影響要因は、基盤となるクラスターのパフォーマンスと設定です。アップストリームクラスターが誤って設定されている場合、Rancherソフトウェアでは解決できないボトルネックを引き起こす可能性があります。
+
+[#_manage_upstream_cluster_nodes_directly_with_rke2_product_name]
+=== {rke2-product-name}を使用してアップストリームクラスターのノードを直接管理します。
+
+Rancherはアップストリームクラスターに対して非常に要求が厳しいため、特にスケールが大きい場合は、クラスターの設定とノードに対する完全な管理権限を持っているべきです。リソース消費のルート原因を特定するために、標準的なLinuxのトラブルシューティング手法とツールを使用してください。これにより、Rancher、Kubernetes、またはオペレーティングシステムのコンポーネントが問題を引き起こしているかどうかを区別するのに役立ちます。
+
+管理されたKubernetesサービスはKubernetesクラスターをデプロイして運用するのを容易にしますが、高スケールのシナリオではアップストリームクラスターには推奨されません。管理されたKubernetesサービスは、通常、個々のノードやサービスに対する設定や洞察へのアクセスを制限します。
+
+大規模なユースケースにはRKE2を使用してください。
+
+[#_keep_all_upstream_cluster_nodes_co_located]
+=== すべてのアップストリームクラスターのノードを同じ場所に配置してください。
+
+高可用性を提供するために、Kubernetesは異なるゾーンでノードと制御コンポーネントを実行するように設計されています。ただし、ノードと制御プレーンコンポーネントが異なるゾーンにある場合、ネットワークトラフィックが遅くなる可能性があります。
+
+RancherコンポーネントとKubernetes API間のトラフィックは、低レイテンシに特に敏感であり、ノード間のetcdトラフィックも同様です。
+
+パフォーマンスを向上させるために、すべてのアップストリームクラスターのノードを同じ場所で実行してください。特に、etcdノードとRancher間の遅延ができるだけ低くなるようにしてください。
+
+[#_keeping_kubernetes_versions_up_to_date]
+=== Kubernetesのバージョンを最新の状態に保つ
+
+ローカルのKubernetesクラスターを最新の状態に保つべきです。これにより、クラスターには利用可能なすべてのパフォーマンス向上とバグ修正が適用されていることが保証されます。
+
+[#_optimizing_etcd]
+=== etcdの最適化
+
+etcdはKubernetesとRancherのバックエンドデータベースです。それはRancherのパフォーマンスに非常に重要な役割を果たします。
+
+https://etcd.io/docs/v3.5/op-guide/performance/[etcdのパフォーマンス]に対する主なボトルネックは、ディスクとネットワークの速度です。etcdは、高速ネットワーク設定と高い入出力回数/秒（IOPS）を持つSSDを備えた専用ノードで実行する必要があります。etcdのパフォーマンスに関する詳細情報は、 https://www.suse.com/support/kb/doc/?id=000020100[遅いetcdのパフォーマンス（パフォーマンステストと最適化）]および{xref-tuning-etcd-for-large-installs}[大規模インストールのためのetcdの調整]を参照してください。ディスクに関する情報は、{xref-install-reqs}#_disks[インストール要件]にもあります。
+
+etcdは正確に3つのノードで実行するのが最良であり、ノードを追加すると操作速度が低下します。これは一般的なスケーリングアプローチに反するかもしれませんが、etcdの https://etcd.io/docs/v3.5/faq/#what-is-maximum-cluster-size[レプリケーションメカニズム]によるものです。
+
+etcdのパフォーマンスは、ノード間のネットワーク遅延によっても悪影響を受け、ネットワーク通信が遅くなります。etcdノードはRancherノードと一緒に配置する必要があります。
+
+[#_browser_requirements]
+=== ブラウザ要件
+
+高スケールでは、Rancherはアップストリームクラスターからブラウザで実行されているUIコンポーネントにより多くのデータを転送し、これらのコンポーネントもより多くの処理を行う必要があります。
+
+最良のパフォーマンスを得るために、ハードウェアを実行しているホストがこれらの要件を満たしていることを確認してください：
+
+* 2020年のi5第10世代インテル（4コア）または同等のもの
+* 8 GBのRAM
+* アップストリームクラスターへの総ネットワーク帯域幅：72 Mb/s（単一の802.11n Wi-Fi 4リンクストリームに相当し、約8 MB/sのhttpダウンロードスループット）
+* ブラウザからアップストリームクラスターまでの往復時間（ping時間）：150 ms以下

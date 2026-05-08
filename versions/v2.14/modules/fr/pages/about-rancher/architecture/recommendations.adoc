@@ -1,0 +1,91 @@
+= Recommandations d'architecture
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-manager-architecture/architecture-recommendations.adoc 
+:product-path: about-rancher/architecture/recommendations.adoc
+ifeval::["{build-type}" != "community"]
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/communicating-with-downstream-clusters.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-register-clusters: xref:cluster-deployment/register-existing-clusters.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-register-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc
+endif::[]
+
+Si vous installez Rancher sur un nœud unique, la principale recommandation d'architecture qui s'applique à votre installation est que le nœud exécutant Rancher doit être <<_separation_of_rancher_and_user_clusters,séparé des clusters en aval.>>
+
+[#_separation_of_rancher_and_user_clusters]
+== Séparation de Rancher et des clusters utilisateurs
+
+Un cluster utilisateur est un cluster Kubernetes en aval qui exécute vos applications et services.
+
+Si vous avez une installation Docker de Rancher, le nœud exécutant le serveur Rancher doit être séparé de vos clusters en aval.
+
+Si Rancher est destiné à gérer des clusters Kubernetes en aval, le cluster Kubernetes sur lequel le serveur Rancher s'exécute doit également être séparé des clusters utilisateurs en aval.
+
+image::rancher-architecture-separation-of-rancher-server.svg[Séparation du serveur Rancher des clusters utilisateurs]
+
+[#_why_ha_is_better_for_rancher_in_production]
+== Pourquoi la haute disponibilité est meilleure pour Rancher en production
+
+Nous recommandons d'installer le serveur Rancher sur un cluster Kubernetes à haute disponibilité, principalement parce que cela protège les données du serveur Rancher. Dans une installation à haute disponibilité, un équilibreur de charge sert de point de contact unique pour les clients, distribuant le trafic réseau entre plusieurs serveurs dans le cluster et aidant à prévenir qu'un serveur ne devienne un point de défaillance.
+
+Nous ne recommandons pas d'installer Rancher dans un seul conteneur Docker, car si le nœud tombe en panne, il n'y a pas de copie des données du cluster disponibles sur d'autres nœuds et vous pourriez perdre les données de votre serveur Rancher.
+
+[#__k3s_product_name_kubernetes_cluster_installations]
+=== {k3s-product-name} Installations de clusters Kubernetes
+
+Une option pour le cluster Kubernetes sous-jacent est d'utiliser K3s Kubernetes. K3s est la distribution Kubernetes certifiée CNCF de Rancher. Il est facile à installer et utilise la moitié de la mémoire de Kubernetes, le tout dans un binaire de moins de 100 Mo. Un autre avantage de K3s est qu'il permet à un magasin de données externe de conserver les données du cluster, permettant aux nœuds du serveur K3s d'être traités comme éphémères.
+
+.Architecture d'un cluster Kubernetes K3s exécutant le serveur de gestion Rancher
+image::k3s-server-storage.svg[Architecture d'un cluster Kubernetes K3s exécutant le serveur de gestion Rancher]
+
+[#_recommended_load_balancer_configuration_for_kubernetes_installations]
+== Configuration recommandée du répartiteur de charge pour les installations Kubernetes
+
+Nous recommandons les configurations suivantes pour le répartiteur de charge et les contrôleurs Ingress :
+
+* Le DNS pour Rancher doit résoudre vers un répartiteur de charge de couche 4 (TCP).
+* Le répartiteur de charge doit transférer le port TCP/80 et TCP/443 vers les 3 nœuds du cluster Kubernetes.
+* Le contrôleur Ingress redirigera HTTP vers HTTPS et terminera SSL/TLS sur le port TCP/443.
+* Le contrôleur Ingress transmettra le trafic au port TCP/80 sur le pod dans le déploiement Rancher.
+
+.Rancher installé sur un cluster Kubernetes avec un répartiteur de charge de couche 4, illustrant la terminaison SSL aux contrôleurs Ingress
+image::ha/rancher2ha.svg[Rancher HA]
+
+[#_environment_for_kubernetes_installations]
+== Environnement pour les installations Kubernetes
+
+Il est fortement recommandé d'installer Rancher sur un cluster Kubernetes sur une infrastructure hébergée telle que EC2 d'Amazon ou Google Compute Engine.
+
+Pour la meilleure performance et une sécurité accrue, nous recommandons un cluster Kubernetes dédié pour le serveur de gestion Rancher. Il n'est pas conseillé d'exécuter des charges de travail utilisateur sur ce cluster. Après avoir déployé Rancher, vous pouvez {xref-cluster-deployment}[créer ou importer des clusters] pour exécuter vos charges de travail.
+
+[#_recommended_node_roles_for_kubernetes_installations]
+== Rôles de nœud recommandés pour les installations Kubernetes
+
+Les recommandations ci-dessous s'appliquent lorsque Rancher est installé sur un cluster Kubernetes K3s.
+
+[#__k3s_product_name_cluster_roles]
+=== {k3s-product-name} Rôles de cluster
+
+Dans les clusters K3s, il existe deux types de nœuds{nbsp}: les nœuds serveurs et les nœuds agents. Les serveurs et les agents peuvent tous deux avoir des charges de travail planifiées sur eux. Les nœuds serveurs exécutent le maître Kubernetes.
+
+Pour le cluster exécutant le serveur de gestion Rancher, nous recommandons d'utiliser deux nœuds serveurs. Les nœuds agents ne sont pas requis.
+
+[#_architecture_for_an_authorized_cluster_endpoint_ace]
+== Architecture pour un point de terminaison de cluster autorisé (ACE)
+
+Si vous utilisez un {xref-arch-com-ds-cluster}#_4_point_de_terminaison_de_cluster_autorisé[point de terminaison de cluster autorisé (ACE),] nous vous recommandons de créer un FQDN pointant vers un équilibreur de charge qui répartit le trafic entre nos nœuds avec le rôle `controlplane`.
+
+Si vous utilisez des certificats signés par une CA privée sur l'équilibreur de charge, vous devez fournir le certificat CA, qui sera inclus dans le fichier kubeconfig généré pour valider la chaîne de certificats. Consultez la documentation sur {xref-access-cluster-kubectl}[les fichiers kubeconfig] et {xref-user-api-keys}#_creating_an_api_key[les clés API] pour plus d'informations.
+
+Le support ACE est disponible pour les clusters RKE2 et K3s enregistrés. Pour voir les étapes manuelles à effectuer sur le cluster en aval pour activer l'ACE, cliquez {xref-register-clusters}#_authorized_cluster_endpoint_support_for_rke2_and_k3s_clusters[ici].

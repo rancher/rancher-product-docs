@@ -1,0 +1,126 @@
+= Crear volúmenes persistentes de Kubernetes y clases de almacenamiento
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/index.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/manage-persistent-storage.adoc
+:description: Aprende sobre las dos formas con las que puedes crear almacenamiento persistente en Kubernetes: volúmenes persistentes y clases de almacenamiento
+ifeval::["{build-type}" != "community"]
+:url-k3s-hostpath: https://documentation.suse.com/cloudnative/k3s/latest/en/add-ons/storage.html#_setting_up_the_local_storage_provider
+:url-rke2-hostpath: https://documentation.suse.com/cloudnative/rke2/latest/en/advanced.html#_extra_control_plane_component_volume_mounts
+:xref-cluster-project-roles: xref:rancher-admin/usuarios/authn-y-authz/gestionar-control-de-acceso-basado-en-funciones-rbac/roles-de-cluster-y-proyecto.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-longhorn: xref:integraciones/longhorn/longhorn.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc
+:xref-vsphere-storage-example: xref:cluster-admin/manage-clusters/persistent-storage/examples/vsphere-storage.adoc
+:xref-existing-storage-setup: xref:cluster-admin/manage-clusters/persistent-storage/set-up-existing-storage.adoc
+:xref-amazon-ebs-storage: xref:cluster-admin/manage-clusters/persistent-storage/examples/persistent-storage-in-amazon-ebs.adoc
+:xref-nfs-storage: xref:cluster-admin/manage-clusters/persistent-storage/examples/nfs-storage.adoc
+:xref-about-persistent-storage: xref:cluster-admin/manage-clusters/persistent-storage/about-persistent-storage.adoc
+:xref-dynamically-provision-new-storage: xref:cluster-admin/manage-clusters/persistent-storage/dynamically-provision-new-storage.adoc
+:xref-glusterfs-storage: xref:cluster-admin/manage-clusters/persistent-storage/about-glusterfs-volumes.adoc
+:xref-iscsi-storage: xref:cluster-admin/manage-clusters/persistent-storage/install-iscsi-volumes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-hostpath: https://docs.k3s.io/add-ons/storage#setting-up-the-local-storage-provider
+:url-rke2-hostpath: https://docs.rke2.io/advanced#extra-control-plane-component-volume-mounts
+:xref-cluster-project-roles: xref:guías-como-hacer/nuevas-guías-de-usuario/autenticación-permisos-y-configuración-global/gestionar-control-de-acceso-basado-en-funciones-rbac/roles-de-cluster-y-proyecto.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-longhorn: xref:integrations-in-rancher/longhorn/index.adoc
+:xref-set-up-cloud-providers: xref:instrucciones/nuevas-guías-de-usuario/clusters-de-kubernetes-en-rancher-configuración/configurar-proveedores-de-nube/index.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:instrucciones/nuevas-guías-de-usuario/kubernetes-clusters-in-rancher-setup/gestionar-proveedores-de-nube/configurar-vsphere-fuera-del-árbol.adoc
+:xref-vsphere-storage-example: xref:instrucciones/nuevas-guías-de-usuario/gestionar-clusters/ejemplos-de-provisionamiento-de-almacenamiento/vsphere-storage.adoc
+:xref-existing-storage-setup: xref:instrucciones/nuevas-guías-de-usuario/gestionar-clusters/crear-almacenamiento-persistente-de-kubernetes/gestionar-almacenamiento-persistente/configuración-almacenamiento-existente.adoc
+:xref-amazon-ebs-storage: xref:instrucciones/nuevas-guías-de-usuario/gestionar-clusters/ejemplos-de-provisionamiento-de-almacenamiento/almacenamiento-persistente-en-amazon-ebs.adoc
+:xref-nfs-storage: xref:how-to-guides/new-user-guides/manage-clusters/provisioning-storage-examples/nfs-storage.adoc
+:xref-about-persistent-storage: xref:guías-como-hacer/nuevas-guías-de-usuario/gestionar-clusters/crear-almacenamiento-persistente-de-kubernetes/gestionar-almacenamiento-persistente/acerca-del-almacenamiento-persistente.adoc
+:xref-dynamically-provision-new-storage: xref:instrucciones/nuevas-guías-de-usuario/gestionar-clusters/crear-almacenamiento-persistente-de-kubernetes/gestionar-almacenamiento-persistente/provisionar-nuevo-almacenamiento-dinámicamente.adoc
+:xref-glusterfs-storage: xref:instrucciones/nuevas-guías-de-usuario/gestionar-clusters/crear-almacenamiento-persistente-de-kubernetes/gestionar-almacenamiento-persistente/acerca-de-volúmenes-glusterfs.adoc
+:xref-iscsi-storage: xref:instrucciones/nuevas-guías-de-usuario/gestionar-clusters/crear-almacenamiento-persistente-de-kubernetes/gestionar-almacenamiento-persistente/instalar-volúmenes-iscsi.adoc
+endif::[]
+
+Al desplegar una aplicación que necesita retener datos, deberás crear almacenamiento persistente. El almacenamiento persistente te permite almacenar datos de la aplicación externamente al pod que ejecuta tu aplicación. Esta práctica de almacenamiento te permite mantener los datos de la aplicación, incluso si el pod de la aplicación falla.
+
+Los documentos en esta sección asumen que entiendes los conceptos de Kubernetes de volúmenes persistentes, reclamaciones de volúmenes persistentes y clases de almacenamiento. Para más información, consulta la sección sobre {xref-about-persistent-storage}[cómo funciona el almacenamiento.]
+
+[#_prerequisites]
+== Requisitos previos
+
+Para configurar almacenamiento persistente, se requiere el `Manage Volumes` {xref-cluster-project-roles}#_project_role_reference[rol].
+
+Si estás aprovisionando almacenamiento para un clúster alojado en la nube, el almacenamiento y los hosts del clúster deben tener el mismo proveedor de nube.
+
+Para provisionar nuevo almacenamiento con Rancher, el proveedor de nube debe estar habilitado. Para obtener detalles sobre cómo habilitar proveedores de nube, consulta {xref-set-up-cloud-providers}[esta página.]
+
+Para adjuntar almacenamiento persistente existente a un clúster, no es necesario habilitar el proveedor de nube.
+
+[#_setting_up_existing_storage]
+== Configuración de almacenamiento existente
+
+El flujo de trabajo general para configurar el almacenamiento existente es el siguiente:
+
+. Configura tu almacenamiento persistente. Esto puede ser almacenamiento en un proveedor de infraestructura, o podría ser tu propio almacenamiento.
+. Añade un volumen persistente (PV) que haga referencia al almacenamiento persistente.
+. Añade una reclamación de volumen persistente (PVC) que haga referencia al PV.
+. Monta el PVC como un volumen en tu carga de trabajo.
+
+Para más detalles y requisitos previos, consulta {xref-existing-storage-setup}[esta página.]
+
+[#_dynamically_provisioning_new_storage_in_rancher]
+== Aprovisionamiento dinámico de nuevo almacenamiento en Rancher
+
+El flujo de trabajo general para aprovisionar nuevo almacenamiento es el siguiente:
+
+. Añade una clase de almacenamiento y configúrala para usar tu proveedor de almacenamiento. La clase de almacenamiento podría hacer referencia al almacenamiento en un proveedor de infraestructura, o podría referirse a tu propio almacenamiento.
+. Añade una reclamación de volumen persistente (PVC) que haga referencia a la clase de almacenamiento.
+. Monta el PVC como un volumen para tu carga de trabajo.
+
+Para más detalles y requisitos previos, consulta {xref-dynamically-provision-new-storage}[esta página.]
+
+[#__longhorn_product_name_storage]
+== {longhorn-product-name} Almacenamiento
+
+https://documentation.suse.com/cloudnative/storage/{longhorn-docs-version}/en/longhorn-documentation.html[{longhorn-product-name}] es un sistema distribuido de almacenamiento en bloques ligero, fiable y fácil de usar para Kubernetes.
+
+Longhorn es software libre y de código abierto. Desarrollado originalmente por Rancher Labs, ahora se está desarrollando como un proyecto de entorno aislado de la Fundación de Computación Nativa de Nube. Se puede instalar en cualquier clúster de Kubernetes con Helm, con kubectl, o con la interfaz de usuario de Rancher.
+
+Si tienes un grupo de almacenamiento en bloques, Longhorn puede ayudarte a proporcionar almacenamiento persistente a tu clúster de Kubernetes sin depender de proveedores de nube. Para más información sobre las características de Longhorn, consulta la https://documentation.suse.com/cloudnative/storage/{longhorn-docs-version}/en/introduction/introduction.html[documentación.]
+
+Rancher v2.5 simplificó el proceso de instalación de Longhorn en un clúster gestionado por Rancher. Para más información, consulta {xref-longhorn}[Almacenamiento nativo de nube con Longhorn].
+
+[#_provisioning_storage_examples]
+== Ejemplos de aprovisionamiento de almacenamiento
+
+Proporcionamos ejemplos de cómo aprovisionar almacenamiento con {xref-nfs-storage}[NFS,] {xref-vsphere-storage-example}[vSphere,] y {xref-amazon-ebs-storage}[EBS de Amazon.]
+
+[#_glusterfs_volumes]
+== Volúmenes de GlusterFS
+
+En clústeres que almacenan datos en volúmenes de GlusterFS, puede que experimentes un problema donde los pods no logran montar volúmenes tras reiniciar el `kubelet`. Para obtener detalles sobre cómo prevenir esto, consulta {xref-glusterfs-storage}[esta página.]
+
+[#_iscsi_volumes]
+== Volúmenes iSCSI
+
+En {xref-launch-k8s-with-rancher}[clústeres de Kubernetes lanzados por Rancher] que almacenan datos en volúmenes iSCSI, puede que experimentes un problema donde los kubelets no logran conectarse automáticamente a los volúmenes iSCSI. Para obtener detalles sobre cómo resolver este problema, consulta {xref-iscsi-storage}[esta página.]
+
+[#_hostpath_volumes]
+== Volúmenes hostPath
+
+Tanto K3s como RKE2 admiten el montaje de volúmenes hostPath utilizando el https://github.com/rancher/local-path-provisioner[Provisionador de Ruta Local de Rancher]. Para información de configuración, dependiendo de tu distribución, consulta {url-k3s-hostpath}[K3s - Volúmenes y Almacenamiento] o {url-rke2-hostpath}[RKE2 - Opciones Avanzadas y Configuración].
+
+ifeval::["{build-type}" != "srfa"]
+[#_migrating_vmware_vsphere_cloud_provider_from_in_tree_to_out_of_tree]
+== Migrando el proveedor de nube VMware vSphere de in-tree a out-of-tree
+
+Kubernetes se está alejando de mantener proveedores de nube en-tree. vSphere tiene un proveedor de nube out-of-tree que se puede utilizar instalando el proveedor de nube vSphere y los complementos de almacenamiento en la nube.
+
+Para instrucciones sobre cómo migrar del proveedor de nube vSphere in-tree a out-of-tree, y gestionar las VMs existentes tras la migración, consulta {xref-cloud-provider-vsphere-out-of-tree}[esta página.]
+endif::[]
+
+[#_related_links]
+== Enlaces relacionados
+
+* https://kubernetes.io/docs/concepts/storage/[Documentación de Kubernetes: Almacenamiento]

@@ -1,0 +1,178 @@
+= Guia de início rápido da RK-API
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: api/quickstart.adoc 
+:product-path: api/quickstart.adoc
+ifeval::["{build-type}" != "community"]
+:xref-api-reference: xref:api/reference.adoc
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-api-reference: xref:api/api-reference.adoc
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+endif::[]
+
+Você pode acessar os recursos do Rancher através da API do Kubernetes. Este guia ajuda você a começar a usar esta API como um usuário do Rancher.
+
+. No canto superior esquerdo, clique em *☰ > Configurações Globais*.
+. Encontre e copie o endereço no campo `server-url`.
+. {xref-user-api-keys}#_creating_an_api_key[Crie] uma chave de API do Rancher sem escopo.
+
+[WARNING]
+====
+
+Uma chave de API do Rancher sem escopo concede acesso irrestrito a todos os recursos que o usuário pode acessar. Para evitar uso não autorizado, esta chave deve ser armazenada com segurança e rotacionada frequentemente.
+====
+
+
+. Crie um arquivo `kubeconfig.yaml`. Substitua `$SERVER_URL` pela URL do servidor e `$API_KEY` pela sua chave de API do Rancher:
++
+[,yaml]
+----
+ apiVersion: v1
+ kind: Config
+ clusters:
+ - name: "rancher"
+   cluster:
+     server: "$SERVER_URL"
+
+ users:
+ - name: "rancher"
+   user:
+     token: "$API_KEY"
+
+ contexts:
+ - name: "rancher"
+   context:
+     user: "rancher"
+     cluster: "rancher"
+
+ current-context: "rancher"
+----
+
+Você pode usar este arquivo com qualquer ferramenta compatível, como kubectl ou https://github.com/kubernetes/client-go[client-go]. Para uma demonstração rápida, veja o <<_api_kubectl_example,exemplo kubectl>>.
+
+Para mais informações sobre como lidar com configurações de certificado mais complexas, veja <<_specifying_ca_certs,Especificando Certificados CA>>.
+
+Para mais informações sobre as opções de kubeconfig disponíveis, veja a https://kubernetes.io/docs/tasks/access-application-cluster/configure-access-multiple-clusters/[documentação upstream].
+
+[#_api_kubectl_example]
+== Exemplo de API kubectl
+
+Neste exemplo, mostraremos como usar kubectl para criar um projeto, seguido pela exclusão dele. Para uma lista de outros recursos do Rancher disponíveis, consulte a página {xref-api-reference}[Referência da API].
+
+[NOTE]
+====
+
+Neste momento, nem todos os recursos do Rancher estão disponíveis por meio da API do Kubernetes do Rancher.
+====
+
+
+. Defina sua variável de ambiente KUBECONFIG para o arquivo kubeconfig que você acabou de criar:
+
+[,bash]
+----
+  export KUBECONFIG=$(pwd)/kubeconfig.yaml
+----
+
+. Use `kubectl explain` para visualizar os campos disponíveis para projetos, ou subcampos complexos de recursos:
+
+[,bash]
+----
+  kubectl explain projects
+  kubectl explain projects.spec
+----
+
+Nem todos os recursos podem ter saída detalhada.
+
+. Adicione o seguinte conteúdo a um arquivo chamado `project.yaml`:
+
+[,yaml]
+----
+  apiVersion: management.cattle.io/v3
+  kind: Project
+  metadata:
+    # name should be unique across all projects in every cluster
+    name: p-abc123
+    # generateName can be used instead of `name` to randomly generate a name.
+    # generateName: p-
+    # namespace should match spec.ClusterName.
+    namespace: local
+  spec:
+    # clusterName should match `metadata.Name` of the target cluster.
+    clusterName: local
+    description: Example Project
+    # displayName is the human-readable name and is visible from the UI.
+    displayName: Example
+----
+
+. Crie o projeto:
+
+[,bash]
+----
+  kubectl create -f project.yaml
+----
+
+. Exclua o projeto:
+
+Como você exclui o projeto depende de como você criou o nome do projeto.
+
+*A. Se você usou `name` ao criar o projeto*:
+
+ ```bash
+ kubectl delete -f project.yaml
+ ```
+
+*B. Se você usou `generateName`*:
+
+....
+Replace `$PROJECT_NAME` with the randomly generated name of the project displayed by Kubectl after you created the project.
+
+```bash
+kubectl delete project $PROJECT_NAME -n local
+```
+....
+
+[#_specifying_ca_certs]
+== Especificando Certificados CA
+
+Para garantir que suas ferramentas possam reconhecer os certificados CA do Rancher, a maioria das configurações requer modificações adicionais no modelo acima.
+
+. No canto superior esquerdo, clique em *☰ > Configurações Globais*.
+. Encontre e copie o valor no campo `ca-certs`.
+. Salve o valor em um arquivo chamado `rancher.crt`.
+
+[NOTE]
+====
+  Se sua instância do Rancher estiver sendo protegida por proxy por outro serviço, você deve extrair o certificado que o serviço está usando e adicioná-lo ao arquivo kubeconfig, conforme demonstrado na etapa 5.
+====
+
+
+. Os seguintes comandos convertem `rancher.crt` para saída base64, removem todas as quebras de linha e atualizam o cluster no kubeconfig com o certificado, finalizando removendo o arquivo `rancher.crt`:
+
+[,bash]
+----
+  export KUBECONFIG=$PATH_TO_RANCHER_KUBECONFIG
+  kubectl config set clusters.rancher.certificate-authority-data $(cat rancher.crt | base64 -i - | tr -d '\n')
+  rm rancher.crt
+----
+
+. (Opcional) Se você usar certificados autoassinados que não são confiáveis pelo seu sistema, você pode definir a opção insegura no seu kubeconfig com kubectl:
+
+[WARNING]
+====
+
+Esta opção não deve ser usada em produção, pois representa um risco de segurança.
+====
+
+
+[,bash]
+----
+  export KUBECONFIG=$PATH_TO_RANCHER_KUBECONFIG
+  kubectl config set clusters.rancher.insecure-skip-tls-verify true
+----
+
+Se sua instância do Rancher estiver sendo protegida por proxy por outro serviço, você deve extrair o certificado que o serviço está usando e adicioná-lo ao arquivo kubeconfig, conforme demonstrado acima.

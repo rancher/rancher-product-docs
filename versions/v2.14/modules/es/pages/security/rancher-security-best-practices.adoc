@@ -1,0 +1,172 @@
+= {rancher-product-name} Mejores Prácticas de Seguridad
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-15
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-security/rancher-security-best-practices.adoc 
+:product-path: security/rancher-security-best-practices.adoc
+ifeval::["{build-type}" != "community"]
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+:xref-project-resource-quotas: xref:cluster-admin/project-admin/project-resource-quotas/project-resource-quotas.adoc
+:xref-users-and-groups: xref:rancher-admin/users/authn-and-authz/manage-users-and-groups.adoc
+:xref-l4-l7-lb: xref:cluster-admin/recursos-kubernetes/balanceador-de-carga-y-controlador-de-ingress/balanceo-de-carga-capa-4-y-capa-7.adoc
+:xref-bootstrap-password: xref:installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+:xref-project-resource-quotas: xref:how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/index.adoc
+:xref-users-and-groups: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/manage-users-and-groups.adoc
+:xref-l4-l7-lb: xref:guías-prácticas/nuevos-usuarios/configuración-recursos-kubernetes/balanceador-de-carga-y-controlador-de-ingress/balanceo-de-carga-capa-4-y-capa-7.adoc
+:xref-bootstrap-password: xref:getting-started/installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+
+[#_restrict_public_access_to_version_and_rancherversion_path]
+== Restringir el acceso público a la ruta /version y /rancherversion
+
+La instancia de Rancher (local) upstream proporciona información sobre la versión de Rancher que está ejecutando y la versión de Go que se utilizó para construirla. Esa información es accesible a través de la ruta `/version`, que se utiliza para tareas como automatizar incrementos de versión o confirmar que un despliegue fue exitoso. La instancia upstream también proporciona información sobre la versión de Rancher accesible a través de la ruta `/rancherversion`.
+
+Los adversarios pueden abusar de esta información para identificar la versión de Rancher en ejecución y relacionarla con posibles errores a explotar. Si tu instancia de Rancher upstream está disponible públicamente en la web, utiliza un firewall de Capa 7 para bloquear `/version` y `/rancherversion`.
+
+Consulta https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/05-Enumerate_Infrastructure_and_Application_Admin_Interfaces.html[OWASP Web Application Security Testing - Enumerar Infraestructura y Interfaces de Administración de Aplicaciones] para más información sobre cómo proteger tu servidor.
+
+[#_session_management]
+== Gestión de las sesiones
+
+Algunos entornos pueden requerir controles de seguridad adicionales para la gestión de sesiones. Por ejemplo, puede que desees limitar las sesiones activas concurrentes de los usuarios o restringir desde qué geolocalizaciones se pueden iniciar esas sesiones. Tales características no son compatibles con Rancher de forma predeterminada.
+
+Si requieres tales características, combina firewalls de Capa 7 con {xref-authn-authz}#_external_vs_local_authentication[proveedores de autenticación externa].
+
+[#_use_external_load_balancers_to_protect_vulnerable_ports]
+== Utiliza Balanceadores de Carga Externos para Proteger Puertos Vulnerables
+
+Deberías proteger los siguientes puertos detrás de un {xref-l4-l7-lb}#_layer_4_load_balancer[balanceador de carga externo] que tenga habilitada la descarga de SSL:
+
+* *K3s:* Puerto 6443, utilizado por la API de Kubernetes.
+* *RKE2:* El puerto 6443, utilizado por la API de Kubernetes, y el puerto 9345, utilizado para el registro de nodos.
+
+Estos puertos tienen certificados TLS SAN que enumeran las direcciones IP públicas de los nodos. Un atacante podría utilizar esa información para obtener acceso no autorizado o monitorear la actividad en el clúster. Proteger estos puertos ayuda a mitigar el riesgo de que las direcciones IP públicas de los nodos sean divulgadas a posibles atacantes.
+
+[#_rancher_username_policy]
+=== Política de Nombre de Usuario de Rancher
+
+Por defecto, Kubernetes no proporciona mecanismos de aplicación para políticas básicas de nombres de usuario. En Rancher, esto significa que cualquier aplicación de formatos de nombres de usuario, convenciones de nomenclatura o políticas básicas se espera que sea manejada por las políticas del proveedor de identidad externo, si tales políticas están en vigor.
+
+En Rancher, `admin` es el nombre de usuario predeterminado para el usuario administrador, como se destaca {xref-bootstrap-password}[aquí]
+
+Ejemplos de políticas básicas potenciales incluyen:
+
+* Requerir que los nombres de usuario sigan una convención organizativa (por ejemplo, `firstname.lastname`)
+* Aplicar requisitos de longitud mínima o máxima
+* Prohibir ciertos caracteres especiales
+* Prevenir la suplantación prohibiendo nombres reservados (por ejemplo, `admin`, `root`)
+
+Sin estos controles en la capa del proveedor de identidad, existe un riesgo de prácticas de nombres de usuario inconsistentes o inseguras, lo que puede complicar las auditorías de acceso y llevar a intentos de escalada de privilegios.
+
+[IMPORTANT]
+====
+Rancher actualmente aplica solo un {xref-users-and-groups}#_minimum_password_length[longitud mínima de contraseña].
+====
+
+*Recomendación:* Recomendamos encarecidamente que los clientes:
+
+* Revisen y configuren las políticas básicas de nombres de usuario directamente en sus proveedores de identidad externos (por ejemplo, LDAP, Active Directory, SAML o OIDC).
+* Aseguren que esas políticas se alineen con los requisitos de seguridad y cumplimiento de la organización.
+* Auditen regularmente las cuentas de usuario para detectar inconsistencias en los nombres o violaciones de políticas.
+
+Para obtener más información, consulte:
+
+* https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html[Hoja de Trucos de OWASP: Autenticación]
+* https://owasp.org/www-project-top-ten/2017/A2_2017-Broken_Authentication[Gestión de Identidades de OWASP]
+
+[#_waf_rules]
+=== Reglas de WAF
+
+Rancher está diseñado para soportar una amplia gama de escenarios de despliegue, incluyendo entornos donde los clientes pueden automatizar programáticamente la creación o aprovisionamiento de un gran número de clústeres. Imponer límites estrictos a nivel de aplicación dentro de Rancher podría interferir con cargas de trabajo legítimas que requieren escalado dinámico.
+
+Por ejemplo:
+
+* Las canalizaciones de CI/CD pueden crear y desmantelar clústeres con frecuencia.
+* Los portales de autoservicio podrían aprovisionar clústeres bajo demanda para los desarrolladores.
+* Los entornos de prueba pueden generar altos volúmenes de llamadas a la API.
+
+*Riesgo:* Sin un límite de tasa apropiado, los adversarios podrían explotar puntos finales no autenticados o autenticados para:
+
+* Agotar recursos (Denegación de Servicio).
+* Inflar los costos de almacenamiento.
+* Degradar el rendimiento para los usuarios legítimos.
+
+*Recomendación:* La forma más efectiva de mitigar este riesgo es implementar límites de tasa y protección contra abusos en la infraestructura o en la capa del Cortafuegos de Aplicaciones Web (WAF). Este enfoque permite ajustar los umbrales para el uso y las características de escalado esperadas de cada entorno. Algunos ejemplos de controles pueden ser:
+
+* Configurar un Cortafuegos de Aplicaciones Web o una Puerta de Enlace de API para hacer cumplir límites de tasa en operaciones sensibles, como la creación y aprovisionamiento de clústeres.
+* Definir umbrales basados en las expectativas de carga de trabajo base (por ejemplo, solicitudes máximas por minuto por cliente).
+* Monitorear registros y alertar sobre anomalías para detectar posibles abusos.
+* Aplicar una cuota de recursos, que es una característica de Rancher que limita los recursos disponibles para un proyecto o espacio de nombres.
+
+Para obtener más información, consulte:
+
+* {xref-project-resource-quotas}[Cuotas de Recursos del Proyecto]
+* https://owasp.org/API-Security/editions/2023/en/0xa4-lack-of-resources-rate-limiting/[OWASP API Security Top 10 - API4:2019 - Falta de Recursos y Limitación de Tasa]
+* https://cheatsheetseries.owasp.org/cheatsheets/Rate_Limiting_Cheat_Sheet.html[Hoja de Trucos de OWASP: Limitación de Tasa]
+
+[#_rancher_username_policy_1]
+=== Política de Nombre de Usuario de Rancher
+
+Por defecto, Kubernetes no proporciona mecanismos de aplicación para políticas básicas de nombres de usuario. En Rancher, esto significa que cualquier aplicación de formatos de nombres de usuario, convenciones de nomenclatura o políticas básicas se espera que sea gestionada por las políticas del proveedor de identidad externo, si tales políticas están en vigor.
+
+En Rancher, `admin` es el nombre de usuario predeterminado para el usuario administrador, como se destaca {xref-bootstrap-password}[aquí]
+
+Ejemplos de políticas básicas potenciales incluyen:
+
+* Requerir que los nombres de usuario sigan una convención organizativa (por ejemplo, `firstname.lastname`)
+* Aplicar requisitos de longitud mínima o máxima
+* Prohibir ciertos caracteres especiales
+* Prevenir la suplantación prohibiendo nombres reservados (por ejemplo, `admin`, `root`)
+
+Sin estos controles en la capa del proveedor de identidad, existe un riesgo de prácticas de nombres de usuario inconsistentes o inseguras, lo que puede complicar las auditorías de acceso y llevar a intentos de escalada de privilegios.
+
+[IMPORTANT]
+====
+Rancher actualmente aplica solo un {xref-users-and-groups}#_minimum_password_length[longitud mínima de contraseña].
+====
+
+*Recomendación:* Recomendamos encarecidamente que los clientes:
+
+* Revisar y configurar las políticas básicas de nombres de usuario directamente en sus proveedores de identidad externos (por ejemplo, LDAP, Active Directory, SAML o OIDC).
+* Asegurar que esas políticas se alineen con los requisitos de seguridad y cumplimiento de la organización.
+* Auditar regularmente las cuentas de usuario para detectar inconsistencias en los nombres o violaciones de políticas.
+
+Para obtener más información, consulte:
+
+* https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html[Hoja de Trucos de OWASP: Autenticación]
+* https://owasp.org/www-project-top-ten/2017/A2_2017-Broken_Authentication[Gestión de Identidades de OWASP]
+
+[#_waf_rules_1]
+=== Reglas de WAF
+
+Rancher está diseñado para admitir una amplia gama de escenarios de despliegue, incluyendo entornos donde los clientes pueden automatizar programáticamente la creación o aprovisionamiento de un gran número de clústeres. Imponer límites estrictos a nivel de aplicación dentro de Rancher podría interferir con cargas de trabajo legítimas que requieren escalado dinámico.
+
+Por ejemplo:
+
+* Las canalizaciones de CI/CD pueden crear y desmantelar clústeres con frecuencia.
+* Los portales de autoservicio podrían aprovisionar clústeres bajo demanda para los desarrolladores.
+* Los entornos de prueba pueden generar altos volúmenes de llamadas a la API.
+
+*Riesgo:* Sin un límite de tasa apropiado, los adversarios podrían explotar puntos finales no autenticados o autenticados para:
+
+* Agotar recursos (Denegación de Servicio).
+* Inflar los costos de almacenamiento.
+* Degradar el rendimiento para los usuarios legítimos.
+
+*Recomendación:* La forma más efectiva de mitigar este riesgo es implementar límites de tasa y protección contra abusos en la infraestructura o en la capa del Cortafuegos de Aplicaciones Web (WAF). Este enfoque permite ajustar los umbrales para el uso y las características de escalado esperadas de cada entorno. Algunos ejemplos de controles pueden ser:
+
+* Configurar un Cortafuegos de Aplicaciones Web o una puerta de enlace de API para hacer cumplir límites de tasa en operaciones sensibles, como la creación y aprovisionamiento de clústeres.
+* Definir umbrales basados en las expectativas de carga de trabajo base (por ejemplo, solicitudes máximas por minuto por cliente).
+* Monitorear registros y alertar sobre anomalías para detectar posibles abusos.
+* Aplicar una cuota de recursos, que es una característica de Rancher que limita los recursos disponibles para un proyecto o espacio de nombres.
+
+Para obtener más información, consulte:
+
+* {xref-project-resource-quotas}[Cuotas de Recursos del Proyecto]
+* https://owasp.org/API-Security/editions/2023/en/0xa4-lack-of-resources-rate-limiting/[OWASP API Security Top 10 - API4:2019 - Falta de Recursos y Limitación de Tasa]
+* https://cheatsheetseries.owasp.org/cheatsheets/Rate_Limiting_Cheat_Sheet.html[Hoja de trucos de OWASP: Limitación de tasa]

@@ -1,0 +1,262 @@
+= Erstellen eines Amazon EC2-Clusters
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-19
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/create-an-amazon-ec2-cluster.adoc 
+:product-path: cluster-deployment/infra-providers/aws/aws.adoc
+:description: Lernen Sie die Voraussetzungen und Schritte kennen, die erforderlich sind, um ein Amazon EC2-Cluster mit Rancher zu erstellen.
+ifeval::["{build-type}" != "community"]
+:url-rke2-landing-page: https://documentation.suse.com/cloudnative/rke2/
+:url-k3s-landing-page: https://documentation.suse.com/cloudnative/k3s/
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+:xref-aws-machine-configuration: xref:cluster-deployment/infra-providers/aws/machine-configuration.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-landing-page: https://docs.rke2.io/
+:url-k3s-landing-page: https://docs.k3s.io/
+:xref-rke2-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/rke2-cluster-configuration.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/index.adoc
+:xref-set-up-cloud-providers: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/index.adoc
+:xref-k3s-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/k3s-cluster-configuration.adoc
+:xref-aws-machine-configuration: xref:reference-guides/cluster-configuration/downstream-cluster-configuration/machine-configuration/amazon-ec2.adoc
+endif::[]
+
+In diesem Abschnitt lernen Sie, wie Sie ein {url-rke2-landing-page}[RKE2] oder {url-k3s-landing-page}[K3s] Kubernetes-Cluster in Amazon EC2 bereitstellen.
+
+Zuerst richten Sie Ihre EC2-Cloud-Anmeldeinformationen in Rancher ein.
+
+Dann erstellen Sie ein EC2-Cluster in Rancher, und beim Konfigurieren des neuen Clusters definieren Sie Maschinenpools dafür. Jeder Maschinenpool hat eine Kubernetes-Rolle von etcd, controlplane oder worker. Rancher installiert Kubernetes auf den neuen Knoten und richtet jeden Knoten mit der Kubernetes-Rolle ein, die durch den Maschinenpool definiert ist.
+
+[#_prerequisites]
+== Voraussetzungen
+
+* *AWS EC2 Zugangs- und Geheimschlüssel*, die zur Erstellung der Instanzen verwendet werden. Siehe https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html#Using_CreateAccessKey[Amazon-Dokumentation: Erstellen von Zugangs- und Geheimschlüsseln], wie man einen Zugangs- und Geheimschlüssel erstellt.
+* *IAM-Richtlinie erstellt*, die dem Benutzer des Zugangs- und Geheimschlüssels hinzugefügt werden soll. Siehe https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create.html#access_policies_create-start[Amazon-Dokumentation: Erstellen von IAM-Richtlinien (Konsole)], wie man eine IAM-Richtlinie erstellt. Siehe unsere drei Beispiel-JSON-Richtlinien unten:
+ ** <<_example_iam_policy,Beispiel IAM-Richtlinie>>
+ ** <<_example_iam_policy_with_passrole,Beispiel IAM-Richtlinie mit PassRole>> (benötigt, wenn Sie {xref-set-up-cloud-providers}[Kubernetes Cloud Provider] verwenden oder ein IAM-Profil an eine Instanz übergeben möchten)
+ ** <<_example_iam_policy_to_allow_encrypted_ebs_volumes,Beispiel-IAM-Richtlinie zum Zulassen verschlüsselter EBS-Volumes>>
+* *IAM-Richtlinie als Berechtigung hinzugefügt* für den Benutzer. Siehe https://docs.aws.amazon.com/IAM/latest/UserGuide/id_users_change-permissions.html#users_change_permissions-add-console[Amazon Dokumentation: Berechtigungen zu einem Benutzer hinzufügen (Konsole)], um zu erfahren, wie man sie einem Benutzer zuweist.
+* *IPv4-only, IPv6-only oder Dual-Stack-Subnetz und/oder VPC*, in denen Knoten bereitgestellt und IPv4- und/oder IPv6-Adressen zugewiesen werden können. Siehe https://docs.aws.amazon.com/vpc/latest/userguide/vpc-migrate-ipv6.html[Amazon-Dokumentation: IPv6-Unterstützung für Ihre VPC].
+
+[#_creating_an_ec2_cluster]
+== Erstellen eines EC2-Clusters
+
+Die Schritte zur Erstellung eines Clusters unterscheiden sich je nach Ihrer Rancher-Version.
+
+[#_create_your_cloud_credentials]
+=== Erstellen Sie Ihre Cloud-Anmeldeinformationen
+
+Wenn Sie bereits über einen Satz von Cloud-Anmeldeinformationen verfügen, überspringen Sie diesen Abschnitt.
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Klicken Sie auf *Cloud-Anmeldeinformationen*.
+. Klicken Sie auf *Erstellen*.
+. Klicken Sie auf *Amazon*.
+. Geben Sie einen Namen für die Cloud-Anmeldeinformationen ein.
+. Wählen Sie im Feld *Standardregion* die AWS-Region aus, in der sich Ihre Clusterknoten befinden werden.
+. Geben Sie Ihren AWS EC2 *Zugangsschlüssel* und *Geheimschlüssel* ein.
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Sie haben die Cloud-Anmeldeinformationen erstellt, die zur Bereitstellung von Knoten in Ihrem Cluster verwendet werden.
+
+[#_create_your_cluster]
+=== Erstellen Sie Ihren Cluster
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Klicken Sie auf der *Cluster*-Seite auf *Erstellen*.
+. Schalten Sie den Schalter auf *RKE2/K3s* um.
+. Klicken Sie auf *Amazon EC2*.
+. Wählen Sie eine *Cloud-Anmeldeinformation* aus, falls mehr als eine vorhanden ist. Andernfalls ist sie vorausgewählt.
+. Geben Sie einen *Cluster-Namen* ein.
+. Erstellen Sie einen Maschinenpool für jede Kubernetes-Rolle. Beziehen Sie sich auf die {xref-infra-providers}#_node_roles[Best Practices] für Empfehlungen zu Rollenzuweisungen und -anzahlen.
+ .. Definieren Sie für jeden Maschinenpool die Maschinenkonfiguration. Beziehen Sie sich auf {xref-aws-machine-configuration}[die Referenz zur EC2-Maschinenkonfiguration] für Informationen zu Konfigurationsoptionen.
+. Verwenden Sie die *Cluster-Konfiguration*, um die Version von Kubernetes auszuwählen, die installiert werden soll, welchen Netzwerkprovider Sie verwenden möchten und ob Sie die Projekt-Netzwerkisolierung aktivieren möchten. Für Hilfe bei der Konfiguration des Clusters beziehen Sie sich auf die {xref-rke2-config}[RKE2]- und {xref-k3s-config}[K3s]-Referenzen zur Clusterkonfiguration.
+. Verwenden Sie *Mitgliederrollen*, um die Benutzerautorisierung für den Cluster zu konfigurieren. Klicken Sie auf *Mitglied hinzufügen*, um Benutzer hinzuzufügen, die auf den Cluster zugreifen können. Verwenden Sie das *Rollen*-Dropdown, um Berechtigungen für jeden Benutzer festzulegen.
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:*
+
+Ihr Cluster wurde erstellt und hat den Status *Provisioning* erhalten. Rancher richtet Ihren Cluster ein.
+
+Sie können auf Ihren Cluster zugreifen, nachdem sein Status auf *Aktiv* aktualisiert wurde.
+
+*Aktive* Cluster werden zwei Projekte zugewiesen:
+
+* `Default`, das den `default` Namespace enthält
+* `System`, das die Namespaces `cattle-system`, `traefik`, `kube-public` und `kube-system` enthält
+
+[#_optional_next_steps]
+=== Optionale nächste Schritte
+
+Nachdem Sie Ihren Cluster erstellt haben, können Sie über die Rancher-Benutzeroberfläche darauf zugreifen. Als bewährte Praxis empfehlen wir, diese alternativen Zugangswege zu Ihrem Cluster einzurichten:
+
+* *Zugriff auf Ihren Cluster mit der kubectl CLI:* Befolgen Sie {xref-access-cluster-kubectl}#_accessing_clusters_with_kubectl_from_your_workstation[die Schritte], um mit kubectl von Ihrem Arbeitsplatz aus auf Cluster zuzugreifen. In diesem Fall werden Sie über den Authentifizierungsproxy des Rancher-Servers authentifiziert, danach verbindet Rancher Sie mit dem Downstream-Cluster. Diese Methode ermöglicht es Ihnen, den Cluster ohne die Rancher-Benutzeroberfläche zu verwalten.
+* *Zugriff auf Ihren Cluster mit der kubectl CLI, unter Verwendung des autorisierten Cluster-Endpunkts:* Befolgen Sie {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[die Schritte], um direkt mit kubectl auf Ihren Cluster zuzugreifen, ohne sich über Rancher zu authentifizieren. Wir empfehlen, diese alternative Methode zum Zugriff auf Ihren Cluster einzurichten, damit Sie, falls Sie sich nicht mit Rancher verbinden können, dennoch auf den Cluster zugreifen können.
+
+[#_iam_policies]
+== IAM-Richtlinien
+
+[#_example_iam_policy]
+=== Beispiel IAM-Richtlinie
+
+[,json]
+----
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:Describe*",
+                "ec2:ImportKeyPair",
+                "ec2:CreateKeyPair",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteKeyPair",
+                "ec2:ModifyInstanceMetadataOptions"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "VisualEditor1",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:RunInstances"
+            ],
+            "Resource": [
+                "arn:aws:ec2:REGION::image/ami-*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:placement-group/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:volume/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:subnet/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:key-pair/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:network-interface/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:security-group/*"
+            ]
+        },
+        {
+            "Sid": "VisualEditor2",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:RebootInstances",
+                "ec2:TerminateInstances",
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*"
+        }
+    ]
+}
+----
+
+[#_example_iam_policy_with_passrole]
+=== Beispiel IAM-Richtlinie mit PassRole
+
+[,json]
+----
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:Describe*",
+                "ec2:ImportKeyPair",
+                "ec2:CreateKeyPair",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteKeyPair",
+                "ec2:ModifyInstanceMetadataOptions"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "VisualEditor1",
+            "Effect": "Allow",
+            "Action": [
+                "iam:PassRole",
+                "ec2:RunInstances"
+            ],
+            "Resource": [
+                "arn:aws:ec2:REGION::image/ami-*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:placement-group/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:volume/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:subnet/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:key-pair/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:network-interface/*",
+                "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:security-group/*",
+                "arn:aws:iam::AWS_ACCOUNT_ID:role/YOUR_ROLE_NAME"
+            ]
+        },
+        {
+            "Sid": "VisualEditor2",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:RebootInstances",
+                "ec2:TerminateInstances",
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*"
+        }
+    ]
+}
+----
+
+[#_example_iam_policy_to_allow_encrypted_ebs_volumes]
+=== Beispiel-IAM-Richtlinie zum Zulassen verschlüsselter EBS-Volumes
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:Encrypt",
+        "kms:DescribeKey",
+        "kms:CreateGrant",
+        "ec2:DetachVolume",
+        "ec2:AttachVolume",
+        "ec2:DeleteSnapshot",
+        "ec2:DeleteTags",
+        "ec2:CreateTags",
+        "ec2:CreateVolume",
+        "ec2:DeleteVolume",
+        "ec2:CreateSnapshot"
+      ],
+      "Resource": [
+        "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:volume/*",
+        "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:instance/*",
+        "arn:aws:ec2:REGION:AWS_ACCOUNT_ID:snapshot/*",
+        "arn:aws:kms:REGION:AWS_ACCOUNT_ID:key/KMS_KEY_ID"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeSnapshots"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+----

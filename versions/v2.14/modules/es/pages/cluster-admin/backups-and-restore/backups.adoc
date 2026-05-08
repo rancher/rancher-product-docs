@@ -1,0 +1,385 @@
+= Haciendo una copia de seguridad de un clúster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher-launched-kubernetes-clusters.adoc 
+:product-path: cluster-admin/backups-and-restore/backups.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+En la interfaz de usuario de Rancher, la copia de seguridad y recuperación de etcd para {xref-launch-k8s-with-rancher}[clústeres de Kubernetes lanzados por Rancher] se puede realizar fácilmente.
+
+Rancher recomienda configurar `etcd` instantáneas recurrentes para todos los clústeres de producción. Además, también se pueden tomar instantáneas únicas.
+
+Las instantáneas de la base de datos etcd se toman y se guardan ya sea <<_local_backup_target,localmente en los nodos etcd>> o en un <<_s3_backup_target,destino compatible con S3>>. Las ventajas de configurar S3 son que si se pierden todos los nodos etcd, tu instantánea se guarda de forma remota y se puede utilizar para restaurar el clúster.
+
+[#_how_snapshots_work]
+== Cómo funcionan las instantáneas
+
+[#_snapshot_components]
+=== Componentes de la instantánea
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Cuando Rancher crea una instantánea, incluye tres componentes:
+
+* Los datos del clúster en etcd
+* La versión de Kubernetes
+* La configuración del clúster en forma de `cluster.yml`
+
+Debido a que la versión de Kubernetes ahora se incluye en la instantánea, es posible restaurar un clúster a una versión anterior de Kubernetes.
+--
+
+RKE2/K3s::
++
+--
+Rancher delega la creación de instantáneas al motor de Kubernetes en sentido descendente. Cuando el motor de Kubernetes crea una instantánea, incluye tres componentes:
+
+* Los datos del clúster en etcd
+* La versión de Kubernetes
+* La configuración del clúster
+
+Debido a que la versión de Kubernetes está incluida en la instantánea, es posible restaurar un clúster a una versión anterior de Kubernetes mientras se restaura también una instantánea de etcd.
+--
+======
+
+Los múltiples componentes de la instantánea te permiten seleccionar entre las siguientes opciones si necesitas restaurar un clúster desde una instantánea:
+
+* *Restaurar solo el contenido de etcd:* Esta restauración es similar a restaurar a instantáneas en Rancher antes de la v2.4.0.
+* *Restaurar etcd y la versión de Kubernetes:* Esta opción debe utilizarse si una actualización de Kubernetes es la razón por la que tu clúster está fallando, y no has realizado ningún cambio en la configuración del clúster.
+* *Restaurar etcd, versiones de Kubernetes y configuración del clúster:* Esta opción debe utilizarse si cambiaste tanto la versión de Kubernetes como la configuración del clúster al actualizar.
+
+Siempre se recomienda tomar una nueva instantánea antes de realizar cualquier cambio de configuración o actualizaciones.
+
+[#_generating_the_snapshot_from_etcd_nodes]
+=== Generando la instantánea desde los nodos de etcd
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Para cada nodo de etcd en el clúster, se verifica la salud del clúster de etcd. Si el nodo informa que el clúster de etcd está sano, se crea una instantánea a partir de él y opcionalmente se sube a S3.
+
+La instantánea se almacena en `/opt/rke/etcd-snapshots`. Si el directorio está configurado en los nodos como un montaje compartido, será sobrescrito. En S3, la instantánea siempre será del último nodo que la suba, ya que todos los nodos de etcd la suben y el último permanecerá.
+
+En el caso de que existan múltiples nodos de etcd, cualquier instantánea creada se genera después de que se ha verificado la salud del clúster, por lo que se puede considerar una instantánea válida de los datos en el clúster de etcd.
+--
+
+RKE2/K3s::
++
+--
+Las instantáneas están habilitadas por defecto.
+
+El directorio de instantáneas por defecto es `/var/lib/rancher/<RUNTIME>/server/db/snapshots`, donde `<RUNTIME>` es `rke2` o `k3s`.
+
+En RKE2, las instantáneas se almacenan en cada nodo de etcd. Si tienes múltiples nodos etcd o etcd + control-plane, tendrás múltiples copias de instantáneas locales de etcd.
+--
+====== 
+
+### Convenciones de Nomenclatura de Instantáneas 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+El nombre de la instantánea se genera automáticamente. La opción `--name` se puede utilizar para sobrescribir el nombre de la instantánea al crear instantáneas únicas con la CLI de RKE.
+
+Cuando Rancher crea una instantánea de un clúster RKE, el nombre de la instantánea se basa en el tipo (si la instantánea es manual o recurrente) y el destino (si la instantánea se guarda localmente o se sube a S3). La convención de nomenclatura es la siguiente:
+
+* `m` representa manual
+* `r` representa recurrente
+* `l` representa local
+* `s` representa S3
+
+Algunos ejemplos de nombres de instantáneas son:
+
+* c-9dmxz-rl-8b2cx
+* c-9dmxz-ml-kr56m
+* c-9dmxz-ms-t6bjb
+* c-9dmxz-rs-8gxc8
+--
+
+RKE2/K3s::
++
+--
+El nombre de la instantánea se genera automáticamente. La opción `--name` se puede utilizar para sobrescribir el nombre base de la instantánea al crear instantáneas únicas con la CLI de RKE2 o K3s.
+
+Cuando Rancher crea una instantánea de un clúster RKE2 o K3s, el nombre de la instantánea se basa en el tipo (si la instantánea es manual o recurrente) y el destino (si la instantánea se guarda localmente o se sube a S3). La convención de nomenclatura es la siguiente:
+
+`<name>-<node>-<timestamp>`
+
+`<name>`: es el nombre base establecido por `--name` y puede ser uno de los siguientes
+
+* `etcd-snapshot` se antepone a las instantáneas recurrentes
+* `on-demand` se antepone a las instantáneas manuales, bajo demanda
+
+`<node>`: El nodo es el nombre del nodo en el que se tomó la instantánea.
+
+`<timestamp>` es una marca de tiempo unix de la fecha de creación de la instantánea.
+
+Algunos ejemplos de nombres de instantáneas son:
+
+* `on-demand-my-super-rancher-k8s-node1-1652288934`
+* `on-demand-my-super-rancher-k8s-node2-1652288936`
+* `etcd-snapshot-my-super-rancher-k8s-node1-1652289945`
+* `etcd-snapshot-my-super-rancher-k8s-node2-1652289948`
+--
+======
+
+### Cómo funciona la restauración desde una instantánea 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Al restaurar, se utiliza el siguiente proceso:
+
+. La instantánea se recupera de S3, si S3 está configurado.
+. La instantánea se descomprime (si está comprimida).
+. Uno de los nodos etcd en el clúster sirve ese archivo de instantánea a los otros nodos.
+. Los otros nodos etcd descargan la instantánea y validan la suma de comprobación para que todos utilicen la misma instantánea para la restauración.
+. El clúster se restaura y se realizarán acciones posteriores a la restauración en el clúster.
+--
+
+RKE2/K3s::
++
+--
+Al restaurar, Rancher entrega varios conjuntos de planes para llevar a cabo una restauración. Se utilizan un conjunto de fases, a saber:
+
+* Iniciado
+* Apagar
+* Restaurar
+* ReiniciarClúster
+* Terminado
+
+Si la restauración del instantáneo etcd falla, la fase se establecerá en `Failed`.
+
+. Se recibe la solicitud de restauración del instantáneo etcd, y dependiendo de `restoreRKEConfig`, se reconcilian la configuración del clúster y la versión de Kubernetes.
+. La fase se establece en `Started`.
+. La fase se establece en `Shutdown`, y todo el clúster se apaga utilizando planes que ejecutan el guion de distribución `killall.sh`. Se elige un nuevo nodo inicial. Si el instantáneo que se está restaurando es un instantáneo local, se seleccionará el nodo en el que reside el instantáneo como el nodo inicial. Si el instantáneo se está restaurando desde S3, se utilizará el nodo inicial existente.
+. La fase se establece en `Restore`, y el nodo inicial tiene el instantáneo restaurado en él.
+. La fase se establece en `RestartCluster`, y el clúster se reinicia/se vuelve a unir al nuevo nodo inicial que tiene la información del instantáneo restaurado recientemente.
+. La fase se establece en `Finished`, y se considera que el clúster se ha restaurado con éxito. El `cattle-cluster-agent` se volverá a conectar, y el clúster terminará la reconciliación.
+--
+======
+
+## Configurando instantáneas recurrentes 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Selecciona con qué frecuencia deseas que se tomen las instantáneas recurrentes, así como cuántas instantáneas conservar. La cantidad de tiempo se mide en horas. Con instantáneas con marca de tiempo, el usuario tiene la capacidad de realizar una recuperación en un punto en el tiempo.
+
+Por defecto, {xref-launch-k8s-with-rancher}[los clústeres de Kubernetes lanzados por Rancher] están configurados para tomar instantáneas recurrentes (guardadas en el disco local). Para protegerse contra fallos del disco local, se aconseja utilizar el <<_s3_backup_target,S3 Target>> o replicar la ruta en el disco.
+
+Durante la provisión del clúster o al editar el clúster, la configuración para las instantáneas se puede encontrar en la sección avanzada de *Opciones del Clúster*. Haz clic en *Mostrar opciones avanzadas*.
+
+En la sección *Opciones Avanzadas del Clúster*, hay varias opciones disponibles para configurar:
+
+|===
+| Opción | Descripción | Valor por defecto
+
+| Destino de Copia de Seguridad de Instantáneas etcd
+| Selecciona dónde deseas que se guarden las instantáneas. Las opciones son locales o en S3
+| local
+
+| Instantánea etcd recurrente habilitada
+| Habilitar/Deshabilitar instantáneas recurrentes
+| Sí
+
+| Período de Creación de Instantáneas etcd Recurrentes
+| Tiempo en horas entre instantáneas recurrentes
+| 12 horas
+
+| Conteo de Retención de Instantáneas etcd Recurrentes
+| Número de instantáneas a retener
+| 6
+|===
+--
+
+RKE2/K3s::
++
+--
+Establece el horario para cómo deseas que se tomen las instantáneas recurrentes, así como cuántas instantáneas conservar. La programación está en formato Cron (daemon) convencional. La directiva de retención dicta el número de instantáneas que coinciden con un nombre que se deben mantener por nodo.
+
+Por defecto, {xref-launch-k8s-with-rancher}[los clústeres de Kubernetes lanzados por Rancher] están configurados para tomar instantáneas recurrentes (guardadas en el disco local) cada 5 horas comenzando a las 12 AM. Para protegerse contra fallo del disco local, se aconseja utilizar el <<_s3_backup_target,S3 Target>> o replicar la vía en el disco.
+
+Durante la provisión del clúster o al editar el clúster, la configuración para las instantáneas se puede encontrar en *Configuración del Clúster*. Haz clic en *etcd*.
+
+|===
+| Opción | Descripción | Valor por defecto
+
+| Instantánea etcd recurrente habilitada
+| Habilitar/Deshabilitar instantáneas recurrentes
+| Sí
+
+| Período de Creación de Instantáneas etcd Recurrentes
+| Horario Cron para instantáneas recurrentes
+| `0 */5 * * *`
+
+| Conteo de Retención de Instantáneas etcd Recurrentes
+| Número de instantáneas a retener
+| 5
+|===
+--
+====== 
+
+## Instantáneas de una sola vez 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Además de las instantáneas recurrentes, puede que desees tomar una instantánea "de una sola vez". Por ejemplo, antes de actualizar la versión de Kubernetes de un clúster, es mejor hacer una copia de seguridad del estado del clúster para protegerse contra fallo de actualización.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, navega al clúster donde deseas tomar una instantánea de una sola vez.
+. Haz clic en *⋮ > Tomar Instantánea*.
+--
+
+RKE2/K3s::
++
+--
+Además de las instantáneas recurrentes, puede que desees tomar una instantánea "de una sola vez". Por ejemplo, antes de actualizar la versión de Kubernetes de un clúster, es mejor hacer una copia de seguridad del estado del clúster para protegerse contra fallo de actualización.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, navega al clúster donde deseas tomar una instantánea de una sola vez.
+. Navega a la pestaña `Snapshots` y haz clic en `Snapshot Now`
+
+[pass]
+<h3><a id="_how_taking_one_time_snapshots_works"></a>Cómo Funciona la Toma de Instantáneas de Una Sola Vez</h3>
+
+Al crear una instantánea de una sola vez, Rancher ofrece varios planes para realizar la creación de la instantánea. Se utilizan un conjunto de fases, a saber:
+
+* Iniciado
+* ReiniciarClúster
+* Terminado
+
+Si la creación de la instantánea etcd falla, la fase se establecerá en `Failed`.
+
+. La solicitud de creación de la instantánea etcd ha sido recibida.
+. La fase se establece en `Started`. Todos los nodos etcd en el clúster reciben un plan para crear una instantánea etcd, según la configuración del clúster.
+. La fase se establece en `RestartCluster`, y los planes en cada nodo etcd se restablecen al plan original para los nodos etcd.
+. La fase se establece en `Finished`.
+--
+====== 
+
+*Resultado:* Basado en tu <<_snapshot_backup_targets,objetivo de copia de seguridad de instantáneas>>, se tomará una instantánea de una sola vez y se guardará en el objetivo de copia de seguridad seleccionado.
+
+[#_snapshot_backup_targets]
+== Objetivos de copia de seguridad de instantáneas
+
+Rancher admite dos objetivos de copia de seguridad diferentes:
+
+* <<_local_backup_target,Objetivo local>>
+* <<_s3_backup_target,Objetivo S3>>
+
+[#_local_backup_target]
+=== Objetivo de copia de seguridad local
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Por defecto, se selecciona el objetivo de copia de seguridad `local`. Los beneficios de esta opción son que no hay configuración externa. Las instantáneas se guardan automáticamente de forma local en los nodos etcd en los {xref-launch-k8s-with-rancher}[clusters de Kubernetes lanzados por Rancher] en `/opt/rke/etcd-snapshots`. Todas las instantáneas recurrentes se toman a intervalos configurados. La desventaja de usar el objetivo de copia de seguridad `local` es que si hay un desastre total y se pierden _todos_ los nodos etcd, no hay posibilidad de restaurar el clúster.
+--
+
+RKE2/K3s::
++
+--
+Por defecto, se selecciona el objetivo de copia de seguridad `local`. Los beneficios de esta opción son que no hay configuración externa. Las instantáneas se guardan automáticamente de forma local en los nodos etcd en los {xref-launch-k8s-with-rancher}[clusters de Kubernetes lanzados por Rancher] en `/var/lib/rancher/<runtime>/server/db/snapshots` donde `<runtime>` es `k3s` o `rke2`. Todas las instantáneas recurrentes se toman según el horario Cron. La desventaja de usar el objetivo de copia de seguridad `local` es que si hay un desastre total y se pierden _todos_ los nodos etcd, no hay posibilidad de restaurar el clúster.
+--
+======
+
+[#_s3_backup_target]
+=== Objetivo de copia de seguridad S3
+
+Recomendamos que utilices el objetivo de copia de seguridad `S3`. Te permite almacenar instantáneas externamente, en un sistema secundario compatible con S3. Dado que las instantáneas no se almacenan localmente, aún puedes restaurar el clúster incluso si pierdes todos los nodos etcd.
+
+Aunque el objetivo `S3` ofrece ventajas sobre la copia de seguridad local, requiere configuración adicional.
+
+[CAUTION]
+====
+
+Si utilizas un objetivo de copia de seguridad S3, asegúrate de que cada clúster tenga su propio bucket o carpeta. Rancher completa la información de las instantáneas a partir de cualquier instantánea disponible listada en el bucket o carpeta S3 configurada para ese clúster.
+====
+
+
+|===
+| Opción | Descripción | required
+
+| Nombre del bucket de S3
+| Nombre del bucket de S3 para almacenar copias de seguridad
+| *
+
+| Región de S3
+| Región de S3 para el bucket de copias de seguridad
+|
+
+| Endpoint de Región de S3
+| Endpoint de regiones de S3 para el bucket de copias de seguridad
+| *
+
+| Clave de acceso de S3
+| Clave de acceso de S3 con permiso para acceder al bucket de copias de seguridad
+| *
+
+| Clave secreta de S3
+| Clave secreta de S3 con permiso para acceder al bucket de copias de seguridad
+| *
+
+| Certificado CA Personalizado
+| Un certificado personalizado utilizado para acceder a backends privados de S3
+|
+|===
+
+[#_using_a_custom_ca_certificate_for_s3]
+=== Uso de un certificado CA personalizado para S3
+
+La instantánea de copia de seguridad se puede almacenar en un `S3` de copia de seguridad personalizado como https://min.io/[minio]. Si el sistema secundario de S3 utiliza un certificado autofirmado o personalizado, proporciona un certificado personalizado utilizando la opción `Custom CA Certificate` para conectarte al sistema secundario de S3.
+
+[#_iam_support_for_storing_snapshots_in_s3]
+=== Soporte de IAM para almacenar instantáneas en S3
+
+El objetivo de copia de seguridad `S3` admite el uso de autenticación IAM para la API de AWS además de utilizar credenciales de API. Un rol de IAM otorga permisos temporales que una aplicación puede utilizar al realizar llamadas a la API de almacenamiento S3. Para utilizar la autenticación IAM, deben cumplirse los siguientes requisitos:
+
+* Los nodos etcd del clúster deben tener un rol de instancia que tenga acceso de lectura-escritura al bucket de copias de seguridad designado.
+* Los nodos del clúster etcd deben tener acceso a la red al punto final S3 especificado.
+* El nodo(s) trabajador del servidor Rancher debe(n) tener un rol de instancia que tenga permisos de lectura-escritura en el bucket de copias de seguridad designado.
+* El nodo(s) trabajador del servidor Rancher debe(n) tener acceso a la red al punto final S3 especificado.
+
+Para dar acceso a una aplicación a S3, consulta la documentación de AWS sobre https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2.html[Uso de un rol IAM para otorgar permisos a aplicaciones que se ejecutan en instancias de Amazon EC2.]
+
+[#_viewing_available_snapshots]
+== Visualizando instantáneas disponibles
+
+La lista de todas las instantáneas disponibles para el clúster está disponible en la interfaz de usuario de Rancher.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página de *Clústeres*, ve al clúster donde deseas ver las instantáneas y haz clic en su nombre.
+. Haz clic en la pestaña *Instantáneas* para ver la lista de instantáneas guardadas. Estas instantáneas incluyen una marca de tiempo de cuándo fueron creadas.
+
+[#_safe_timestamps_rke]
+== Marcas de tiempo seguras (RKE)
+
+Los archivos de instantáneas están marcados con una fecha y hora para simplificar el procesamiento de los archivos utilizando herramientas y scripts externos, pero en algunos backends compatibles con S3, estas marcas de tiempo eran inutilizables.
+
+La opción `safe_timestamp` se añade para soportar nombres de archivos compatibles. Cuando esta bandera se establece en `true`, todos los caracteres especiales en la marca de tiempo del nombre de archivo de la instantánea son reemplazados.
+
+Esta opción no está disponible directamente en la interfaz de usuario, y solo está disponible a través de la interfaz `Edit as Yaml`.

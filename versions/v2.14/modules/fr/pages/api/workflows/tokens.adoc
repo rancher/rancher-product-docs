@@ -1,0 +1,143 @@
+= Jetons
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-11-28
+:page-revdate: {revdate}
+:community-path: api/workflows/tokens.adoc 
+:product-path: api/workflows/tokens.adoc
+
+include::shared:ROOT:partial$en/v3-api-tokens-deprecation-warning.adoc[]
+
+[#_token_resource]
+== Ressource de token
+
+Rancher dispose d'une ressource API impérative `tokens.ext.cattle.io` qui vous permet de générer des tokens pour vous authentifier auprès de Rancher.
+
+[,shell]
+----
+kubectl api-resources --api-group=ext.cattle.io
+----
+
+Pour obtenir une description des champs et de la structure de la ressource de token, exécutez{nbsp}:
+
+[,shell]
+----
+kubectl explain tokens.ext.cattle.io
+----
+
+[#_creating_a_token]
+== Création d'un token
+
+[CAUTION]
+====
+La valeur du token n'est renvoyée qu'une seule fois dans le champ `status.value`.
+====
+
+Seul un utilisateur Rancher **valide et actif** peut créer un token. Sinon, vous obtiendrez une erreur affichée (`Error from server (Forbidden)...`) lors de la tentative de création d'un token.
+
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+EOF
+Error from server (Forbidden): error when creating "STDIN": tokens.ext.cattle.io is forbidden: user system:admin is not a Rancher user
+----
+
+Un token est toujours créé pour l'utilisateur effectuant la demande. Tenter de créer un token pour un autre utilisateur, en spécifiant un `spec.userID` différent, est interdit et échouera.
+
+* Le champ `spec.description` peut être défini sur une description lisible par l'homme de l'objectif du token. La valeur par défaut est vide.
+* Le champ `spec.kind` peut être défini sur le type de token. La valeur `session` indique un token de connexion. Toutes les autres valeurs, y compris la chaîne vide par défaut, indiquent un type de token dérivé.
+* Les champs `metadata.name` et `metadata.generateName` sont ignorés, et le nom du nouveau token est automatiquement généré en utilisant le préfixe `token-`.
++
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+spec:
+  description: My Token
+EOF
+----
+
+* Si le `spec.ttl` n'est pas spécifié, le token est créé avec le temps d'expiration défini dans le paramètre `auth-token-max-ttl-minutes`. Le temps d'expiration par défaut est de 90 jours. Si `spec.ttl` est spécifié, il doit être supérieur à 0 et inférieur ou égal à la valeur du paramètre `auth-token-max-ttl-minutes` exprimée en millisecondes.
++
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+spec:
+  ttl: 7200000 # 2 hours
+EOF
+----
+
+[#_listing_tokens]
+== Liste des tokens
+
+Lister les tokens précédemment générés peut aider à nettoyer les tokens qui ne sont plus nécessaires (par exemple, ils ont été émis temporairement). Les administrateurs peuvent lister tous les tokens, tandis que les utilisateurs réguliers ne peuvent voir que les leurs.
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io
+NAME          KIND   TTL   AGE
+token-chjc9          90d   18s
+token-6fzgj          90d   16s
+token-8nbrm          90d   14s
+----
+
+Utilisez `-o wide` pour obtenir plus de détails{nbsp}:
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io -o wide
+NAME          USER         KIND   TTL   AGE   DESCRIPTION
+token-chjc9   user-jtghh          90d   24s   example
+token-6fzgj   user-jtghh          90d   22s   box
+token-8nbrm   user-jtghh          90d   20s   jinx
+----
+
+[#_viewing_a_token]
+== Affichage d'un token
+
+Les administrateurs peuvent obtenir n'importe quel token, tandis que les utilisateurs réguliers ne peuvent obtenir que le leur.
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io token-chjc9
+NAME          KIND   TTL   AGE
+token-chjc9          90d   18s
+----
+
+Utilisez `-o wide` pour obtenir plus de détails{nbsp}:
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io token-chjc9 -o wide
+NAME          USER         KIND   TTL   AGE   DESCRIPTION
+token-chjc9   user-jtghh          90d   24s   example
+----
+
+[#_deleting_a_token]
+== Suppression d'un token
+
+Les administrateurs peuvent supprimer n'importe quel token, tandis que les utilisateurs réguliers ne peuvent supprimer que le leur.
+
+[,shell]
+----
+kubectl delete tokens.ext.cattle.io token-chjc9
+token.ext.cattle.io "token-chjc9" deleted
+----
+
+[#_updating_a_token]
+== Mise à jour d'un token
+
+Seuls les champs de métadonnées `spec.description`, `spec.ttl` et `spec.enabled` peuvent être mis à jour. Tous les autres champs `spec` sont immuables. Les administrateurs peuvent étendre le champ `spec.ttl`, tandis que les utilisateurs réguliers ne peuvent que réduire la valeur.
+
+Un exemple de commande `kubectl` pour éditer un token{nbsp}:
+
+[,shell]
+----
+kubectl edit tokens.ext.cattle.io token-zp786
+----

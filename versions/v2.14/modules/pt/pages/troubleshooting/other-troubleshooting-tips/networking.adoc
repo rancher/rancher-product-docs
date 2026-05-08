@@ -1,0 +1,121 @@
+= Projeto de Rede
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/networking.adoc 
+:product-path: troubleshooting/other-troubleshooting-tips/networking.adoc
+ifeval::["{build-type}" != "community"]
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-node-reqs: xref:como-fazer/guias-para-novos-usuários/cluster-kubernetes-na-configuração-do-rancher/requisitos-dos-nós-para-clusters-gerenciados-pelo-rancher.adoc
+endif::[]
+
+Os comandos/passos listados nesta página podem ser usados para verificar problemas relacionados à rede em seu cluster.
+
+Certifique-se de que você configurou o kubeconfig correto (por exemplo, `export KUBECONFIG=$PWD/kube_config_cluster.yml` para Rancher HA) ou está usando o kubectl embutido via a interface.
+
+[#_double_check_if_all_the_required_ports_are_opened_in_your_host_firewall]
+== Verifique se todas as portas necessárias estão abertas no seu gateway de segurança (host).
+
+Verifique se todas as {xref-node-reqs}#_networking_requirements[portas necessárias] estão abertas no seu gateway de segurança (host). A rede overlay utiliza UDP em comparação a todas as outras portas necessárias, que são TCP.
+
+[#_check_if_overlay_network_is_functioning_correctly]
+== Verifique se a Rede Overlay está Funcionando Corretamente.
+
+O pod pode ser agendado em qualquer um dos hosts que você usou para seu cluster, mas isso significa que o controlador de entrada NGINX precisa ser capaz de rotear a solicitação de `NODE_1` para `NODE_2`. Isso acontece pela rede overlay. Se a rede overlay não estiver funcionando, você experimentará falhas intermitentes de conexão TCP/HTTP devido ao controlador de entrada NGINX não conseguir rotear para o pod.
+
+Para testar a rede overlay, você pode lançar a seguinte definição de `DaemonSet`. Isso executará um contêiner `swiss-army-knife` em cada host (a imagem foi desenvolvida pelos engenheiros da Rancher e pode ser encontrada aqui: https://github.com/rancherlabs/swiss-army-knife),, que usaremos para executar um teste de `ping` entre contêineres em todos os hosts.
+
+[CAUTION]
+====
+
+O contêiner `swiss-army-knife` não suporta nós Windows. Ele também https://github.com/leodotcloud/swiss-army-knife/issues/18[não suporta nós ARM], como um Raspberry Pi. Quando o teste encontra nós incompatíveis, isso é registrado nos logs do pod como uma mensagem de erro, como `exec user process caused: exec format error` para nós ARM, ou `ImagePullBackOff (Back-off pulling image "rancherlabs/swiss-army-knife)` para nós Windows.
+====
+
+
+. Salve o seguinte arquivo como `overlaytest.yml`.
++
+----
+ apiVersion: apps/v1
+ kind: DaemonSet
+ metadata:
+   name: overlaytest
+ spec:
+   selector:
+       matchLabels:
+         name: overlaytest
+   template:
+     metadata:
+       labels:
+         name: overlaytest
+     spec:
+       tolerations:
+       - operator: Exists
+       containers:
+       - image: rancherlabs/swiss-army-knife
+         imagePullPolicy: Always
+         name: overlaytest
+         command: ["sleep", "infinity"]
+         terminationMessagePath: /dev/termination-log
+----
+
+. Inicie-o usando `kubectl create -f overlaytest.yml`.
+. Aguarde até que `kubectl rollout status ds/overlaytest -w` retorne: `daemon set "overlaytest" successfully rolled out`.
+. Execute o seguinte script, a partir do mesmo local.  Ele fará com que cada contêiner `overlaytest` em cada host faça ping um no outro:
++
+----
+ #!/bin/bash
+ echo "=> Start network overlay test"
+   kubectl get pods -l name=overlaytest -o jsonpath='{range .items[*]}{@.metadata.name}{" "}{@.spec.nodeName}{"\n"}{end}' |
+   while read spod shost
+     do kubectl get pods -l name=overlaytest -o jsonpath='{range .items[*]}{@.status.podIP}{" "}{@.spec.nodeName}{"\n"}{end}' |
+     while read tip thost
+       do kubectl --request-timeout='10s' exec $spod -c overlaytest -- /bin/sh -c "ping -c2 $tip > /dev/null 2>&1"
+         RC=$?
+         if [ $RC -ne 0 ]
+           then echo FAIL: $spod on $shost cannot reach pod IP $tip on $thost
+           else echo $shost can reach $thost
+         fi
+     done
+   done
+ echo "=> End network overlay test"
+----
+
+. Quando este comando terminar de ser executado, ele exibirá o estado de cada rota:
++
+----
+ => Start network overlay test
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.7.3 on wk2
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.0.5 on cp1
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.2.12 on wk1
+ command terminated with exit code 1
+ FAIL: overlaytest-v4qkl on cp1 cannot reach pod IP 10.42.7.3 on wk2
+ cp1 can reach cp1
+ cp1 can reach wk1
+ command terminated with exit code 1
+ FAIL: overlaytest-xpxwp on wk1 cannot reach pod IP 10.42.7.3 on wk2
+ wk1 can reach cp1
+ wk1 can reach wk1
+ => End network overlay test
+----
++
+Se você ver um erro na saída, há algum problema com a rota entre os pods nos dois hosts.  Na saída acima, o nó `wk2` não possui conectividade na rede overlay. Isso pode ser porque as {xref-node-reqs}#_networking_requirements[portas necessárias] para a rede overlay não estão abertas para `wk2`.
+
+. Você pode agora limpar o DaemonSet executando `kubectl delete ds/overlaytest`.
+
+[#_check_if_mtu_is_correctly_configured_on_hosts_and_on_peering_tunnel_appliances_devices]
+=== Verifique se o MTU está configurado corretamente nos hosts e nos dispositivos/aparelhos de peering/túnel.
+
+Quando o MTU está configurado incorretamente (seja em hosts executando o Rancher, nós em clusters criados/importados ou em dispositivos/aparelhos intermediários), mensagens de erro serão registradas no Rancher e nos agentes, semelhante a:
+
+* `websocket: bad handshake`
+* `Failed to connect to proxy`
+* `read tcp: i/o timeout`
+
+Veja https://cloud.google.com/vpn/docs/concepts/mtu-considerations#gateway_mtu_vs_system_mtu[Considerações sobre MTU do Google Cloud VPN] para um exemplo de como configurar o MTU corretamente ao usar o Google Cloud VPN entre o Rancher e os nós do cluster.

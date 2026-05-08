@@ -1,0 +1,262 @@
+= Comunicándose con clústeres de usuarios en sentido descendente
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc 
+:product-path: about-rancher/architecture/communicating-with-downstream-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+
+Esta sección describe cómo Rancher aprovisiona y gestiona los clústeres de usuarios en sentido descendente que ejecutan tus aplicaciones y servicios.
+
+El diagrama a continuación muestra cómo los controladores de clúster, los agentes de clúster y el agente del sistema Rancher permiten a Rancher controlar los clústeres en sentido descendente.
+
+.Comunicándose con clústeres en sentido descendente
+image::rancher-architecture-cluster-controller.svg[Componentes de Rancher]
+
+Las siguientes descripciones corresponden a los números en el diagrama anterior:
+
+. <<_1_the_authentication_proxy,El Proxy de Autenticación>>
+. <<_2_cluster_controllers_and_cluster_agents,Controladores de clúster y Agentes de clúster>>
+. <<_3_rancher_system_agent,Agente del sistema Rancher>>
+. <<_4_authorized_cluster_endpoint,Punto de acceso de clúster autorizado>>
+
+[#_1_the_authentication_proxy]
+== 1. El Proxy de Autenticación
+
+En este diagrama, un usuario llamado Bob quiere ver todos los pods que se ejecutan en un clúster de usuarios en sentido descendente llamado Clúster de Usuarios 1. Desde dentro de Rancher, puede ejecutar un comando `kubectl` para ver los pods. Bob está autenticado a través del proxy de autenticación de Rancher.
+
+El proxy de autenticación reenvía todas las llamadas a la API de Kubernetes a los clústeres en sentido descendente. Se integra con servicios de autenticación como autenticación local, Active Directory y GitHub. En cada llamada a la API de Kubernetes, el proxy de autenticación autentica al llamador y establece los encabezados de suplantación de Kubernetes adecuados antes de reenviar la llamada a los maestros de Kubernetes.
+
+Rancher se comunica con los clústeres de Kubernetes utilizando una https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/[cuenta de servicio]. Cada cuenta de usuario en Rancher se correlaciona con una cuenta de servicio equivalente en el clúster en sentido descendente. Rancher utiliza la cuenta de servicio para https://kubernetes.io/docs/reference/access-authn-authz/authentication/#user-impersonation[suplantar] al usuario, lo que proporciona todos los permisos que se supone que debe tener el usuario.
+
+Por defecto, Rancher genera un {xref-access-cluster-kubectl}[archivo kubeconfig] que contiene credenciales para hacer proxy a través del servidor Rancher para conectarse al servidor API de Kubernetes en un clúster de usuarios en sentido descendente. El archivo kubeconfig (`kube_config_rancher-cluster.yml`) contiene acceso completo al clúster.
+
+[#_2_cluster_controllers_and_cluster_agents]
+== 2. Controladores de clúster y Agentes de clúster
+
+Cada clúster de usuario en sentido descendente tiene un agente de clúster, que abre un túnel al controlador de clúster correspondiente dentro del servidor Rancher.
+
+Hay un controlador de clúster y un agente de clúster para cada clúster en sentido descendente. Cada controlador de clúster:
+
+* Observa los cambios de recursos en el clúster en sentido descendente
+* Lleva el estado actual del clúster en sentido descendente al estado deseado
+* Configura políticas de control de acceso a clústeres y proyectos
+ifeval::["{build-type}" != "srfa"]
+* Proporciona clústeres llamando a los controladores de máquina Docker y motores de Kubernetes requeridos, como GKE
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+* Proporciona clústeres llamando a los controladores de máquina Docker y motores de Kubernetes requeridos
+endif::[]
+
+Por defecto, para permitir que Rancher se comunique con un clúster en sentido descendente, el controlador de clúster se conecta al agente de clúster. Si el agente de clúster no está disponible, el controlador de clúster puede conectarse a un <<_3_rancher_system_agent,agente del sistema Rancher>> en su lugar.
+
+El agente de clúster, también llamado `cattle-cluster-agent`, es un componente que se ejecuta en un clúster de usuario en sentido descendente. Realiza las siguientes tareas:
+
+* Se conecta a la API de Kubernetes de los clústeres de Kubernetes lanzados por Rancher
+* Gestiona cargas de trabajo, creación y ampliación de pods dentro de cada clúster
+* Aplica los roles y vinculaciones definidos en las políticas globales de cada clúster
+* Se comunica entre el clúster y el servidor Rancher (a través de un túnel al controlador del clúster) sobre eventos, estadísticas, información de nodos y salud
+
+[#_3_rancher_system_agent]
+== 3. Agente del sistema Rancher
+
+Si el agente del clúster (también llamado `cattle-cluster-agent`) no está disponible, el agente del sistema Rancher crea un túnel al controlador del clúster para comunicarse con Rancher.
+
+El `rancher-system-agent` se ejecuta en cada nodo en los clústeres de Kubernetes RKE2 y K3s. Se utiliza para interactuar con los nodos al realizar operaciones en el clúster. Ejemplos de operaciones en el clúster incluyen actualizar la versión de Kubernetes y crear o restaurar instantáneas de etcd.
+
+[#_4_authorized_cluster_endpoint]
+== 4. Punto de acceso de clúster autorizado
+
+Un punto de acceso de clúster autorizado (ACE) permite a los usuarios conectarse al servidor API de Kubernetes de un clúster en sentido descendente sin tener que enrutar sus solicitudes a través del proxy de autenticación de Rancher.
+
+____
+ACE está disponible en clústeres RKE2 y K3s que están aprovisionados o registrados con Rancher. No está disponible en clústeres en un proveedor de Kubernetes alojado, como EKS de Amazon.
+____
+
+Hay dos razones principales por las que un usuario podría necesitar el punto de acceso de clúster autorizado:
+
+* Para acceder a un clúster de usuario en sentido descendente mientras Rancher está inactivo
+* Para reducir la latencia en situaciones donde el servidor Rancher y el clúster en sentido descendente están separados por una larga distancia
+
+El microservicio `kube-api-auth` se despliega para proporcionar la funcionalidad de autenticación de usuario para el punto de acceso de clúster autorizado. Cuando accedes al clúster de usuario utilizando `kubectl`, el servidor API de Kubernetes del clúster te autentica utilizando el servicio `kube-api-auth` como un webhook.
+
+Al igual que el punto de acceso de clúster autorizado, el servicio de autenticación `kube-api-auth` también está disponible solo para clústeres de Kubernetes lanzados por Rancher.
+
+____
+*Situación de ejemplo:* Supongamos que el servidor Rancher está ubicado en los Estados Unidos, y el Clúster de Usuario 1 está ubicado en Australia. Una usuaria, Alice, también vive en Australia. Alice puede manipular recursos en el Clúster de Usuario 1 utilizando la interfaz de usuario de Rancher, pero sus solicitudes tendrán que enviarse desde Australia al servidor Rancher en los Estados Unidos, y luego ser reenviadas a Australia, donde se encuentra el clúster de usuario en sentido descendente. La distancia geográfica puede causar una latencia significativa, que Alice puede reducir utilizando el punto final del clúster autorizado.
+____
+
+Con este punto de acceso habilitado para el clúster en sentido descendente, Rancher genera un contexto adicional de Kubernetes en el archivo kubeconfig para conectarse directamente al clúster. Este archivo contiene las credenciales para `kubectl` y `helm`.
+
+[NOTE]
+====
+
+Para utilizar el contexto ACE en tu kubeconfig, ejecuta `kubectl use-context <ace context name>` después de habilitarlo.
+====
+
+
+Para más información, consulta la sección sobre cómo acceder a tu clúster con {xref-access-cluster-kubectl}[kubectl y el archivo kubeconfig].
+
+Recomendamos exportar el archivo kubeconfig para que, si Rancher falla, aún puedas utilizar las credenciales en el archivo para acceder a tu clúster.
+
+[#_impersonation]
+== Personificación
+
+Los usuarios técnicamente existen solo en el clúster en sentido ascendente. Rancher crea https://kubernetes.io/docs/reference/access-authn-authz/rbac/#rolebinding-and-clusterrolebinding[RoleBindings y ClusterRoleBindings] que hacen referencia a los usuarios de Rancher, aunque no hay https://kubernetes.io/docs/reference/access-authn-authz/authentication/#users-in-kubernetes[ningún recurso de Usuario real] en el clúster en sentido descendente.
+
+Cuando los usuarios interactúan con un clúster en sentido descendente a través del proxy de autenticación, debe haber alguna entidad en el sentido descendente que actúe como el actor para esas solicitudes. Rancher crea cuentas de servicio para ser esa entidad. A cada cuenta de servicio solo se le concede un permiso, que es *suplantar* al usuario al que pertenecen. Si solo hubiera una cuenta de servicio que pudiera suplantar a cualquier usuario, entonces sería posible que un usuario malicioso corrompiera esa cuenta y escalara sus privilegios suplantando a otro usuario. Este problema fue la base para un https://github.com/rancher/rancher/security/advisories/GHSA-pvxj-25m6-7vqr[CVE].
+
+[#_impersonation_troubleshooting]
+=== Solución de problemas de suplantación
+
+En el clúster en sentido descendente, cinco recursos se encargan de la suplantación:
+
+* espacio de nombres: `cattle-impersonation-system`
+* cuenta de servicio: `cattle-impersonation-system/cattle-impersonation-<user ID>`
+* secreto del token de cuenta: `cattle-impersonation-system/cattle-impersonation-<user ID>-token-<hash>`
+* rol de clúster: `cattle-impersonation-<user ID>`
+* vinculación de rol de clúster: `cattle-impersonation-<user ID>`
+
+En este ejemplo de un rol de clúster de suplantación típico, el sistema está configurado para usar `github` como el proveedor de autenticación:
+
+[,yaml]
+----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+ creationTimestamp: "2021-10-06T18:20:13Z"
+ labels:
+   authz.cluster.cattle.io/impersonator: "true"
+   cattle.io/creator: norman
+ name: cattle-impersonation-user-abcde
+ resourceVersion: "3528"
+ uid: a7478731-72a0-4343-b09f-c3bf12552d77
+rules:
+# allowed to impersonate user user-abcde
+- apiGroups:
+ - ""
+ resourceNames:
+ - user-abcde
+ resources:
+ - users
+ verbs:
+ - impersonate
+# allowed to impersonate listed groups
+- apiGroups:
+ - ""
+ resourceNames:
+ - github_team://123 # group from GitHub auth provider
+ - system:authenticated # automatic group from Kubernetes
+ - system:cattle:authenticated # automatic group from Rancher
+ resources:
+ - groups
+ verbs:
+ - impersonate
+# allowed to impersonate principal ID github_user://098
+- apiGroups:
+ - authentication.k8s.io
+ resourceNames:
+ - github_user://098 # principal ID from GitHub auth provider
+ resources:
+ - userextras/principalid
+ verbs:
+ - impersonate
+# allowed to impersonate username example
+- apiGroups:
+ - authentication.k8s.io
+ resourceNames:
+ - example # username from GitHub auth provider
+ resources:
+ - userextras/username
+ verbs:
+ - impersonate
+----
+
+Cuando solucione problemas de suplantación, verifique si estos recursos existen para el usuario y si las reglas en el rol de clúster son similares a las anteriores. Por ejemplo:
+
+[,bash]
+----
+kubectl --namespace cattle-impersonation-system get serviceaccount cattle-impersonation-<user ID>
+kubectl --namespace cattle-impersonation-system get secret cattle-impersonation-<user ID>-token-<hash>
+kubectl get clusterrole cattle-impersonation-<user ID> --output yaml
+kubectl get clusterrolebinding cattle-impersonation-<user ID>
+----
+
+Si ve un error relacionado con "suplantación" en la interfaz de usuario, preste especial atención al _end_ del mensaje de error, que debería indicar la verdadera razón por la que la solicitud falló.
+
+[#_important_files]
+== Archivos Importantes
+
+Los archivos mencionados a continuación son necesarios para mantener, solucionar problemas y actualizar su clúster:
+
+* `config.yaml`: El archivo de configuración del clúster RKE2 y K3s.
+* `rke2.yaml` o `k3s.yaml`: El archivo Kubeconfig para su clúster RKE2 o K3s. Este archivo contiene credenciales para el acceso completo al clúster. Puede usar este archivo para autenticarse con un clúster de Kubernetes lanzado por Rancher si Rancher falla.
+
+Para más información sobre cómo conectarse a un clúster sin el proxy de autenticación de Rancher y otras opciones de configuración, consulte la documentación del {xref-access-cluster-kubectl}[archivo kubeconfig].
+
+[#_tools_for_provisioning_kubernetes_clusters]
+== Herramientas para aprovisionar clústeres de Kubernetes
+
+Las herramientas que Rancher utiliza para aprovisionar clústeres de usuario en sentido descendente dependen del tipo de clúster que se está aprovisionando.
+
+[#_rancher_launched_kubernetes_for_nodes_hosted_in_an_infrastructure_provider]
+=== Kubernetes lanzado por Rancher para nodos alojados en un proveedor de infraestructura
+
+ifeval::["{build-type}" != "srfa"]
+Rancher puede aprovisionar dinámicamente nodos en un proveedor como Amazon EC2, DigitalOcean, Azure o vSphere y luego instalar Kubernetes en ellos.
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+Rancher puede aprovisionar dinámicamente nodos en Amazon EC2 y luego instalar Kubernetes en ellos.
+endif::[]
+
+Rancher aprovisiona este tipo de clúster utilizando https://github.com/rancher/machine[docker-machine.]
+
+[#_rancher_launched_kubernetes_for_custom_nodes]
+=== Kubernetes lanzado por Rancher para nodos personalizados
+
+Al configurar este tipo de clúster, Rancher instala Kubernetes en nodos existentes, lo que crea un clúster personalizado.
+
+Rancher aprovisiona este tipo de clúster utilizando https://github.com/rancher/rke2[RKE2] o https://github.com/rancher/k3s[K3s].
+
+[#_hosted_kubernetes_providers]
+=== Proveedores de Kubernetes alojados
+
+ifeval::["{build-type}" != "srfa"]
+Al configurar este tipo de clúster, Kubernetes es instalado por proveedores como Google Kubernetes Engine, Amazon Elastic Container Service para Kubernetes o Azure Kubernetes Service.
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+Al configurar este tipo de clúster, Kubernetes es instalado por Amazon Elastic Container Service para Kubernetes.
+endif::[]
+
+Rancher aprovisiona este tipo de clúster utilizando https://github.com/rancher/kontainer-engine[kontainer-engine.]
+
+[#_imported_kubernetes_clusters]
+=== Clústeres de Kubernetes importados
+
+En este tipo de clúster, Rancher se conecta a un clúster de Kubernetes que ya ha sido configurado. Por lo tanto, Rancher no aprovisiona Kubernetes, sino que solo configura los agentes de Rancher para comunicarse con el clúster.
+
+[#_rancher_server_components_and_source_code]
+== Componentes del servidor de Rancher y código fuente
+
+Este diagrama muestra cada componente que integra el servidor de Rancher:
+
+image::rancher-architecture-rancher-components.svg[Componentes de Rancher]
+
+Los repositorios de GitHub para Rancher se pueden encontrar en los siguientes enlaces:
+
+* https://github.com/rancher/rancher[Repositorio principal del servidor de Rancher]
+* https://github.com/rancher/ui[Rancher UI]
+* https://github.com/rancher/api-ui[Interfaz de usuario de la API de Rancher]
+* https://github.com/rancher/norman[Norman,], el marco de la API de Rancher
+* https://github.com/rancher/types[Tipos]
+* https://github.com/rancher/cli[Rancher CLI]
+* https://github.com/rancher/helm[Aplicaciones de catálogo]
+
+Esta es una lista parcial de los repositorios más importantes de Rancher. Para más detalles sobre el código fuente de Rancher, consulta la sección sobre xref:contribute-to-rancher.adoc#_rancher_repositories[contribuir a Rancher.] Para ver todas las bibliotecas y proyectos utilizados en Rancher, consulta el https://github.com/rancher/rancher/blob/master/go.mod[`go.mod`archivo] en el repositorio `rancher/rancher`.

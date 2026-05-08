@@ -1,0 +1,173 @@
+= Installation de {rancher-product-name} sur Amazon EKS
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-09
+:page-revdate: {revdate}
+:community-path: getting-started/installation-et-mise-à-niveau/installer-mise-à-niveau-sur-un-cluster-kubernetes/rancher-sur-amazon-eks.adoc 
+:product-path: installation-and-upgrade/hosted-kubernetes/rancher-on-amazon-eks.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-qs-aws-marketplace: xref:installation-and-upgrade/quick-start/deploy-rancher/aws-marketplace.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-qs-aws-marketplace: xref:getting-started/quick-start-guides/deploy-rancher-manager/aws-marketplace.adoc
+endif::[]
+
+Cette page couvre l'installation de Rancher sur un cluster Amazon EKS.  Vous pouvez également {xref-qs-aws-marketplace}[installer Rancher via AWS Marketplace].
+
+Si vous avez déjà un cluster Kubernetes EKS, passez à l'étape concernant <<_5_install_an_ingress,l'installation d'un ingress.>> Ensuite, installez le chart Helm de Rancher en suivant les instructions sur {xref-install-rancher}#_installer_le_chart_helm_de_rancher[cette page.]
+
+[#_creating_an_eks_cluster_for_the_rancher_server]
+== Création d'un cluster EKS pour le serveur Rancher
+
+Dans cette section, vous installerez un cluster EKS avec un ingress en utilisant des outils en ligne de commande. Ce guide peut être utile si vous souhaitez utiliser moins de ressources tout en essayant Rancher sur EKS.
+
+[NOTE]
+.Conditions préalables :
+====
+
+* Vous devez déjà avoir un compte AWS.
+* Il est recommandé d'utiliser un utilisateur IAM plutôt que le compte racine AWS. Vous aurez besoin de la clé d'accès et de la clé secrète de l'utilisateur IAM pour configurer l'interface de ligne de commande AWS.
+* L'utilisateur IAM a besoin des politiques IAM minimales décrites dans la https://eksctl.io/usage/minimum-iam-policies/[documentation officielle d'eksctl.]
+====
+
+
+[#_1_prepare_your_workstation]
+=== 1. Préparez votre station de travail
+
+Installez les outils de ligne de commande suivants sur votre station de travail :
+
+* *Le AWS CLI v2 :* Pour obtenir de l'aide, consultez ces https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html[étapes d'installation.]
+* *eksctl:* Pour obtenir de l'aide, consultez ces https://docs.aws.amazon.com/eks/latest/userguide/eksctl.html[étapes d'installation.]
+* *kubectl:* Pour obtenir de l'aide, consultez ces https://docs.aws.amazon.com/eks/latest/userguide/install-kubectl.html[étapes d'installation.]
+* *helm:* Pour obtenir de l'aide, consultez ces https://helm.sh/docs/intro/install/[étapes d'installation.]
+
+[#_2_configure_the_aws_cli]
+=== 2. Configurer le AWS CLI
+
+Pour configurer le AWS CLI, exécutez la commande suivante{nbsp}:
+
+----
+aws configure
+----
+
+Ensuite, entrez les valeurs suivantes{nbsp}:
+
+|===
+| Valeur | Description
+
+| ID de clé d'accès AWS
+| La clé d'accès pour l'utilisateur IAM disposant des autorisations EKS.
+
+| Clé d'accès secrète AWS
+| La clé secrète de l'utilisateur IAM disposant des autorisations EKS.
+
+| Nom de la région par défaut
+| Une https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.RegionsAndAvailabilityZones.html#Concepts.RegionsAndAvailabilityZones.Regions[région AWS] où les nœuds du cluster seront situés.
+
+| Format de sortie par défaut
+| Saisissez le nom de fichier `json`.
+|===
+
+[#_3_create_the_eks_cluster]
+=== 3. Créez le cluster EKS
+
+Pour créer un cluster EKS, exécutez la commande suivante. Utilisez la région AWS qui s'applique à votre cas d'utilisation. Lors du choix d'une version de Kubernetes, assurez-vous de consulter d'abord le https://rancher.com/support-matrix/[tableau de support] pour trouver la version la plus élevée de Kubernetes qui a été validée pour votre version de Rancher.
+
+----
+eksctl create cluster \
+  --name rancher-server \
+  --version <VERSION> \
+  --region us-west-2 \
+  --nodegroup-name ranchernodes \
+  --nodes 3 \
+  --nodes-min 1 \
+  --nodes-max 4 \
+  --managed
+----
+
+Le cluster mettra un certain temps à être déployé avec CloudFormation.
+
+[#_4_test_the_cluster]
+=== 4. Testez le cluster
+
+Pour tester le cluster, exécutez{nbsp}:
+
+----
+eksctl get cluster
+----
+
+Le résultat doit se présenter comme suit{nbsp}:
+
+----
+eksctl get cluster
+2021-03-18 15:09:35 [ℹ]  eksctl version 0.40.0
+2021-03-18 15:09:35 [ℹ]  using region us-west-2
+NAME        REGION        EKSCTL CREATED
+rancher-server-cluster        us-west-2    True
+----
+
+[#_5_install_an_ingress]
+=== 5. Installer un Ingress
+
+Le cluster a besoin d'un Ingress afin que Rancher puisse être accessible depuis l'extérieur du cluster. L'installation d'un Ingress nécessite l'attribution d'une adresse IP publique. Assurez-vous d'avoir un quota suffisant, sinon l'attribution de l'adresse IP échouera. Les limites pour les adresses IP publiques s'appliquent au niveau régional par abonnement. Vous pouvez utiliser un contrôleur d'ingress géré fourni par AWS (ALB) ou un contrôleur d'ingress tiers comme Traefik.
+
+[WARNING]
+====
+Il n'est pas recommandé d'installer un contrôleur d'ingress tiers, comme Traefik, si un contrôleur d'ingress géré est déjà utilisé.
+====
+
+[WARNING]
+====
+**Ingress-NGINX EOL:** Le contrôleur `ingress-nginx` de la communauté atteindra la fin du service en mars 2026. Cette page utilise Traefik, qui est le chemin de migration recommandé pour les environnements Rancher.
+====
+
+Traefik inclut un fournisseur Ingress NGINX natif. Cela vous permet de migrer depuis NGINX sans réécrire vos objets Ingress existants, car Traefik interprétera automatiquement les annotations `nginx.ingress.kubernetes.io`. Si vous mettez à niveau un cluster qui utilise déjà `ingress-nginx`, suivez ce https://doc.traefik.io/traefik/migrate/nginx-to-traefik/[guide] pour plus d'informations.
+
+Pour installer Traefik, nous recommandons fortement d'utiliser l'application Traefik dans le https://apps.rancher.io/applications/traefik-proxy[Rancher Prime Application Collection]. Consultez leur https://docs.apps.rancher.io/howto-guides/integrate-with-rancher-manager[documentation pour intégrer avec Rancher Manager].
+
+
+[#_6_get_load_balancer_ip]
+=== 6. Obtenir l'adresse IP du Load Balancer
+
+Pour obtenir l'adresse du load balancer, exécutez{nbsp}:
+
+----
+kubectl get service traefik --namespace=traefik
+----
+
+Le résultat doit ressembler à ce qui suit{nbsp}:
+
+----
+NAME                       TYPE           CLUSTER-IP     EXTERNAL-IP                                                              PORT(S)
+ AGE
+traefik  LoadBalancer   10.0.116.18    40.31.180.83   80:31229/TCP,443:31050/TCP 27m
+----
+
+Enregistrez le `EXTERNAL-IP`.
+
+[#_7_set_up_dns]
+=== 7. Configurer les DNS
+
+Le trafic externe vers le serveur Rancher devra être dirigé vers le répartiteur de charge que vous avez créé.
+
+Configurez un DNS pour pointer vers l'IP externe que vous avez enregistrée. Ce DNS sera utilisé comme l'URL du serveur Rancher.
+
+Il existe de nombreuses façons valides de configurer le DNS. Pour obtenir de l'aide, consultez la documentation AWS sur https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer.html[le routage du trafic vers un équilibreur de charge ELB.]
+
+[#_8_install_the_rancher_helm_chart]
+=== 8. Installez le Rancher Helm Chart.
+
+Ensuite, installez le Rancher Helm chart en suivant les instructions sur {xref-install-rancher}#_install_the_rancher_helm_chart[cette page]. Les instructions Helm sont les mêmes pour installer Rancher sur n'importe quelle distribution Kubernetes.
+
+Utilisez ce nom DNS de l'étape précédente comme l'URL du serveur Rancher lors de l'installation de Rancher. Il peut être passé en tant qu'option Helm. Par exemple, si le nom DNS est `rancher.my.org`, vous pourriez exécuter la commande d'installation Helm avec l'option `--set hostname=rancher.my.org`.
+
+Lors de l'installation de Rancher sur cette configuration, vous devrez également passer la valeur ci-dessous dans la commande d'installation Helm de Rancher afin de définir le nom du contrôleur Ingress à utiliser avec la ressource Ingress de Rancher :
+
+----
+--set ingress.ingressClassName=traefik
+----
+
+Référez-vous {xref-install-rancher}#_5_install_rancher_with_helm_and_your_chosen_certificate_option[ici pour la commande d'installation Helm] pour votre option de certificat choisie.

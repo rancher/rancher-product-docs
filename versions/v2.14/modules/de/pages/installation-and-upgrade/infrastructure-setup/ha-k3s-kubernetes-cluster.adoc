@@ -1,0 +1,103 @@
+= Einrichten der Infrastruktur für einen {k3s-product-name} Kubernetes-Cluster mit hoher Verfügbarkeit
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-install-upgrade: xref:installation-and-upgrade/installation-and-upgrade.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-mysql-amazon-rds: xref:installation-and-upgrade/infrastructure-setup/mysql-database-in-amazon-rds.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-install-upgrade: xref:getting-started/installation-and-upgrade/index.adoc
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-mysql-amazon-rds: xref:how-to-guides/new-user-guides/infrastructure-setup/mysql-database-in-amazon-rds.adoc
+endif::[]
+
+
+Dieses Tutorial soll Ihnen helfen, die zugrunde liegende Infrastruktur für einen Rancher-Management-Server bereitzustellen.
+
+Die empfohlene Infrastruktur für den Rancher-eigenen Kubernetes-Cluster variiert je nachdem, ob Rancher auf einem K3s Kubernetes-Cluster, einem RKE Kubernetes-Cluster oder einem einzelnen Docker-Container installiert wird.
+
+Für weitere Informationen zu jeder Installationsoption siehe {xref-install-upgrade}[diese Seite.]
+
+[NOTE]
+.Wichtig:
+====
+
+Diese Knoten müssen sich in derselben Region befinden. Sie können diese Server in separaten Verfügbarkeitszonen (Rechenzentren) platzieren.
+====
+
+
+Um den Rancher-Management-Server auf einem K3s-Cluster mit hoher Verfügbarkeit zu installieren, empfehlen wir, die folgende Infrastruktur einzurichten:
+
+* *Zwei Linux-Knoten,* typischerweise virtuelle Maschinen, im Infrastrukturanbieter Ihrer Wahl.
+* *Eine externe Datenbank* zur Speicherung der Cluster-Daten. Wir empfehlen MySQL.
+* *Ein Load Balancer* zur Weiterleitung des Datenverkehrs an die beiden Knoten.
+* *Ein DNS-Eintrag*, um eine URL dem Load Balancer zuzuordnen. Dies wird die Rancher-Server-URL, und Downstream-Kubernetes-Cluster müssen darauf zugreifen können.
+
+[#_1_set_up_linux_nodes]
+== 1. Linux-Knoten einrichten
+
+Stellen Sie sicher, dass Ihre Knoten die allgemeinen Installationsanforderungen für {xref-install-reqs}[Betriebssystem, Container-Laufzeit, Hardware und Netzwerk] erfüllen.
+
+Für ein Beispiel, wie man Linux-Knoten einrichtet, beziehen Sie sich auf dieses {xref-setup-ec2-nodes}[Tutorial] zur Einrichtung von Knoten als Instanzen in Amazon EC2.
+
+[#_2_set_up_external_datastore]
+== 2. Richten Sie den externen Datenspeicher ein
+
+Die Fähigkeit, Kubernetes mit einem anderen Datenspeicher als etcd auszuführen, hebt K3s von anderen Kubernetes-Distributionen ab. Dieses Feature bietet Flexibilität für Kubernetes-Betreiber. Die verfügbaren Optionen ermöglichen es Ihnen, einen Datenspeicher auszuwählen, der am besten zu Ihrem Anwendungsfall passt.
+
+Für eine K3s-Installation mit hoher Verfügbarkeit müssen Sie eine https://www.mysql.com/[MySQL] externe Datenbank einrichten. Rancher wurde auf K3s Kubernetes-Clustern mit MySQL-Version 5.7 als Datenspeicher getestet.
+
+Wenn Sie Kubernetes mit dem K3s-Installationsskript installieren, geben Sie die Details an, damit K3s eine Verbindung zur Datenbank herstellen kann.
+
+Für ein Beispiel, wie Sie die MySQL-Datenbank einrichten können, siehe dieses {xref-mysql-amazon-rds}[Tutorial] zur Einrichtung von MySQL auf dem RDS-Dienst von Amazon.
+
+Für die vollständige Liste der Optionen, die für die Konfiguration eines K3s-Cluster-Datenspeichers verfügbar sind, siehe die https://rancher.com/docs/k3s/latest/en/installation/datastore/[K3s-Dokumentation.]
+
+[#_3_set_up_the_load_balancer]
+== 3. Richten Sie den Lastausgleich ein
+
+Sie müssen auch einen Load Balancer einrichten, um den Datenverkehr an die Rancher-Replik auf beiden Knoten zu leiten. Das wird verhindern, dass ein Ausfall eines einzelnen Knotens die Kommunikation mit dem Rancher-Managementserver unterbricht.
+
+Wenn Kubernetes in einem späteren Schritt eingerichtet wird, wird das K3s-Tool einen Traefik Ingress-Controller bereitstellen. Dieser Controller wird an den Ports 80 und 443 der Arbeitsknoten überwachen und den Datenverkehr beantworten, der für bestimmte Hostnamen bestimmt ist.
+
+Wenn Rancher installiert ist (auch in einem späteren Schritt), erstellt das Rancher-System eine Ingress-Ressource. Dieses Ingress weist den Traefik Ingress-Controller an, den Datenverkehr zu überwachen, der für den Rancher-Hostnamen bestimmt ist. Der Traefik Ingress-Controller wird, wenn er Datenverkehr für den Rancher-Hostnamen erhält, diesen Datenverkehr an die laufenden Rancher-Pods im Cluster weiterleiten.
+
+Für Ihre Implementierung sollten Sie überlegen, ob Sie einen Layer-4- oder Layer-7-Load Balancer verwenden möchten oder müssen:
+
+* *Ein Layer-4-Lastausgleich* ist die einfachere der beiden Optionen, bei der Sie TCP-Datenverkehr an Ihre Knoten weiterleiten. Wir empfehlen, Ihren Layer-4-Lastausgleich so zu konfigurieren, dass er den Datenverkehr an die Ports TCP/80 und TCP/443 der Rancher-Management-Clusterknoten weiterleitet. Der Ingress-Controller im Cluster wird den HTTP-Datenverkehr auf HTTPS umleiten und SSL/TLS an Port TCP/443 terminieren. Der Ingress-Controller wird den Datenverkehr an Port TCP/80 an das Ingress-Pod in der Rancher-Implementierung weiterleiten.
+* *Ein Layer-7-Lastausgleich* ist etwas komplizierter, kann jedoch Funktionen bieten, die Sie möglicherweise wünschen. Ein Layer-7-Lastausgleich kann beispielsweise die TLS-Terminierung am Lastausgleich übernehmen, anstatt dass Rancher die TLS-Terminierung selbst vornimmt. Dies kann vorteilhaft sein, wenn Sie Ihre TLS-Beendigung in Ihrer Infrastruktur zentralisieren möchten. Layer-7-Load Balancing bietet auch die Möglichkeit, dass Ihr Load Balancer Entscheidungen basierend auf HTTP-Attributen wie Cookies usw. trifft, mit denen sich ein Layer-4-Load Balancer nicht befassen kann. Wenn Sie sich entscheiden, den SSL/TLS-Datenverkehr an einem Layer-7-Lastausgleich zu terminieren, müssen Sie die `--set tls=external` Option verwenden, wenn Sie Rancher in einem späteren Schritt installieren. Für weitere Informationen siehe die {xref-helm-chart-options}#_external_tls_termination[Rancher Helm-Chart-Optionen.]
+
+Für ein Beispiel, wie man einen NGINX-Lastausgleich einrichtet, siehe {xref-nginx-load-balancer}[diese Seite.]
+
+Für eine Anleitung zur Einrichtung eines Amazon ELB Network-Lastausgleichs, verweisen Sie auf {xref-amazon-elb}[diese Seite.]
+
+[CAUTION]
+====
+
+Verwenden Sie diesen Lastausgleich (d.h. den `local` Cluster Ingress) nicht, um Anwendungen außer Rancher nach der Installation zu verteilen. Das Teilen dieses Ingress mit anderen Anwendungen kann zu Websocket-Fehlern bei Rancher nach dem Neuladen der Ingress-Konfiguration für andere Apps führen. Wir empfehlen, den `local` Cluster ausschließlich für Rancher und keine anderen Anwendungen zu verwenden.
+====
+
+[#_4_set_up_the_dns_record]
+== 4. DNS-Eintrag einrichten
+
+Nachdem Sie Ihren Load Balancer eingerichtet haben, müssen Sie einen DNS-Eintrag erstellen, um den Datenverkehr an diesen Load Balancer zu senden.
+
+Je nach Ihrer Umgebung kann dies ein A-Eintrag sein, der auf die IP des Load Balancers zeigt, oder es kann ein CNAME sein, der auf den Hostnamen des Load Balancers zeigt. In jedem Fall stellen Sie sicher, dass dieser Eintrag der Hostname ist, auf den Rancher reagieren soll.
+
+Sie müssen diesen Hostnamen in einem späteren Schritt angeben, wenn Sie Rancher installieren, und es ist nicht möglich, ihn später zu ändern. Stellen Sie sicher, dass Ihre Entscheidung endgültig ist.
+
+Für eine Anleitung zur Einrichtung eines DNS-Eintrags, um den Domain-Traffic an einen Amazon ELB-Lastausgleich weiterzuleiten, siehe die https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[offizielle AWS-Dokumentation.]

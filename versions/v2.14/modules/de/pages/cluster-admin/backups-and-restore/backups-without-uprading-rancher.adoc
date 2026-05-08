@@ -1,0 +1,122 @@
+= Ein Kubernetes-Upgrade, ohne dass {rancher-product-name} ein Upgrade erfährt.
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/upgrade-kubernetes-without-upgrading-rancher.adoc 
+:product-path: cluster-admin/backups-and-restore/backups-without-uprading-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-global-permissions: xref:rancher-admin/benutzer/authn-und-authz/verwaltung-der-rollenbasierten-zugriffskontrolle-rbac/global-berechtigungen.adoc
+:xref-air-gap-publish-images: xref:installation-and-upgrade/other-installation-methods/air-gapped/publish-images.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-global-permissions: xref:how-to-guides/neue-benutzeranleitungen/authentifizierung-berechtigungen-und-global-konfiguration/verwaltung-der-rollenbasierten-zugriffskontrolle-rbac/global-berechtigungen.adoc 
+:xref-air-gap-publish-images: xref:einsteiger/installation-und-upgrade/andere-installationsmethoden/air-gapped-helm-cli-install/bilder-publizieren.adoc
+endif::[]
+
+Die RKE-Metadatenfunktion ermöglicht es Ihnen, Cluster mit neuen Versionen von Kubernetes bereitzustellen, sobald diese veröffentlicht werden, ohne Rancher zu upgraden. Diese Funktion ist nützlich, um von Patch-Versionen von Kubernetes zu profitieren, beispielsweise wenn Sie zu Kubernetes v1.14.7 upgraden möchten, während Ihr Rancher-Server ursprünglich v1.14.6 unterstützte.
+
+[NOTE]
+====
+
+Die Kubernetes-API kann sich zwischen Minor-Versionen ändern. Daher unterstützen wir nicht die Einführung von Minor-Kubernetes-Versionen, wie die Einführung von v1.15, wenn Rancher derzeit v1.14 unterstützt. Sie müssten Rancher upgraden, um Unterstützung für Minor-Kubernetes-Versionen hinzuzufügen.
+====
+
+
+Die Kubernetes-Metadaten von Rancher enthalten Informationen, die spezifisch für die Kubernetes-Version sind, die Rancher zur Bereitstellung von {xref-launch-k8s-with-rancher}[RKE-Clustern] verwendet. Rancher synchronisiert die Daten regelmäßig und erstellt benutzerdefinierte Ressourcenbeschreibungen (CRDs) für *System-Images,* *Service-Optionen* und *Addon-Vorlagen*. Folglich stellt die Kubernetes-Metadatenfunktion, wenn eine neue Kubernetes-Version mit der Rancher-Server-Version kompatibel ist, die neue Version Rancher zur Bereitstellung von Clustern zur Verfügung. Die Metadaten geben Ihnen einen Überblick über die Informationen, die der https://rancher.com/docs/rke/latest/en/[Rancher Kubernetes Engine] (RKE) für die Bereitstellung verschiedener Kubernetes-Versionen verwendet.
+
+Die folgende Tabelle beschreibt die CRDs, die von der regelmäßigen Datensynchronisation betroffen sind.
+
+[NOTE]
+====
+
+Nur Administratoren können die Metadaten-CRDs bearbeiten. Es wird empfohlen, vorhandene Objekte nicht zu aktualisieren, es sei denn, es wird ausdrücklich geraten.
+====
+
+
+|===
+| Ressource | Beschreibung | Rancher API-URL
+
+| System-Images
+| Liste der System-Images, die zur Bereitstellung von Kubernetes über RKE verwendet werden.
+| `<RANCHER_SERVER_URL>/v3/rkek8ssystemimages`
+
+| Service-Optionen
+| Standardoptionen, die an Kubernetes-Komponenten wie `kube-api`, `scheduler`, `kubelet`, `kube-proxy` und `kube-controller-manager` übergeben werden.
+| `<RANCHER_SERVER_URL>/v3/rkek8sserviceoptions`
+
+| Addon-Vorlagen
+| YAML-Definitionen, die zur Bereitstellung von Addon-Komponenten wie Canal, Calico, Flannel, Weave, Kube-dns, CoreDNS, `metrics-server`, `nginx-ingress` verwendet werden.
+| `<RANCHER_SERVER_URL>/v3/rkeaddons`
+|===
+
+Administratoren können die RKE-Metadaten-Einstellungen so konfigurieren, dass Folgendes geschieht:
+
+* Aktualisieren Sie die Kubernetes-Metadaten, wenn eine neue Patch-Version von Kubernetes veröffentlicht wird und Sie möchten, dass Rancher Cluster mit der neuesten Version von Kubernetes bereitstellt, ohne Rancher upgraden zu müssen.
+* Ändern Sie die Metadaten-URL, die Rancher verwendet, um die Metadaten zu synchronisieren, was für Air Gap-Setups nützlich ist, wenn Sie Rancher lokal anstelle von GitHub synchronisieren müssen.
+* Verhindern Sie, dass Rancher die Metadaten automatisch synchronisiert, was eine Möglichkeit ist, um zu verhindern, dass neue und nicht unterstützte Kubernetes-Versionen in Rancher verfügbar sind.
+
+[#_refresh_kubernetes_metadata]
+== Kubernetes-Metadaten aktualisieren
+
+Die Option zur Aktualisierung der Kubernetes-Metadaten steht standardmäßig für Administratoren zur Verfügung oder für jeden Benutzer, der die *Cluster-Treiber verwalten* {xref-global-permissions}[globale Rolle.]
+
+Um Rancher zu zwingen, die Kubernetes-Metadaten zu aktualisieren, steht eine manuelle Aktualisierungsaktion zur Verfügung:
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Klicken Sie im linken Navigationsmenü auf *Treiber*.
+. Klicken Sie auf *Kubernetes-Metadaten aktualisieren*.
+
+Sie können Rancher so konfigurieren, dass die Metadaten nur bei Bedarf aktualisiert werden, indem Sie `refresh-interval-minutes` auf `0` setzen (siehe unten) und diese Schaltfläche verwenden, um die Metadatenaktualisierung manuell durchzuführen, wenn dies gewünscht ist.
+
+[#_configuring_the_metadata_synchronization]
+=== Konfiguration der Metadaten-Synchronisierung
+
+[CAUTION]
+====
+
+Nur Administratoren können diese Einstellungen ändern.
+====
+
+
+Die RKE-Metadatenkonfiguration steuert, wie oft Rancher die Metadaten synchronisiert und von wo es Daten herunterlädt. Sie können die Metadaten über die Einstellungen in der Rancher-Benutzeroberfläche oder über die Rancher-API am Endpunkt `v3/settings/rke-metadata-config` konfigurieren.
+
+Die Art und Weise, wie die Metadaten konfiguriert sind, hängt von der Rancher-Version ab.
+
+Um die Metadatenkonfiguration in Rancher zu bearbeiten,
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Globale Einstellungen*.
+. Gehen Sie zum Abschnitt *rke-metadata-config*. Klicken Sie auf *⋮ > Einstellung bearbeiten*.
+. Sie können optional die folgenden Parameter ausfüllen:
+
+* `refresh-interval-minutes`: Dies ist die Zeitspanne, die Rancher wartet, um die Metadaten zu synchronisieren. Um die regelmäßige Aktualisierung zu deaktivieren, setzen Sie `refresh-interval-minutes` auf 0.
+* `url`: Dies ist der HTTP-Pfad, von dem Rancher Daten abruft. Der Pfad muss ein direkter Pfad zu einer JSON-Datei sein. Zum Beispiel ist die Standard-URL für Rancher v2.4 `https://releases.rancher.com/kontainer-driver-metadata/release-v2.4/data.json`.
+ .. Klicken Sie auf *Speichern*.
+
+Wenn Sie kein Air Gap-Setup haben, müssen Sie die URL, von der Rancher die Metadaten abruft, nicht angeben, da die Standardeinstellung darin besteht, von https://github.com/rancher/kontainer-driver-metadata/blob/dev-v2.5/data/data.json[Ranchers Metadaten-Git-Repository] abzurufen.
+
+Wenn Sie jedoch ein <<_air_gap_setups,Air Gap-Setup>> haben, müssen Sie das Kubernetes-Metadaten-Repository an einem Ort spiegeln, der für Rancher verfügbar ist. Dann müssen Sie die URL ändern, um auf den neuen Speicherort der JSON-Datei zu verweisen.
+
+[#_air_gap_setups]
+== Air Gap-Setups
+
+Rancher ist auf eine regelmäßige Synchronisierung des `rke-metadata-config` angewiesen, um neue Kubernetes-Versionen-Metadaten herunterzuladen, sofern dies mit der aktuellen Version des Rancher-Servers unterstützt wird. Für eine Tabelle der kompatiblen Kubernetes- und Rancher-Versionen verweisen Sie auf den https://rancher.com/support-maintenance-terms/all-supported-versions/rancher-v2.2.8/[Abschnitt zu den Dienstbedingungen.]
+
+Wenn Sie ein Air Gap-Setup haben, können Sie möglicherweise die automatische regelmäßige Aktualisierung der Kubernetes-Metadaten aus Ranchers Git-Repository nicht erhalten. In diesem Fall sollten Sie die regelmäßige Aktualisierung deaktivieren, um zu verhindern, dass Ihre Protokolle Fehler anzeigen. Optional können Sie Ihre Metadaten-Einstellungen so konfigurieren, dass Rancher mit einer lokalen Kopie der RKE-Metadaten synchronisieren kann.
+
+Um Rancher mit einem lokalen Spiegel der RKE-Metadaten zu synchronisieren, würde ein Administrator die `rke-metadata-config` Einstellungen so konfigurieren, dass sie auf den Spiegel verweisen. Für Details verweisen Sie auf <<_configuring_the_metadata_synchronization,Konfigurieren der Metadaten-Synchronisierung.>>
+
+Nachdem neue Kubernetes-Versionen in das Rancher-Setup geladen wurden, sind zusätzliche Schritte erforderlich, um sie zum Starten von Clustern zu verwenden. Rancher benötigt Zugriff auf aktualisierte System-Images. Während die Metadaten-Einstellungen nur von Administratoren geändert werden können, kann jeder Benutzer die Rancher-System-Images herunterladen und eine private Container-Registry dafür vorbereiten.
+
+Um die System-Images für die private Registry herunterzuladen:
+
+. Klicken Sie auf *☰* in der oberen linken Ecke.
+. Klicken Sie auf *Über* unten in der linken Navigation.
+. Laden Sie die betriebssystemspezifischen Bildlisten für Linux oder Windows herunter.
+. Laden Sie `rancher-images.txt` herunter.
+. Bereiten Sie die private Registry mit denselben Schritten während der {xref-air-gap-publish-images}[Air Gap-Installation] vor, verwenden Sie jedoch anstelle des `rancher-images.txt` von der Veröffentlichungsseite denjenigen, der aus den vorherigen Schritten erhalten wurde.
+
+*Ergebnis:* Die Air Gap-Installation von Rancher kann jetzt die Kubernetes-Metadaten synchronisieren. Wenn Sie Ihre private Registry aktualisieren, wenn neue Versionen von Kubernetes veröffentlicht werden, können Sie Cluster mit der neuen Version bereitstellen, ohne Rancher upgraden zu müssen.

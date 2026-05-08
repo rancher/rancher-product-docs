@@ -1,0 +1,312 @@
+= Instalación de Docker con terminación TLS en un balanceador de carga NGINX de capa 7
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-27
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/configure-layer-7-nginx-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/configure-layer-7-nginx-load-balancer.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-air-gap: xref:installation-and-upgrade/other-installation-methods/air-gapped/air-gapped.adoc
+:xref-enable-api-audit-log: xref:observability/logging/enable-api-audit-log.adoc
+:xref-certificate-troubleshooting: xref:installation-and-upgrade/troubleshooting/certificate-troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-air-gap: xref:comenzando/instalación-y-actualización/otros-métodos-de-instalación/instalación-helm-cli-entorno-aislado/index.adoc
+:xref-enable-api-audit-log: xref:how-to-guides/advanced-user-guides/enable-api-audit-log.adoc
+:xref-certificate-troubleshooting: xref:comenzando/instalación-y-actualizar-versión/otros-métodos-de-instalación/rancher-en-un-solo-nodo-con-docker/certificado-troubleshooting.adoc
+endif::[]
+
+Para entornos de desarrollo y pruebas que tienen un requisito especial para terminar TLS/SSL en un balanceador de carga en lugar de en tu contenedor de Rancher Server, desplegar Rancher y configurar un balanceador de carga para que funcione en conjunto con él.
+
+Un balanceador de carga de capa 7 puede ser beneficioso si deseas centralizar la terminación de TLS en tu infraestructura. El equilibrado de carga de capa 7 también ofrece la capacidad de que tu equilibrador de carga tome decisiones basadas en atributos HTTP como cookies, etc., que un equilibrador de carga de capa 4 no puede considerar.
+
+Este procedimiento de instalación te guía a través del despliegue de Rancher utilizando un solo contenedor, y luego proporciona una configuración de ejemplo para un balanceador de carga NGINX de capa 7.
+
+[#_requirements_for_os_docker_hardware_and_networking]
+== Requisitos para SO, Docker, Hardware y Redes
+
+Asegúrate de que tu nodo cumpla con los {xref-install-reqs}[requisitos de instalación.]
+
+[#_installation_outline]
+== Esquema de Instalación
+
+[#_1_provision_linux_host]
+== 1. Provisión de Host Linux
+
+Provisión de un solo host Linux de acuerdo con nuestros {xref-install-reqs}[Requisitos] para lanzar tu Rancher Server.
+
+[#_2_choose_an_ssl_option_and_install_rancher]
+== 2. Elige una opción SSL e instala Rancher
+
+Por motivos de seguridad, se requiere SSL (Capa de sockets seguros) al utilizar Rancher. SSL asegura toda la comunicación de red de Rancher, como cuando inicias sesión o interactúas con un clúster.
+
+[NOTE]
+.¿Deseas..
+====
+
+* ¿Completar una instalación en un entorno aislado?
+* ¿Registrar todas las transacciones con la API de Rancher?
+
+Consulta <<_advanced_options,Opciones Avanzadas>> a continuación antes de continuar.
+====
+
+
+Seleccione una de las siguientes opciones:
+
+.Opción A-Traiga su propio certificado: Autofirmado
+[%collapsible]
+======
+Si decides utilizar un certificado autofirmado para cifrar la comunicación, debes instalar el certificado en tu balanceador de carga (lo harás más adelante) y en tu contenedor de Rancher. Ejecuta el comando de Docker para desplegar Rancher, apuntando hacia tu certificado.
+
+[NOTE]
+.Requisitos previos:
+====
+
+Crea un certificado autofirmado.
+
+* Los archivos del certificado deben estar en formato PEM.
+====
+
+
+*Para instalar Rancher utilizando un certificado autofirmado:*
+
+. Mientras ejecutas el comando de Docker para desplegar Rancher, apunta Docker hacia tu archivo de certificado CA.
++
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v /etc/your_certificate_directory/cacerts.pem:/etc/rancher/ssl/cacerts.pem \
+  rancher/rancher:latest
+----
++
+======
+Opción B-Traiga su propio certificado: Firmado por una CA reconocida
+[%collapsible]
+======
+Si tu clúster es de acceso público, es mejor utilizar un certificado firmado por una CA reconocida.
+
+[NOTE]
+.Requisitos previos:
+====
+
+* Los archivos del certificado deben estar en formato PEM.
+====
+
+
+*Para instalar Rancher utilizando un certificado firmado por una CA reconocida:*
+
+Si utilizas un certificado firmado por una CA reconocida, no es necesario instalar tu certificado en el contenedor de Rancher. Debemos asegurarnos de que no haya un certificado CA predeterminado generado y almacenado, puedes hacer esto pasando el parámetro `--no-cacerts` al contenedor.
+
+. Introduce el siguiente comando.
++
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  rancher/rancher:latest --no-cacerts
+----
++
+======
+
+[#_3_configure_load_balancer]
+== 3. Configurar el balanceador de carga
+
+Al utilizar un balanceador de carga delante de tu contenedor de Rancher, no es necesario que el contenedor redirija la comunicación de puertos desde el puerto 80 o el puerto 443. Al pasar el encabezado `X-Forwarded-Proto: https`, esta redirección se desactiva.
+
+El balanceador de carga o proxy debe configurarse para soportar lo siguiente:
+
+* *Conexiones WebSocket*
+* *SPDY* / *HTTP/2* protocolos
+* Pasando / estableciendo los siguientes encabezados:
++
+|===
+| Encabezado | Valor | Descripción
+
+| `Host`
+| Nombre de host utilizado para acceder a Rancher.
+| Para identificar el servidor solicitado por el cliente.
+
+| `X-Forwarded-Proto`
+| `https`
+| Para identificar el protocolo que un cliente utilizó para conectarse al balanceador de carga o proxy. *Nota:* Si este encabezado está presente, `rancher/rancher` no redirige HTTP a HTTPS.
+
+| `X-Forwarded-Port`
+| Puerto utilizado para acceder a Rancher.
+| Para identificar el protocolo que el cliente utilizó para conectarse al balanceador de carga o proxy.
+
+| `X-Forwarded-For`
+| IP de la conexión del cliente.
+| Para identificar la dirección IP de origen de un cliente.
+|===
+
+[#_example_nginx_configuration]
+=== Ejemplo de configuración de NGINX
+
+Esta configuración de NGINX se ha probado en NGINX 1.14.
+
+[NOTE]
+====
+
+Esta configuración de NGINX es solo un ejemplo y puede no adaptarse a tu entorno. Para documentación completa, consulta https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/[Balance de la carga de NGINX - Balance de la carga HTTP].
+====
+
+
+* Reemplaza `rancher-server` con la dirección IP o el nombre de host del nodo que ejecuta el contenedor de Rancher.
+* Reemplaza ambas ocurrencias de `FQDN` por el nombre DNS de Rancher.
+* Reemplaza `/certs/fullchain.pem` y `/certs/privkey.pem` por la ubicación del certificado del servidor y la clave del certificado del servidor respectivamente.
+
+----
+worker_processes 4;
+worker_rlimit_nofile 40000;
+
+events {
+    worker_connections 8192;
+}
+
+http {
+    upstream rancher {
+        server rancher-server:80;
+    }
+
+    map $http_upgrade $connection_upgrade {
+        default Upgrade;
+        ''      close;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name FQDN;
+        ssl_certificate /certs/fullchain.pem;
+        ssl_certificate_key /certs/privkey.pem;
+
+        location / {
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Port $server_port;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_pass http://rancher;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            # This allows the ability for the execute shell window to remain open for up to 15 minutes. Without this parameter, the default is 1 minute and will automatically close.
+            proxy_read_timeout 900s;
+            proxy_buffering off;
+        }
+    }
+
+    server {
+        listen 80;
+        server_name FQDN;
+        return 301 https://$server_name$request_uri;
+    }
+}
+----
+
+{blank}
+
+[#_whats_next]
+== ¿Qué sigue?
+
+* *Recomendación:* Revisa xref:[Copia de seguridad] y xref:[Restauración] de Nodo Único. Aunque no tienes datos que necesiten ser respaldados en este momento, recomendamos crear copias de seguridad después del uso regular de Rancher.
+* Crea un clúster de Kubernetes: {xref-cluster-deployment}[Provisionamiento de Clústeres de Kubernetes].
+
+{blank}
+
+[#_faq_and_troubleshooting]
+== Preguntas Frecuentes y Solución de Problemas
+
+Para ayuda con la solución de problemas de certificados, consulta {xref-certificate-troubleshooting}[esta sección.]
+
+[#_advanced_options]
+== Opciones avanzadas
+
+[#_api_auditing]
+=== Auditoría de API
+
+Si deseas registrar todas las transacciones con la API de Rancher, habilita la característica {xref-enable-api-audit-log}[Auditoría de API] añadiendo las banderas a continuación en tu comando de instalación.
+
+ -e AUDIT_LEVEL=1 \
+ -e AUDIT_LOG_ENABLED=true \
+ -e AUDIT_LOG_PATH=/var/log/auditlog/rancher-api-audit.log \
+ -e AUDIT_LOG_MAXAGE=20 \
+ -e AUDIT_LOG_MAXBACKUP=20 \
+ -e AUDIT_LOG_MAXSIZE=100 \
+
+[#_air_gap]
+=== Entorno aislado
+
+Si estás visitando esta página para completar una {xref-air-gap}[Instalación de Entorno Aislado], debes anteponer la URL de tu registro privado a la etiqueta del servidor al ejecutar el comando de instalación en la opción que elijas. Añade `<REGISTRY.DOMAIN.COM:PORT>` con la URL de tu registro privado delante de `rancher/rancher:latest`.
+
+*Ejemplo:*
+
+  <REGISTRY.DOMAIN.COM:PORT>/rancher/rancher:latest
+
+[#_persistent_data]
+=== Datos Persistentes
+
+Rancher utiliza etcd como almacén de datos. Cuando Rancher se instala con Docker, se está utilizando el etcd embebido. Los datos persistentes están en la siguiente ruta en el contenedor: `/var/lib/rancher`.
+
+Puedes montar un volumen del host en esta ubicación para preservar los datos en el host en el que se está ejecutando:
+
+----
+docker run -d --restart=unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v /opt/rancher:/var/lib/rancher \
+  --privileged \
+  rancher/rancher:latest
+----
+
+Esta operación requiere xref:#_privileged_access_for_rancher[acceso privilegiado].
+
+Esta configuración de NGINX de capa 7 se ha probado en la versión 1.13 (mainline) y 1.14 (stable) de NGINX.
+
+[NOTE]
+====
+
+Esta configuración de NGINX es solo un ejemplo y puede no adaptarse a tu entorno. Para documentación completa, consulta https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-udp-load-balancer/[Balance de la carga NGINX - Balanceador de carga TCP y UDP].
+====
+
+
+----
+upstream rancher {
+    server rancher-server:80;
+}
+
+map $http_upgrade $connection_upgrade {
+    default Upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name rancher.yourdomain.com;
+    ssl_certificate /etc/your_certificate_directory/fullchain.pem;
+    ssl_certificate_key /etc/your_certificate_directory/privkey.pem;
+
+    location / {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://rancher;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        # This allows the ability for the execute shell window to remain open for up to 15 minutes. Without this parameter, the default is 1 minute and will automatically close.
+        proxy_read_timeout 900s;
+        proxy_buffering off;
+    }
+}
+
+server {
+    listen 80;
+    server_name rancher.yourdomain.com;
+    return 301 https://$server_name$request_uri;
+}
+----
+
+{blank}

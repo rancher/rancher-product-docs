@@ -1,0 +1,80 @@
+= iSCSI Volumes
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/install-iscsi-volumes.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/install-iscsi-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+In {xref-launch-k8s-with-rancher}[Rancher gestartete Kubernetes-Cluster], die Daten auf iSCSI-Volumes speichern, kann es zu einem Problem kommen, bei dem kubelets nicht automatisch mit iSCSI-Volumes verbunden werden können. Dieser Fehler ist wahrscheinlich auf ein Kompatibilitätsproblem mit dem iSCSI-Initiator-Tool zurückzuführen. Sie können dieses Problem lösen, indem Sie das iSCSI-Initiator-Tool auf jedem Ihrer Cluster-Knoten installieren.
+
+Rancher gestartete Kubernetes-Cluster, die Daten auf iSCSI-Volumes speichern, nutzen das http://www.open-iscsi.com/[iSCSI-Initiator-Tool], das im `rancher/hyperkube` Docker-Image des kubelets eingebettet ist. Von jedem kubelet (d.h. dem _Initiator_) entdeckt das Tool und startet Sitzungen mit einem iSCSI-Volume (d.h. dem _Ziel_). In einigen Fällen stimmen jedoch die Versionen des iSCSI-Initiator-Tools, die auf dem Initiator und dem Ziel installiert sind, möglicherweise nicht überein, was zu einem Verbindungsfehler führt.
+
+Wenn Sie auf dieses Problem stoßen, können Sie es umgehen, indem Sie das Initiator-Tool auf jedem Knoten in Ihrem Cluster installieren. Sie können das iSCSI-Initiator-Tool installieren, indem Sie sich bei Ihren Cluster-Knoten anmelden und einen der folgenden Befehle eingeben:
+
+|===
+| Plattform | Paketname | Installationsbefehl
+
+| Ubuntu/Debian
+| `open-iscsi`
+| `sudo apt install open-iscsi`
+
+| RHEL
+| `iscsi-initiator-utils`
+| `yum install iscsi-initiator-utils -y`
+|===
+
+Nachdem Sie das Initiator-Tool auf Ihren Knoten installiert haben, bearbeiten Sie die YAML für Ihren Cluster und ändern Sie die kubelet-Konfiguration, um die iSCSI-Binärdatei und die Konfiguration einzubinden, wie im folgenden Beispiel gezeigt.
+
+[NOTE]
+.Anmerkungen
+====
+
+* Stellen Sie sicher, dass entweder das `open-iscsi` (deb) oder das `iscsi-initiator-utils` (yum) Paket auf Ihren Cluster-Knoten installiert ist, bevor Sie Ihr Kubernetes-YAML aktualisieren, um die iSCSI-Binärdatei und die Konfiguration einzubinden. Wenn dieses Paket nicht installiert ist _bevor_ die Bind-Mounts in Ihrem Kubernetes-YAML erstellt werden, wird Docker automatisch die Verzeichnisse und Dateien auf jedem Knoten erstellen und die Installation des Pakets wird nicht erfolgreich sein.
+* Das folgende Beispiel-YAML gilt nicht für K3s, sondern nur für RKE-Cluster. Da der K3s kubelet nicht in einem Container läuft, ist das Hinzufügen zusätzlicher Bind-Mounts nicht erforderlich. Alle iSCSI-Tools müssen jedoch weiterhin auf Ihren K3s-Knoten installiert sein.
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+----
+
+Wenn Sie RHEL 7.9 verwenden, müssen Sie die Datei `/usr/lib64/libcrypto.so.10` wie im folgenden Beispiel gezeigt einbinden.
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.10:/usr/lib/libcrypto.so.10"
+----
+
+Wenn Sie RHEL 8.6 verwenden, müssen Sie die Datei `/usr/lib64/libcrypto.so.1.1` wie im folgenden Beispiel einbinden.
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.1.1:/usr/lib/libcrypto.so.1.1"
+----
+
+[TIP]
+====
+
+Um zu überprüfen, ob iscsiadm ordnungsgemäß funktioniert, können Sie den Befehl `docker exec kubelet iscsiadm --version` auf jedem Knoten ausführen.
+====
+

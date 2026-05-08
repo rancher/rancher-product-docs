@@ -1,0 +1,94 @@
+= Utilisation de {fleet-product-name} derrière un proxy
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/fleet/use-fleet-behind-a-proxy.adoc 
+:product-path: integrations/fleet/use-fleet-behind-a-proxy.adoc
+
+Dans cette section, vous apprendrez comment activer Fleet dans une configuration avec un serveur Rancher ayant une adresse IP publique et un cluster Kubernetes sans adresse IP publique, mais configuré pour utiliser un proxy.
+
+Rancher n'établit pas de connexions avec les clusters en aval enregistrés. L'agent Rancher déployé sur le cluster en aval doit être capable d'établir la connexion avec Rancher.
+
+Pour configurer Fleet pour fonctionner derrière un proxy, vous devrez définir les *Variables d'environnement de l'agent* pour le cluster en aval. Ce sont des options de configuration au niveau du cluster.
+
+Via l'interface utilisateur de Rancher, vous pouvez configurer ces variables d'environnement pour tout type de cluster, y compris les clusters enregistrés et personnalisés. Les variables peuvent être ajoutées lors de l'édition d'un cluster existant ou lors de la création d'un nouveau cluster.
+
+Pour les clusters en aval publics, il suffit de <<_setting_environment_variables_in_the_rancher_ui,définir les variables d'environnement requises dans l'interface utilisateur de Rancher.>>
+
+Pour les nœuds privés ou les clusters privés, les variables d'environnement doivent être définies sur les nœuds eux-mêmes. Ensuite, les variables d'environnement sont configurées depuis l'interface utilisateur de Rancher, généralement lors de la création d'un cluster personnalisé ou lors de l'enregistrement du cluster privé. Pour un exemple de la façon de définir les variables d'environnement sur un nœud Ubuntu dans un cluster Kubernetes K3s, voir <<_setting_environment_variables_on_private_nodes,cette section.>>
+
+[#_required_environment_variables]
+== Variables d'environnement requises
+
+Lors de l'ajout de variables d'environnement de l'agent Fleet pour le proxy, remplacez `<PROXY_IP>` par l'adresse IP de votre proxy privé.
+
+[CAUTION]
+====
+La variable d'environnement `NO_PROXY` n'est pas standardisée, et le format accepté de la valeur peut différer entre les applications. Lors de la configuration de la variable `NO_PROXY` pour Rancher, la valeur doit respecter le format attendu par Golang. 
+
+Plus précisément, la valeur doit être une chaîne délimitée par des virgules qui ne contient que des adresses IP, une notation CIDR, des noms de domaine ou des étiquettes DNS spéciales (par exemple `*`). Pour une description complète du format de valeur attendu, consultez la https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config[**documentation Golang en amont**].
+====
+
+|===
+| Nom de variable | Valeur
+
+| `HTTP_PROXY`
+| \http://<PROXY_IP>:8888
+
+| `HTTPS_PROXY`
+| \https://<PROXY_IP>:8888
+
+| `NO_PROXY`
+| 127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+|===
+
+[#_setting_environment_variables_in_the_rancher_ui]
+== Configuration des variables d'environnement dans l'interface utilisateur de Rancher
+
+Pour ajouter la variable d'environnement à un cluster existant{nbsp}:
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2/K3s::
++
+--
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster où vous souhaitez ajouter des variables d'environnement et cliquez sur *⋮ > Modifier la configuration*.
+. Cliquez sur *Variables d'environnement de l'agent* sous *Configuration du cluster*.
+. Cliquez sur *Ajouter*.
+. Entrez les <<_required_environment_variables,variables d'environnement requises>>.
+. Cliquez sur *Enregistrer*.
+--
+
+RKE::
++
+--
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster où vous souhaitez ajouter des variables d'environnement et cliquez sur *⋮ > Modifier la configuration*.
+. Cliquez sur *Options avancées*.
+. Cliquez sur *Ajouter une variable d'environnement*.
+. Entrez les <<_required_environment_variables,variables d'environnement requises>>.
+. Cliquez sur *Enregistrer*.
+--
+======
+
+*Résultat :* L'agent Fleet fonctionne derrière un proxy.
+
+[#_setting_environment_variables_on_private_nodes]
+== Configuration des variables d'environnement sur des nœuds privés.
+
+Pour les nœuds privés et les clusters privés, les variables d'environnement du proxy doivent être définies sur les nœuds eux-mêmes, ainsi que configurées depuis l'interface utilisateur de Rancher.
+
+Cet exemple montre comment les variables d'environnement seraient configurées sur un nœud Ubuntu dans un cluster Kubernetes K3s{nbsp}:
+
+----
+ssh -o ForwardAgent=yes ubuntu@<public_proxy_ip>
+ssh <k3s_ip>
+export proxy_private_ip=<private_proxy_ip>
+export HTTP_PROXY=http://${proxy_private_ip}:8888
+export HTTPS_PROXY=http://${proxy_private_ip}:8888
+export NO_PROXY=127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+----

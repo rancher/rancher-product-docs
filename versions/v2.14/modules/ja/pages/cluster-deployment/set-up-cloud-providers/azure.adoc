@@ -1,0 +1,615 @@
+= Azureクラウドプロバイダーの設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/azure.adoc 
+:product-path: cluster-deployment/set-up-cloud-providers/azure.adoc
+ifeval::["{build-type}" != "community"]
+:xref-migrate-out-of-tree-azure: xref:cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/azure.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-migrate-out-of-tree-azure: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-azure.adoc
+endif::[]
+
+[NOTE]
+.重要:
+====
+Kubernetes 1.30以降では、アウトオブツリーのAzureクラウドプロバイダーを使用する必要があります。Azureクラウドプロバイダーは https://github.com/kubernetes/kubernetes/pull/122857[完全に削除されました]。Kubernetes 1.30にアップグレード後は機能しません。以下に示す手順は、Azureクラウドプロバイダーを設定するために依然として必要です。Azureの前提条件を完了した後に、<<_using_the_out_of_tree_azure_cloud_provider,アウトオブツリーのクラウドプロバイダーを設定できます>>。
+
+Kubernetes 1.29以前では、{xref-migrate-out-of-tree-azure}[インツリーからアウトオブツリーのAzureクラウドプロバイダーに移行することもできます]。すべての既存のクラスターは、機能を維持するためにv1.30にアップグレードする前に移行する必要があります。
+
+Kubernetes 1.29以降、インツリーのクラウドプロバイダーは無効化されています。インツリーのAzureクラウドプロバイダーを使用するには、`DisableCloudProviders`と`DisableKubeletCloudCredentialProviders`のフィーチャーゲートを`false`に設定する必要があります。これは、クラスターのKubelet、コントローラーマネージャー、およびAPIサーバーの高度なクラスター設定で`feature-gates=DisableCloudProviders=false,DisableKubeletCloudCredentialProviders=false`を追加の引数として設定することで実行できます。Kubelet、コントローラーマネージャー、およびAPIサーバーの引数に`DisableKubeletCloudCredentialProviders=false`を設定すると、Azureコンテナレジストリへの認証のためのインツリー機能が有効になります。詳細については、 https://kubernetes.io/blog/2023/12/13/kubernetes-v1-29-release/#in-tree-cloud-provider-integration-removal[Kubernetes 1.29: Mandalaリリースノート]およびこの https://kubernetes.io/blog/2023/12/14/cloud-provider-integration-changes/#continue-using-in-tree-provider-code[ブログ投稿]を参照してください。
+
+Kubernetesバージョン1.26以降、インツリーの永続ボリュームタイプ`kubernetes.io/azure-disk`と`kubernetes.io/azure-file`は廃止され、もはやサポートされません。新しいクラスターの場合、<<_installing_csi_drivers,CSIドライバーをインストールするか>>、`disk.csi.azure.com`および`file.csi.azure.com`に対応するCSIドライバーに移行するには、 https://learn.microsoft.com/en-us/azure/aks/csi-migrate-in-tree-volumes[アップストリーム移行ドキュメント]に従ってください。
+====
+
+`Azure`クラウドプロバイダーを使用する場合、次の機能を活用できます：
+
+* *ロードバランサー:*特定のネットワークセキュリティグループ内にAzureロードバランサーを起動します。
+* *永続ボリューム:*標準およびプレミアムストレージアカウントでAzure BlobディスクおよびAzureマネージドディスクの使用をサポートします。
+* *ネットワークストレージ:*CIFSマウントを介してAzure Filesをサポートします。
+
+次のアカウントタイプはAzureのサブスクリプションではサポートされていません。
+
+* シングルテナントアカウント（つまり、サブスクリプションのないアカウント）。
+* マルチサブスクリプションアカウント。
+
+[#_prerequisites_for_rke_and_rke2_product_name]
+== RKEおよび{rke2-product-name}の前提条件
+
+RKEおよびRKE2のためにAzureクラウドプロバイダーを設定するには、次の資格情報を構成する必要があります。
+
+. <<_1_set_up_the_azure_tenant_id,AzureテナントIDを設定する>>
+. <<_2_set_up_the_azure_client_id_and_azure_client_secret,AzureクライアントIDとAzureクライアントシークレットを設定する>>
+. <<_3_configure_app_registration_permissions,アプリ登録の権限を構成する>>
+. <<_4_set_up_azure_network_security_group_name,Azureネットワークセキュリティグループ名を設定する>>
+
+[#_1_set_up_the_azure_tenant_id]
+=== 1.AzureテナントIDを設定する
+
+https://portal.azure.com[Azureポータル]にアクセスし、ログインして*Azure Active Directory*に移動し、*プロパティ*を選択します。あなたの*ディレクトリID*はあなたの*テナントID*（tenantID）です。
+
+Azure CLIを使用したい場合は、情報を取得するためにコマンド`az account show`を実行できます。
+
+[#_2_set_up_the_azure_client_id_and_azure_client_secret]
+=== 2.AzureクライアントIDとAzureクライアントシークレットを設定する
+
+https://portal.azure.com[Azureポータル]にアクセスし、ログインして以下の手順に従い、*アプリ登録*を作成し、対応する*AzureクライアントID*（aadClientId）と*Azureクライアントシークレット*（aadClientSecret）を作成します。
+
+. *Azure Active Directoryを選択する*
+. *アプリ登録を選択する*
+. *新しいアプリケーション登録を選択する*
+. *名前*を選択し、`Web app / API`を*アプリケーションタイプ*として選択し、この場合は何でも構いませんが*サインオンURL*を選択します。
+. *作成*を選択します。
+
+*アプリ登録*のビューで、作成したアプリ登録が表示されるはずです。列 *APPLICATION ID* に表示されている値は、*Azure Client ID* として使用する必要があります。
+
+次のステップは、*Azure Client Secret* を生成することです。
+
+. 作成したアプリ登録を開いてください。
+. *設定* ビューで、*キー* を開いてください。
+. *キーの説明* を入力し、期限を選択して、*保存* を選択してください。
+. 列 *値* に表示される生成された値は、*Azure Client Secret* として使用する必要があります。この値は一度だけ表示されます。
+
+[#_3_configure_app_registration_permissions]
+=== 3.アプリ登録の権限を設定する
+
+最後に行う必要があるのは、アプリ登録に適切な権限を割り当てることです。
+
+. *その他のサービス* に移動し、*サブスクリプション* を検索して開いてください。
+. *アクセス制御 (IAM)*を開いてください。
+. *追加*を選択します。
+. *役割*には、`Contributor` を選択してください。
+. *選択*には、作成したアプリ登録の名前を選択してください。
+. *保存*を選択します。
+
+[#_4_set_up_azure_network_security_group_name]
+=== 4.Azureネットワークセキュリティグループ名を設定する
+
+Azureロードバランサーが機能するためには、カスタムAzureネットワークセキュリティグループ (securityGroupName) が必要です。
+
+Rancher Machine Azureドライバーを使用してホストをプロビジョニングする場合、これらを手動で編集してこのネットワークセキュリティグループに割り当てる必要があります。
+
+プロビジョニング中にカスタムホストをこのネットワークセキュリティグループに割り当てる必要があります。
+
+ロードバランサーのバックエンドとして期待されるホストのみがこのグループに含まれる必要があります。
+
+[#__rke2_product_name_cluster_set_up_in_rancher]
+== {rke2-product-name} Rancher でのクラスター設定
+
+[NOTE]
+.重要:
+====
+このセクションは、インツリークラウドプロバイダーを使用してクラスターを作成する場合にのみ有効です。
+====
+
+
+. クラスター構成セクションのクラウドプロバイダーのドロップダウンから「Azure」を選択してください。
+. クラウドプロバイダー設定を提供してください。Rancherは自動的に新しいネットワークセキュリティグループ、リソースグループ、可用性セット、サブネット、および仮想ネットワークを作成します。これらのいずれかまたはすべてがすでに作成されている場合は、クラスターを作成する前にそれらを指定する必要があります。
+ ** 自動生成されたこれらの名前を表示または編集するには、*詳細を表示*をクリックしてください。あなたのクラウドプロバイダー設定は、*マシンプール*セクションのフィールドと一致する必要があります。複数のプールがある場合は、すべて同じリソースグループ、可用性セット、サブネット、仮想ネットワーク、およびネットワークセキュリティグループを使用する必要があります。
+ ** 以下に例を示します。必要に応じて修正してください。
+
++
+.例：クラウドプロバイダー設定
+[%collapsible]
+======
++
+[,yaml]
+----
+ {
+     "cloud":"AzurePublicCloud",
+     "tenantId": "YOUR TENANTID HERE",
+     "aadClientId": "YOUR AADCLIENTID HERE",
+     "aadClientSecret": "YOUR AADCLIENTSECRET HERE",
+     "subscriptionId": "YOUR SUBSCRIPTIONID HERE",
+     "resourceGroup": "docker-machine",
+     "location": "westus",
+     "subnetName": "docker-machine",
+     "securityGroupName": "rancher-managed-KA4jV9V2",
+     "securityGroupResourceGroup": "docker-machine",
+     "vnetName": "docker-machine-vnet",
+     "vnetResourceGroup": "docker-machine",
+     "primaryAvailabilitySetName": "docker-machine",
+     "routeTableResourceGroup": "docker-machine",
+     "cloudProviderBackoff": false,
+     "useManagedIdentityExtension": false,
+     "useInstanceMetadata": true
+ }
+----
++
+======
+. menu:クラスター構成[詳細]セクションの下で、*追加*をクリックし、*追加のコントローラーマネージャー引数*の下にこのフラグを追加します：`--configure-cloud-routes=false`
+. *作成*をクリックしてフォームを送信し、クラスターを作成します。
+
+[#_cloud_provider_configuration]
+== クラウドプロバイダー設定
+
+Rancherは自動的に新しいネットワークセキュリティグループ、リソースグループ、可用性セット、サブネット、および仮想ネットワークを作成します。これらのいずれかまたはすべてがすでに作成されている場合は、クラスターを作成する前にそれらを指定する必要があります。自動生成されたこれらの名前を表示または編集するには、*RKE1ノードテンプレート*または*RKE2マシンプール*を確認できます。
+
+*設定オプションの完全なリストは、 https://cloud-provider-azure.sigs.k8s.io/install/configs/[アップストリームドキュメント]を参照してください。*
+
+[NOTE]
+====
+
+. `useInstanceMetadata`は、クラウドプロバイダーが`true`を正しく設定するために`providerID`に設定する必要があります。
+. `excludeMasterFromStandardLB`は、Azureロードバランサー（ALB）のバックエンドに`false`というラベルが付けられたノードを追加する必要がある場合、`node-role.kubernetes.io/master`に設定する必要があります。
+. `loadBalancerSku`は`basic`または`standard`に設定できます。基本SKUは2025年9月に廃止されます。詳細については、 https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-basic-upgrade-guidance#basic-sku-vs-standard-sku[Azureのアップストリームドキュメント]を参照してください。
+====
+
+
+AzureはKubernetesシークレットからクラウド設定を読み取ることをサポートしています。シークレットはazure.jsonファイルのシリアライズされたバージョンです。シークレットが変更されると、クラウドコントローラーマネージャーはポッドを再起動せずに自らを再構築します。Helmチャートがシークレットからクラウドプロバイダー設定を読み取ることを推奨します。
+
+チャートは`kube-system`ネームスペース内の指定されたシークレット名からクラウドプロバイダー設定を読み取ることに注意してください。AzureがKubernetesシークレットを読み取るため、RBACも設定する必要があります。クラウドプロバイダー設定の例シークレットは以下に示されています。必要に応じて修正し、シークレットを作成してください。
+
+[,yaml]
+----
+# azure-cloud-config.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-cloud-config
+  namespace: kube-system
+type: Opaque
+stringData:
+  cloud-config: |-
+    {
+      "cloud": "AzurePublicCloud",
+      "tenantId": "<tenant-id>",
+      "subscriptionId": "<subscription-id>",
+      "aadClientId": "<client-id>",
+      "aadClientSecret": "<client-secret>",
+      "resourceGroup": "docker-machine",
+      "location": "westus",
+      "subnetName": "docker-machine",
+      "securityGroupName": "rancher-managed-kqmtsjgJ",
+      "securityGroupResourceGroup": "docker-machine",
+      "vnetName": "docker-machine-vnet",
+      "vnetResourceGroup": "docker-machine",
+      "primaryAvailabilitySetName": "docker-machine",
+      "routeTableResourceGroup": "docker-machine",
+      "cloudProviderBackoff": false,
+      "useManagedIdentityExtension": false,
+      "useInstanceMetadata": true,
+      "loadBalancerSku": "standard",
+      "excludeMasterFromStandardLB": false,
+    }
+----
+
+[#_using_the_out_of_tree_azure_cloud_provider]
+== アウトオブツリーAzureクラウドプロバイダーの使用
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. *クラスター設定*セクションの*クラウドプロバイダー*ドロップダウンから*外部*を選択します。
+. menu:クラスター設定[詳細設定]の下で、*追加のコントローラーマネージャー引数*の下にある*追加*をクリックし、このフラグを追加します: `--configure-cloud-routes=false`。
+. 次のステップで設定するためにクラウドプロバイダー設定を準備します。Rancherは自動的に新しいネットワークセキュリティグループ、リソースグループ、可用性セット、サブネット、および仮想ネットワークを作成します。これらのいずれかまたはすべてがすでに作成されている場合は、クラスターを作成する前にそれらを指定する必要があります。
++
+自動生成されたこれらの名前を表示または編集するには、*詳細を表示*をクリックしてください。あなたのクラウドプロバイダー設定は、***マシンプール*セクションのフィールドと一致する必要があります。複数のプールがある場合は、すべて同じリソースグループ、可用性セット、サブネット、仮想ネットワーク、およびネットワークセキュリティグループを使用する必要があります。
++
+. *クラスター設定 > アドオン設定*の下に、以下に示すクラウドコントローラーマネージャーマニフェストを*追加のマニフェスト*に追加します。
++
+このチャートは`kube-system`ネームスペース内のシークレットからクラウドプロバイダー設定を読み取ることに注意してください。クラウドプロバイダー設定用のシークレットの例は以下に示されています。必要に応じて修正してください。 https://cloud-provider-azure.sigs.k8s.io/install/configs/[アップストリームドキュメント]にある設定オプションの完全なリストを参照してください。
++
+また、<<_helm_chart_installation_from_cli,Helm CLI>>を使用してクラウドコントローラーマネージャーをインストールすることもできます。
++
+[,yaml]
+----
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: azure-cloud-controller-manager
+  namespace: kube-system
+spec:
+  chart: cloud-provider-azure
+  repo: https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo
+  targetNamespace: kube-system
+  bootstrap: true
+  valuesContent: |-
+    infra:
+      clusterName: <cluster-name>
+    cloudControllerManager:
+      cloudConfigSecretName: azure-cloud-config
+      cloudConfig: null
+      clusterCIDR: null
+      enableDynamicReloading: 'true'
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: 'true'
+      allocateNodeCidrs: 'false'
+      hostNetworking: true
+      caCertDir: /etc/ssl
+      configureCloudRoutes: 'false'
+      enabled: true
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          value: 'true'
+        - effect: NoSchedule
+          key: node.cloudprovider.kubernetes.io/uninitialized
+          value: 'true'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-cloud-config
+  namespace: kube-system
+type: Opaque
+stringData:
+  cloud-config: |-
+    {
+      "cloud": "AzurePublicCloud",
+      "tenantId": "<tenant-id>",
+      "subscriptionId": "<subscription-id>",
+      "aadClientId": "<client-id>",
+      "aadClientSecret": "<client-secret>",
+      "resourceGroup": "docker-machine",
+      "location": "westus",
+      "subnetName": "docker-machine",
+      "securityGroupName": "rancher-managed-kqmtsjgJ",
+      "securityGroupResourceGroup": "docker-machine",
+      "vnetName": "docker-machine-vnet",
+      "vnetResourceGroup": "docker-machine",
+      "primaryAvailabilitySetName": "docker-machine",
+      "routeTableResourceGroup": "docker-machine",
+      "cloudProviderBackoff": false,
+      "useManagedIdentityExtension": false,
+      "useInstanceMetadata": true,
+      "loadBalancerSku": "standard",
+      "excludeMasterFromStandardLB": false,
+    }
+----
+
+. *作成*をクリックしてフォームを送信し、クラスターを作成します。
+--
+
+RKE1::
++
+--
+. *クラスターオプション*セクションの*クラウドプロバイダー*のドロップダウンから*外部*を選択してください。これにより、Kubernetesコンポーネントの`--cloud-provider=external`が設定されます。
+. クラスターのプロビジョニングが完了した後に、`cloud-provider-azure`チャートをインストールします。クラウドコントローラーマネージャーをデプロイするまで、クラスターは正常にプロビジョニングされておらず、ノードはまだ`uninitialized`状態にあることに注意してください。これは<<_helm_chart_installation_from_cli,CLIを使用して手動で>>行うことも、<<_helm_chart_installation_from_ui,UIのHelmチャートを介して>>行うこともできます。
+
+クラウドコントローラーマネージャーのデプロイに関する詳細は、 https://cloud-provider-azure.sigs.k8s.io/install/azure-ccm/[公式のAzureアップストリームドキュメント]を参照してください。
+--
+======
+
+[#_helm_chart_installation_from_cli]
+=== CLIからのHelmチャートのインストール
+
+https://github.com/kubernetes-sigs/cloud-provider-azure/tree/master/helm/cloud-provider-azure[Helmチャートのインストール]に関する公式のアップストリームドキュメントはGithubにあります。
+
+. 必要な<<_cloud_provider_configuration,クラウドプロバイダーの設定>>を持つ`azure-cloud-config`シークレットを作成します。
++
+[,shell]
+----
+kubectl apply -f azure-cloud-config.yaml
+----
+
+. Helmリポジトリを追加します：
++
+[,shell]
+----
+helm repo add azure-cloud-controller-manager https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo
+helm repo update
+----
+
+. デフォルトの`values.yaml`を上書きするために、次の内容を持つ`values.yaml`ファイルを作成します：
++
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[,yaml]
+----
+# values.yaml
+infra:
+  clusterName: <cluster-name>
+cloudControllerManager:
+  cloudConfigSecretName: azure-cloud-config
+  cloudConfig: null
+  clusterCIDR: null
+  enableDynamicReloading: 'true'
+  configureCloudRoutes: 'false'
+  allocateNodeCidrs: 'false'
+  caCertDir: /etc/ssl
+  enabled: true
+  replicas: 1
+  hostNetworking: true
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: 'true'
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/master
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      value: 'true'
+    - effect: NoSchedule
+      key: node.cloudprovider.kubernetes.io/uninitialized
+      value: 'true'
+----
+--
+
+RKE::
++
+--
+[,yaml]
+----
+# values.yaml
+cloudControllerManager:
+  cloudConfigSecretName: azure-cloud-config
+  cloudConfig: null
+  clusterCIDR: null
+  enableDynamicReloading: 'true'
+  configureCloudRoutes: 'false'
+  allocateNodeCidrs: 'false'
+  caCertDir: /etc/ssl
+  enabled: true
+  replicas: 1
+  hostNetworking: true
+  nodeSelector:
+    node-role.kubernetes.io/controlplane: 'true'
+    node-role.kubernetes.io/control-plane: null
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/controlplane
+      value: 'true'
+    - effect: NoSchedule
+      key: node.cloudprovider.kubernetes.io/uninitialized
+      value: 'true'
+infra:
+  clusterName: <cluster-name>
+----
+--
+====== 
+
+. Helmチャートをインストールします：
++
+[,shell]
+----
+helm upgrade --install cloud-provider-azure azure-cloud-controller-manager/cloud-provider-azure -n kube-system --values values.yaml
+----
++
+Helmチャートが正常にインストールされたことを確認します：
++
+[,shell]
+----
+helm status cloud-provider-azure -n kube-system
+----
+
+. （オプション）クラウドコントローラーマネージャーの更新が成功したことを確認します：
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. クラウドプロバイダーはノードのProviderIDを設定する責任があります。すべてのノードがProviderIDで初期化されているか確認します：
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_helm_chart_installation_from_ui]
+=== UIからのHelmチャートのインストール
+
+. *☰*をクリックし、左側のナビゲーションからクラスターの名前を選択します。
+. *アプリ* > *リポジトリ*を選択します。
+. ［*Create*］ボタンをクリックします。
+. *インデックスURL*フィールドに`https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo`を入力します。
+. 左側のナビゲーションから*アプリ* > *チャート*を選択し、*cloud-provider-azure*チャートをインストールします。
+. 名前空間`kube-system`を選択し、*インストール前にHelmオプションをカスタマイズする*を有効にします。
+. `cloudConfig: /etc/kubernetes/azure.json`をCloud Config Secretから読み取るように置き換え、動的リロードを有効にします：
++
+[,yaml]
+----
+  cloudConfigSecretName: azure-cloud-config
+  enableDynamicReloading: 'true'
+----
+
+. 必要に応じて以下のフィールドを更新してください：
++
+[,yaml]
+----
+  allocateNodeCidrs: 'false'
+  configureCloudRoutes: 'false'
+  clusterCIDR: null
+----
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[start=9]
+. RancherがプロビジョニングしたRKE2ノードには、セレクタ`node-role.kubernetes.io/control-plane`が`true`に設定されています。nodeSelectorを更新する：
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
+--
+
+RKE::
++
+--
+[start=9]
+. RancherがプロビジョニングしたRKEノードは、`node-role.kubernetes.io/controlplane`でテイントされています。トレランスとnodeSelectorを更新する：
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
+--
+====== 
+
+[start=10]
+. チャートをインストールし、クラウドコントローラーとクラウドノードマネージャーが正常にデプロイされたことを確認する：
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. クラウドプロバイダーはノードのProviderIDを設定する責任があります。すべてのノードがProviderIDで初期化されているか確認します：
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_installing_csi_drivers]
+=== CSIドライバーのインストール
+
+https://github.com/kubernetes-sigs/azuredisk-csi-driver[Azure Disk CSIドライバー]または https://github.com/kubernetes-sigs/azurefile-csi-driver[Azure File CSIドライバー]をインストールして、それぞれ https://azure.microsoft.com/en-us/services/storage/disks/[Azure Disk]または https://azure.microsoft.com/en-us/services/storage/disks/[Azure File]ボリュームにアクセスします。
+
+Azure Disk CSIドライバーをインストールする手順は以下の通りです。Azure File CSIドライバーも同様の方法で、 https://github.com/kubernetes-sigs/azurefile-csi-driver/blob/master/charts/README.md[helmインストールドキュメント]に従ってインストールできます。
+
+[NOTE]
+.重要
+====
+Azure Diskを使用するには、クラスタを`Managed Disk`を使用してプロビジョニングする必要があります。*RKE1ノードテンプレート*または_*RKE2マシンプール_を作成する際にこれを設定できます。
+====
+
+https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md[Helmチャートのインストール]に関する公式のアップストリームドキュメントはGithubにあります。
+
+. helmリポジトリを追加および更新する：
++
+[,shell]
+----
+helm repo add azuredisk-csi-driver https://raw.githubusercontent.com/kubernetes-sigs/azuredisk-csi-driver/master/charts
+helm repo update azuredisk-csi-driver
+----
+
+. 以下のようにチャートをインストールし、必要に応じて--バージョン引数を更新する。 https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md#latest-chart-configuration[アップストリームドキュメント]に最新のチャート設定の完全なリストを参照してください。
++
+[,shell]
+----
+helm install azuredisk-csi-driver azuredisk-csi-driver/azuredisk-csi-driver --namespace kube-system --version v1.30.1 --set controller.cloudConfigSecretName=azure-cloud-config --set controller.cloudConfigSecretNamespace=kube-system --set controller.runOnControlPlane=true
+----
+
+. （オプション）azuredisk-csi-driverのインストールが成功したことを確認する：
++
+[,shell]
+----
+kubectl --namespace=kube-system get pods --selector="app.kubernetes.io/name=azuredisk-csi-driver" --watch
+----
+
+. 例のストレージクラスをプロビジョニングする：
++
+[,shell]
+----
+cat <<EOF | kubectl create -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: standard
+provisioner: kubernetes.io/azure-disk
+parameters:
+  storageaccounttype: Standard_LRS
+  kind: Managed
+EOF
+----
++
+ストレージクラスがプロビジョニングされたことを確認する：
++
+[,shell]
+----
+kubectl get storageclasses
+----
+
+. PersistentVolumeClaimを作成する：
++
+[,shell]
+----
+cat <<EOF | kubectl create -f -
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: azure-disk-pvc
+spec:
+  storageClassName: standard
+  accessModes:
+ ** ReadWriteOnce
+  resources:
+ requests:
+storage: 5Gi
+EOF
+----
++
+PersistentVolumeClaimとPersistentVolumeが作成されたことを確認する：
++
+[,shell]
+----
+kubectl get persistentvolumeclaim
+kubectl get persistentvolume
+----
+
+. 新しいAzureディスクを接続してください。
++
+これでKubernetesのPersistentVolumeをKubernetes Podにマウントできます。ディスクは、Deployment、DaemonSet、またはStatefulSetを含む任意のKubernetesオブジェクトタイプによって使用できます。ただし、以下の例ではPersistentVolumeをスタンドアロンのPodに単純にマウントします。
++
+[,shell]
+----
+cat <<EOF | kubectl create -f -
+kind: Pod
+apiVersion: v1
+metadata:
+  name: mypod-dynamic-azuredisk
+spec:
+  containers:
+    - name: mypod
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "http-server"
+      volumeMounts:
+        - mountPath: "/usr/share/nginx/html"
+          name: storage
+  volumes:
+    - name: storage
+      persistentVolumeClaim:
+        claimName: azure-disk-pvc
+EOF
+----

@@ -1,0 +1,43 @@
+= Rollenbasierte Zugriffskontrolle
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/prometheus-federator/rbac.adoc 
+:product-path: observability/monitoring-and-dashboards/prometheus-federator/rbac.adoc
+ifeval::["{build-type}" != "community"]
+:xref-prometheus-federator: xref:observability/monitoring-and-dashboards/prometheus-federator/prometheus-federator.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-prometheus-federator: xref:reference-guides/prometheus-federator/index.adoc
+endif::[]
+
+In diesem Abschnitt werden die Erwartungen an die rollenbasierte Zugriffskontrolle (RBAC) für Prometheus Federator beschrieben.
+
+Wie im Abschnitt über {xref-prometheus-federator}[Namespaces] beschrieben, erwartet Prometheus Federator, dass Projektbesitzer, Projektmitglieder und andere Benutzer im Cluster mit Projektberechtigungen (z. B. Berechtigungen in einem bestimmten Satz von Namespaces, die durch einen einzelnen Label-Selector identifiziert werden) minimale Berechtigungen in allen Namespaces haben, außer im Projektregistrierungs-Namespace (der standardmäßig in das Projekt importiert wird) und in denjenigen, die bereits ihre Projekte umfassen. Daher wird der Helm-Projektbetreiber automatisch die folgenden Bindungen überwachen, um Projektbesitzern zu ermöglichen, bestimmten Benutzern in ihren Projekt-Namespaces spezifische Chart-Berechtigungen zuzuweisen:
+
+* ClusterRoleBindings
+* RoleBindings im Projektfreigabe-Namespace
+
+Bei der Beobachtung einer Änderung an einem dieser Bindungstypen wird der Helm-Projektbetreiber überprüfen, ob das `roleRef`, auf das die Bindung verweist, mit einer ClusterRole übereinstimmt, die den unter angegebenen Namen hat:
+
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.admin`
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.edit`
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.view`
+
+Standardmäßig entsprechen diese roleRefs den `admin`, `edit` und `view`, die die https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[Standard-Kubernetes-Benutzerrollen] sind.
+
+[NOTE]
+====
+
+Für Rancher RBAC-Benutzer korrelieren diese https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[Standard-Kubernetes-Benutzerrollen] direkt mit den `Project Owner`, `Project Member` und `Read-Only` Standard-Projektrollen-Vorlagen.
+====
+
+
+Wenn das `roleRef` übereinstimmt, wird der Helm-Projektbetreiber die `subjects` der Bindung für alle Benutzer und Gruppen filtern und diese verwenden, um automatisch ein RoleBinding für jede Rolle im Projektfreigabe-Namespace mit demselben Namen wie die Rolle und den folgenden Labels zu erstellen:
+
+* `helm.cattle.io/project-helm-chart-role: {{ .Release.Name }}`
+* `helm.cattle.io/project-helm-chart-role-aggregate-from: <admin|edit|view>`
+
+Standardmäßig erstellt `rancher-project-monitoring`, das zugrunde liegende Chart, das von Prometheus Federator bereitgestellt wird, drei Standardrollen pro Projektfreigabe-Namespace, die `admin`, `edit` und `view` Benutzern Berechtigungen gewähren, um die Prometheus-, Alertmanager- und Grafana-UIs des Projektüberwachungsstacks anzuzeigen, um das Prinzip der minimalen Berechtigung zu gewährleisten. Wenn ein Cluster-Administrator jedoch bestimmten Benutzern zusätzliche Berechtigungen zuweisen möchte, kann er entweder direkt RoleBindings im Projektfreigabe-Namespace bestimmten Benutzern zuweisen oder Rollen mit den oben genannten zwei Labels erstellen, um Projektbesitzern zu ermöglichen, diese RBAC-Rollen an Benutzer in ihren Projektregistrierungs-Namespaces zuzuweisen.

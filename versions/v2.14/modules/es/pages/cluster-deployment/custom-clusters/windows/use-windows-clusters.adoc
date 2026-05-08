@@ -1,0 +1,323 @@
+= Lanzando Kubernetes en Clústeres de Windows
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-12-10
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/index.adoc 
+:product-path: cluster-deployment/custom-clusters/windows/use-windows-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-install-upgrade: xref:installation-and-upgrade/installation-and-upgrade.adoc
+:xref-cloud-provider-google-compute-engine: xref:cluster-deployment/set-up-cloud-providers/google-compute-engine.adoc
+:xref-custom-clusters-azure-storageclass-config: xref:cluster-deployment/custom-clusters/windows/azure-storageclass-configuration.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-set-up-cloud-providers: xref:instrucciones/nuevas-guías-de-usuario/clusters-de-kubernetes-en-rancher-configuración/configurar-proveedores-de-nube/index.adoc
+:xref-custom-clusters: xref:guías-de-referencia/configuración-de-cluster/configuración-del-servidor-rancher/utilizar-nodos-existentes/index.adoc
+:xref-install-upgrade: xref:getting-started/installation-and-upgrade/index.adoc
+:xref-cloud-provider-google-compute-engine: instrucciones/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/google-compute-engine.adoc
+:xref-custom-clusters-azure-storageclass-config: xref:instrucciones/nuevas-guías-de-usuario/clusters-de-kubernetes-en-rancher-configuración/usar-clusters-windows/configuración-clase-almacenamiento-azure.adoc
+endif::[]
+
+Al aprovisionar un {xref-custom-clusters}[clúster personalizado], Rancher utiliza RKE2 para instalar Kubernetes en tus nodos existentes.
+
+En un clúster de Windows aprovisionado con Rancher, el clúster debe contener nodos tanto de Linux como de Windows. El plano de control de Kubernetes solo puede ejecutarse en nodos de Linux, y los nodos de Windows solo pueden tener el rol de trabajador. Los nodos de Windows solo pueden utilizarse para desplegar cargas de trabajo.
+
+Para un resumen de las características de Kubernetes compatibles en Windows, consulta la documentación de Kubernetes sobre https://kubernetes.io/docs/setup/production-environment/windows/intro-windows-in-kubernetes/#supported-functionality-and-limitations[funcionalidad y limitaciones soportadas para usar Kubernetes con Windows] o la https://kubernetes.io/docs/setup/production-environment/windows/user-guide-windows-containers/[guía para programar contenedores de Windows en Kubernetes].
+
+[#__rke2_product_name_features_for_windows_clusters]
+== {rke2-product-name} Características para Clústeres de Windows
+
+A continuación se enumeran las principales características de RKE2 para el aprovisionamiento de clústeres de Windows:
+
+* Contenedores de Windows con RKE2 impulsados por containerd
+* Aprovisionamiento añadido de clústeres personalizados de Windows RKE2 directamente desde la interfaz de usuario de Rancher
+* Calico y Flannel CNI para clústeres personalizados de Windows RKE2
+* Las versiones SAC de Windows Server (2004 y 20H2) están incluidas en la vista técnica previa
+
+[NOTE]
+====
+
+Rancher permitirá que los pods de carga de trabajo de Windows se desplieguen en nodos trabajadores tanto de Windows como de Linux por defecto. Al crear clústeres mixtos en RKE2, debes editar el `nodeSelector` en el chart para dirigir los pods a un nodo de Windows compatible. Consulta la https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector[documentación de Kubernetes] para más información sobre cómo usar `nodeSelector` para asignar pods a nodos.
+====
+
+
+* Los contenedores HostProcess en Windows RKE2 son compatibles en Kubernetes v1.24.1 y versiones posteriores. Consulta https://kubernetes.io/docs/tasks/configure-pod-container/create-hostprocess-pod/[la documentación upstream] para más información.
+
+[#_general_requirements]
+== Requisitos Generales
+
+Los requisitos generales de red y del sistema operativo para los nodos de Windows son los mismos que para otras {xref-install-reqs}[instalaciones de Rancher].
+
+[#_os_requirements]
+=== Requisitos del SO
+
+Nuestro soporte para Windows Server y contenedores de Windows coincide con el ciclo de vida oficial de Microsoft para LTSC (Canal de Servicio a Largo Plazo) y SAC (Canal Semestral).
+
+Para las fechas del ciclo de vida de soporte para Windows Server, consulta la https://docs.microsoft.com/en-us/windows-server/get-started/windows-server-release-info[Documentación de Microsoft.]
+
+[#_kubernetes_version]
+=== Kubernetes Version
+
+Para más información sobre las versiones de los componentes de Kubernetes, consulta las https://www.suse.com/suse-rke2/support-matrix/all-supported-versions/[matrices de soporte para versiones de RKE2].
+
+[#_node_requirements]
+=== Requisitos del Nodo
+
+Los hosts en el clúster deben tener al menos:
+
+* 2 núcleos de CPU
+* 5 GB de memoria
+* 50 GB de espacio en disco
+
+Rancher no aprovisionará el nodo si este no cumple con estos requisitos.
+
+[#_networking_requirements]
+=== Requisitos de red
+
+Antes de aprovisionar un nuevo clúster, asegúrate de que ya has instalado Rancher en un dispositivo que acepte tráfico de red entrante. Esto es necesario para que los nodos del clúster puedan comunicarse con Rancher. Si aún no has instalado Rancher, consulta la {xref-install-upgrade}[documentación de instalación] antes de continuar con esta guía.
+
+Rancher soporta Windows utilizando Calico y Flannel como proveedores de red.
+
+Si estás configurando conjuntos de opciones DHCP para una nube privada virtual de AWS, ten en cuenta que en el campo de opción `domain-name` solo se puede especificar un nombre de dominio. De acuerdo con las opciones DHCP https://docs.aws.amazon.com/vpc/latest/userguide/VPC_DHCP_Options.html[documentación:]
+
+[NOTE]
+====
+
+Algunos sistemas operativos Linux aceptan múltiples nombres de dominio separados por espacios. Sin embargo, otros sistemas operativos Linux y Windows tratan el valor como un único dominio, lo que resulta en un comportamiento inesperado. Si tu conjunto de opciones DHCP está asociado a una VPC que tiene instancias con múltiples sistemas operativos, especifica solo un nombre de dominio.
+====
+
+
+[#_rancher_on_vmware_vsphere_with_esxi_6_7u2_and_above]
+=== Rancher en VMware vSphere con ESXi 6.7u2 y superior
+
+Si estás utilizando Rancher en VMware vSphere con ESXi 6.7u2 o posterior con Red Hat Enterprise Linux 8.3, CentOS 8.3 o SUSE Enterprise Linux 15 SP2 o posterior, es necesario desactivar la función de descarga de hardware del adaptador de red virtual `vmxnet3`. No hacerlo resultará en que todas las conexiones de red entre pods en diferentes nodos del clúster fallen con errores de tiempo de espera. Todas las conexiones desde pods de Windows a servicios críticos que se ejecutan en nodos de Linux, como CoreDNS, también fallarán. También es posible que las conexiones externas puedan fallar. Este problema es el resultado de que las distribuciones de Linux habilitan la función de descarga de hardware en `vmxnet3` y un error en la función de descarga de hardware `vmxnet3` que resulta en el descarte de paquetes para el tráfico de superposición de invitados. Para abordar este problema, es necesario desactivar la función de descarga de hardware `vmxnet3`. Esta configuración no sobrevive al reinicio, por lo que es necesario desactivarla en cada arranque. El curso de acción recomendado es crear un archivo de unidad systemd en `/etc/systemd/system/disable_hw_offloading.service`, que desactive la función de descarga de hardware `vmxnet3` al arrancar. Un archivo de unidad systemd de ejemplo que desactiva la función de descarga de hardware `vmxnet3` es el siguiente. Ten en cuenta que `<VM network interface>` debe personalizarse para la interfaz de red del host `vmxnet3`, por ejemplo, `ens192`:
+
+[source,shell]
+----
+[Unit]
+Description=Disable vmxnet3 hardware offloading feature
+
+[Service]
+Type=oneshot
+ExecStart=ethtool -K <VM network interface> tx-udp_tnl-segmentation off
+ExecStart=ethtool -K <VM network interface> tx-udp_tnl-csum-segmentation off
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target
+----
+
+Luego establece los permisos apropiados en el archivo de unidad systemd:
+
+[source,shell]
+----
+chmod 0644 /etc/systemd/system/disable_hw_offloading.service
+----
+
+Finalmente, habilita el servicio systemd:
+
+[source,shell]
+----
+systemctl enable disable_hw_offloading.service
+----
+
+[#_architecture_requirements]
+=== Requisitos de arquitectura
+
+Los nodos de gestión del clúster de Kubernetes (`etcd` y `controlplane`) deben ejecutarse en nodos de Linux.
+
+Los nodos `worker`, donde se desplegarán tus cargas de trabajo, serán típicamente nodos de Windows, pero debe haber al menos un nodo `worker` que se ejecute en Linux para poder ejecutar el agente del clúster Rancher, DNS, servidor de métricas y contenedores relacionados con Ingress.
+
+[#_recommended_architecture]
+==== Arquitectura Recomendada
+
+Recomendamos la arquitectura mínima de tres nodos que se detalla en la tabla a continuación, pero siempre puedes añadir más trabajadores de Linux y Windows para escalar tu clúster por redundancia:
+
+|===
+| Nodo | Sistema operativo | Rol(es) del Clúster de Kubernetes | Finalidad
+
+| Nodo 1
+| Linux (Ubuntu Server 18.04 recomendado)
+| Plano de control, etcd, trabajador
+| Gestionar el clúster de Kubernetes
+
+| Nodo 2
+| Linux (Ubuntu Server 18.04 recomendado)
+| Trabajador
+| Soportar el agente del clúster de Rancher, el servidor de métricas, DNS y Ingress para el clúster
+
+| Nodo 3
+| Windows (se requiere la versión 1809 o superior de Windows Server core, se recomienda la versión 2022)
+| Trabajador
+| Ejecutar tus contenedores de Windows
+|===
+
+[#_container_requirements]
+=== Requisitos del contenedor
+
+Windows requiere que los contenedores se construyan en la misma versión de Windows Server en la que se están desplegando. Por lo tanto, los contenedores deben construirse en la versión 1809 o superior de Windows Server core. Si tienes contenedores existentes construidos para una versión anterior de Windows Server core, deben ser reconstruidos en la versión 1809 o superior de Windows Server core.
+
+[#_cloud_provider_specific_requirements]
+=== Requisitos específicos del proveedor de la nube
+
+Si estableces un proveedor de nube de Kubernetes en tu clúster, se requieren algunos pasos adicionales. Podrías querer establecer un proveedor de nube si deseas aprovechar las capacidades de un proveedor de nube, por ejemplo, para aprovisionar automáticamente almacenamiento, balanceadores de carga u otra infraestructura para tu clúster. Consulta {xref-set-up-cloud-providers}[esta página] para obtener detalles sobre cómo configurar un clúster de nodos de proveedor de nube que cumpla con los requisitos previos.
+
+Si estás utilizando el proveedor de nube GCE (Google Compute Engine), debes hacer lo siguiente:
+
+* Habilita el proveedor de nube GCE en el `cluster.yml` siguiendo {xref-cloud-provider-google-compute-engine}[estos pasos.]
+* Al aprovisionar el clúster en Rancher, elige *Proveedor de nube personalizado* como el proveedor de nube en la interfaz de usuario de Rancher.
+
+[#_tutorial_how_to_create_a_cluster_with_windows_support]
+== Tutorial: Cómo crear un clúster con soporte para Windows
+
+Este tutorial describe cómo crear un clúster aprovisionado por Rancher con los tres nodos en la <<_recommended_architecture,arquitectura recomendada.>>
+
+Para configurar un clúster con soporte para nodos y contenedores de Windows, necesitarás completar las tareas a continuación.
+
+[#_1_provision_hosts]
+=== 1. Aprovisionar hosts
+
+Para comenzar a aprovisionar un clúster en nodos existentes con soporte para Windows, prepara tus hosts.
+
+Tus hosts pueden ser:
+
+* VMs alojadas en la nube
+* VMs de clústeres de virtualización
+* Servidores sin sistema operativo
+
+Aprovisionarás tres nodos:
+
+* Un nodo Linux, que gestiona el plano de control de Kubernetes, almacena tu `etcd`, y opcionalmente puede ser un nodo trabajador
+* Un segundo nodo Linux, que será otro nodo trabajador
+* El nodo de Windows, que ejecutará tus contenedores de Windows como un nodo trabajador
+
+|===
+| Nodo | Sistema operativo
+
+| Nodo 1
+| Linux (Ubuntu Server 18.04 recomendado)
+
+| Nodo 2
+| Linux (Ubuntu Server 18.04 recomendado)
+
+| Nodo 3
+| Windows (se requiere la versión 1809 o superior de Windows Server core, se recomienda la versión 2022)
+|===
+
+Si tus nodos son alojados por un *Proveedor de Nube* y deseas soporte de automatización como balanceadores de carga o dispositivos de almacenamiento persistente, tus nodos tienen requisitos de configuración adicionales. Para más detalles, consulta {xref-set-up-cloud-providers}[Seleccionando Proveedores de nube.]
+
+[#_2_create_the_cluster_on_existing_nodes]
+=== 2. Crear el clúster en Nodos Existentes
+
+Las instrucciones para crear un clúster de Windows en nodos existentes son muy similares a las {xref-custom-clusters}[instrucciones generales para crear un clúster personalizado] con algunos requisitos específicos de Windows.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clústeres*, haz clic en *Crear*.
+. Haz clic en *Personalizado*.
+. Introduce un nombre para tu clúster en el campo *Nombre del Clúster*.
+. En el menú desplegable *Versión de Kubernetes*, selecciona una versión de Kubernetes compatible.
+. En el campo *Red de Contenedores*, selecciona ya sea *Calico* o *Flannel*.
+. Haga clic en *Crear*.
+
+[#_3_add_nodes_to_the_cluster]
+=== 3. Añadir Nodos al Clúster
+
+Esta sección describe cómo registrar tus nodos Linux y trabajadores en tu clúster. Ejecutarás un comando en cada nodo, que instalará el rancher-system-agent y permitirá a Rancher gestionar cada nodo.
+
+[#_add_linux_master_node]
+==== Añadir Nodo Maestro Linux
+
+En esta sección, completamos un formulario en la interfaz de usuario de Rancher para obtener un comando personalizado para instalar el agente de Rancher en el nodo maestro Linux. Luego copiaremos el comando y lo ejecutaremos en nuestro nodo maestro Linux para registrar el nodo en el clúster.
+
+El primer nodo en tu clúster debe ser un host Linux que tenga tanto los roles de *Plano de Control* como de *etcd*. Como mínimo, ambos roles deben estar habilitados para este nodo, y este nodo debe ser añadido a tu clúster antes de que puedas añadir hosts Windows.
+
+. Después de la creación del clúster, navega a la pestaña de *Registro*.
+. En *Paso 1*, bajo la sección de *Rol del Nodo*, selecciona los tres roles. Aunque puedes elegir solo los roles de *etcd* y *Plano de Control*, recomendamos seleccionar los tres.
+. Opcional: Si haces clic en *Mostrar Avanzado*, puedes configurar ajustes adicionales como especificar la(s) dirección(es) IP, sobrescribir el nombre del nodo, o añadir https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/[etiquetas] o https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/[taints] al nodo.
+. En *Paso 2*, bajo la sección de *Registro*, copia el comando que se muestra en la pantalla a tu portapapeles.
+. Conéctate por SSH a tu host Linux y ejecuta el comando que copiaste a tu portapapeles.
+
+*Resultado:*
+
+Tu clúster se ha creado y se le ha asignado un estado de *Actualizando*. Rancher está configurando tu clúster.
+
+Puede tardar unos minutos en que el nodo se registre y aparezca en la pestaña de *Máquinas*.
+
+Podrás acceder al clúster una vez que su estado cambie a *Activo*.
+
+[#_add_linux_worker_node]
+==== Añadir Nodo Trabajador Linux
+
+En esta sección, ejecutamos un comando para registrar el nodo trabajador Linux en el clúster.
+
+Después del aprovisionamiento inicial de tu clúster, tu clúster solo tiene un único host Linux. A continuación, añadimos otro host Linux `worker`, que se utilizará para soportar _agente del clúster Rancher_, _servidor de métricas_, _DNS_ y _Ingress_ para tu clúster.
+
+. Después de la creación del clúster, navega a la pestaña de *Registro*.
+. En *Paso 1*, bajo la sección de *Rol del Nodo*, selecciona *Trabajador*.
+. Opcional: Si haces clic en *Mostrar Avanzado*, puedes configurar ajustes adicionales como especificar la(s) dirección(es) IP, sobrescribir el nombre del nodo o añadir https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/[etiquetas] o https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/[taints] al nodo.
+. En *Paso 2*, bajo la sección de *Registro*, copia el comando que se muestra en la pantalla a tu portapapeles.
+. Conéctate por SSH a tu host Linux y ejecuta el comando que copiaste a tu portapapeles.
+
+*Resultado:* 
+
+El rol *Trabajador* está instalado en tu host Linux, y el nodo se registra con Rancher. Puede tardar unos minutos en registrarse el nodo en tu clúster.
+
+[NOTE]
+====
+
+Taints en Nodos Trabajadores de Linux
+
+Para cada nodo trabajador de Linux añadido al clúster, se le añadirán los siguientes taints. Al añadir este taint al nodo trabajador de Linux, cualquier carga de trabajo añadida al clúster de Windows se programará automáticamente en el nodo trabajador de Windows. Si deseas programar cargas de trabajo específicamente en el nodo trabajador de Linux, necesitarás añadir tolerancias a esas cargas de trabajo.
+
+|===
+| Clave de Taint | Valor de Taint | Efecto de Taint
+
+| `cattle.io/os`
+| `linux`
+| `NoSchedule`
+|===
+====
+
+
+[#_add_a_windows_worker_node]
+==== Añadir un Nodo Trabajador de Windows
+
+En esta sección, ejecutamos un comando para registrar el nodo trabajador de Windows en el clúster.
+
+[NOTE]
+====
+El comando de registro para añadir los trabajadores de Windows solo aparece después de que el clúster esté funcionando con Linux etcd, plano de control y nodos trabajadores.
+====
+
+. Después de la creación del clúster, navega a la pestaña de *Registro*.
+. En *Paso 1*, bajo la sección de *Rol del Nodo*, selecciona *Trabajador*.
+. Opcional: Si haces clic en *Mostrar Avanzado*, puedes configurar ajustes adicionales como especificar la(s) dirección(es) IP, sobrescribir el nombre del nodo, o añadir https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/[etiquetas] o https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/[taints] al nodo.
+. En *Paso 2*, bajo la sección *Registro*, copia el comando para los trabajadores de Windows que se muestra en la pantalla a tu portapapeles.
+. Inicia sesión en tu host de Windows utilizando tu herramienta preferida, como https://docs.microsoft.com/en-us/windows-server/remote/remote-desktop-services/clients/remote-desktop-clients[Microsoft Remote Desktop]. Ejecuta el comando copiado en tu portapapeles en la *Consola de PowerShell* como Administrador.
+. Opcional: Repite estas instrucciones si deseas añadir más nodos de Windows a tu clúster.
+
+*Resultado:* 
+
+El rol *Trabajador* está instalado en tu host de Windows, y el nodo se registra con Rancher. Puede tardar unos minutos en registrarse el nodo en tu clúster. 
+
+Ahora tienes un clúster de Kubernetes en Windows.
+
+[#_optional_next_steps]
+=== Pasos siguientes opcionales
+
+Después de crear tu clúster, puedes acceder a él a través de la interfaz de usuario de Rancher. Como mejor práctica, recomendamos configurar estas formas alternativas de acceder a tu clúster:
+
+* *Accede a tu clúster con la CLI de kubectl:* Sigue {xref-access-cluster-kubectl}#_accediendo_a_clústeres_con_kubectl_desde_tu_estación_de_trabajo[estos pasos] para acceder a clústeres con kubectl en tu estación de trabajo. En este caso, serás autenticado a través del proxy de autenticación del servidor de Rancher, luego Rancher te conectará al clúster descendente. Este método te permite gestionar el clúster sin la interfaz de usuario de Rancher.
+* *Accede a tu clúster con la CLI de kubectl, utilizando el punto final autorizado del clúster:* Sigue {xref-access-cluster-kubectl}#_autenticando_directamente_con_un_clúster_en_sentido_descendente[estos pasos] para acceder a tu clúster con kubectl directamente, sin autenticarte a través del servidor Rancher. Recomendamos configurar este método alternativo para acceder a tu clúster, de modo que en caso de que no puedas conectarte a Rancher, aún puedas acceder al clúster.
+
+[#_configuration_for_storage_classes_in_azure]
+== Configuración de clases de almacenamiento en Azure
+
+Si estáis utilizando máquinas virtuales de Azure para vuestros nodos, podéis usar https://docs.microsoft.com/en-us/azure/aks/azure-files-dynamic-pv[Azure files] como una StorageClass para el clúster. Para más detalles, consulta {xref-custom-clusters-azure-storageclass-config}[esta sección.]

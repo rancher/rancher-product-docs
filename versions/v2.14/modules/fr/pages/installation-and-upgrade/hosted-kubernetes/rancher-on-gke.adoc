@@ -1,0 +1,236 @@
+= Installer {rancher-product-name} sur un cluster Google Kubernetes Engine
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-09
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rancher-on-gke.adoc 
+:product-path: installation-and-upgrade/hosted-kubernetes/rancher-on-gke.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+Dans cette section, vous apprendrez à installer Rancher en utilisant Google Kubernetes Engine.
+
+Si vous avez déjà un cluster Kubernetes GKE, passez à l'étape concernant <<_7_install_an_ingress,l'installation d'un ingress.>> Ensuite, installez le chart Helm de Rancher en suivant les instructions sur {xref-install-rancher}#_installer_le_chart_helm_de_rancher[cette page.]
+
+[#_prerequisites]
+== Conditions préalables
+
+* Vous aurez besoin d'un compte Google.
+* Vous aurez besoin d'un compte de facturation Google Cloud. Vous pouvez gérer vos comptes de facturation Cloud en utilisant la Google Cloud Console. Pour plus d'informations sur la Cloud Console, visitez https://support.google.com/cloud/answer/3465889?hl=en&ref_topic=3340599[le guide général de la console.]
+* Vous aurez besoin d'un quota cloud pour au moins une adresse IP en cours d'utilisation et au moins 2 UC. Pour plus de détails sur les exigences matérielles pour le serveur Rancher, référez-vous à {xref-install-reqs}[cette section.]
+
+[#_1_enable_the_kubernetes_engine_api]
+== 1. Activez l'API Kubernetes Engine
+
+Suivez les étapes suivantes pour activer l'API Kubernetes Engine{nbsp}:
+
+. Visitez la https://console.cloud.google.com/projectselector/kubernetes?_ga=2.169595943.767329331.1617810440-856599067.1617343886[page Kubernetes Engine] dans la Google Cloud Console.
+. Créez ou sélectionnez un projet.
+. Ouvrez le projet et activez l'API Kubernetes Engine pour le projet. Attendez que l'API et les services associés soient activés. Cela peut prendre plusieurs minutes.
+. Assurez-vous que la facturation est activée pour votre projet Cloud. Pour des informations sur la façon d'activer la facturation pour votre projet, référez-vous à la https://cloud.google.com/billing/docs/how-to/modify-project#enable_billing_for_a_project[documentation Google Cloud.]
+
+[#_2_open_the_cloud_shell]
+== 2. Ouvrez le Cloud Shell
+
+Le Cloud Shell est un environnement shell pour gérer les ressources hébergées sur Google Cloud. Cloud Shell est préinstallé avec l'outil de ligne de commande `gcloud` et l'outil de ligne de commande kubectl. L'outil `gcloud` fournit l'interface principale de ligne de commande pour Google Cloud, et `kubectl` fournit l'interface principale de ligne de commande pour exécuter des commandes contre des clusters Kubernetes.
+
+Les sections suivantes décrivent comment lancer le cloud shell depuis la Google Cloud Console ou depuis votre station de travail locale.
+
+[#_cloud_shell]
+=== Cloud Shell
+
+Pour lancer le shell depuis la https://console.cloud.google.com[Google Cloud Console,], allez dans le coin supérieur droit de la console et cliquez sur le bouton terminal. Lorsque vous survolez le bouton, il est étiqueté *Activer Cloud Shell*.
+
+[#_local_shell]
+=== Shell local
+
+Pour installer `gcloud` et `kubectl`, procédez comme suit{nbsp}:
+
+. Installez le Cloud SDK en suivant https://cloud.google.com/sdk/docs/install[ces étapes.] Le Cloud SDK inclut l'outil de ligne de commande `gcloud`. Les étapes varient en fonction de votre système d'exploitation.
+. Après avoir installé le Cloud SDK, installez l'outil de ligne de commande `kubectl` en exécutant la commande suivante{nbsp}:
++
+----
+ gcloud components install kubectl
+----
++
+Dans une étape ultérieure, `kubectl` sera configuré pour utiliser le nouveau cluster GKE.
+
+. https://helm.sh/docs/intro/install/[Installez Helm 3] s'il n'est pas déjà installé.
+. Activez le support expérimental de Helm https://github.com/helm/community/blob/master/hips/hip-0006.md[pour les images OCI] avec la variable `HELM_EXPERIMENTAL_OCI`. Ajoutez la ligne suivante à `~/.bashrc` (ou `~/.bash_profile` sur macOS, ou là où votre shell stocke les variables d'environnement){nbsp}:
++
+----
+ export HELM_EXPERIMENTAL_OCI=1
+----
+
+. Exécutez la commande suivante pour charger votre fichier `.bashrc` mis à jour{nbsp}:
++
+----
+ source ~/.bashrc
+----
++
+Si vous utilisez macOS, utilisez cette commande{nbsp}:
++
+----
+ source ~/.bash_profile
+----
+
+[#_3_configure_the_gcloud_cli]
+== 3. Configurer le gcloud CLI
+
+Configurez les paramètres par défaut de gcloud en utilisant l'une des méthodes suivantes{nbsp}:
+
+* Utilisez gcloud init, si vous souhaitez être guidé dans la configuration des valeurs par défaut.
+* Utiliser gcloud config pour définir individuellement votre ID de projet, votre zone et votre région.
+
+[tabs]
+======
+Utiliser gcloud init::
++
+--
+. Exécutez gcloud init et suivez les instructions{nbsp}:
++
+----
+  gcloud init
+----
++
+Si vous utilisez SSH sur un serveur distant, utilisez le drapeau --console-only pour empêcher la commande de lancer un navigateur{nbsp}:
++
+----
+  gcloud init --console-only
+----
+
+. Suivez les instructions pour autoriser gcloud à utiliser votre compte Google Cloud et sélectionnez le nouveau projet que vous avez créé.
+--
+
+Utiliser gcloud config::
++
+--
+--
+======
+
+[#_4_confirm_that_gcloud_is_configured_correctly]
+== 4. Confirmez que gcloud est configuré correctement
+
+Exécutez :
+
+----
+gcloud config list
+----
+
+La sortie devrait ressembler à ce qui suit{nbsp}:
+
+----
+[compute]
+region = us-west1 # Your chosen region
+zone = us-west1-b # Your chosen zone
+[core]
+account = <Your email>
+disable_usage_reporting = True
+project = <Your project ID>
+
+Your active configuration is: [default]
+----
+
+[#_5_create_a_gke_cluster]
+== 5. Créer un cluster GKE
+
+La commande suivante crée un cluster de trois nœuds.
+
+Remplacez `cluster-name` par le nom de votre nouveau cluster.
+
+Lors du choix d'une version de Kubernetes, assurez-vous de consulter d'abord le https://rancher.com/support-matrix/[tableau de support] pour trouver la version la plus élevée de Kubernetes qui a été validée pour votre version de Rancher.
+
+Pour créer avec succès un cluster GKE avec Rancher, votre GKE doit être en mode Standard. GKE a deux modes de fonctionnement lors de la création d'un cluster Kubernetes, le mode Autopilot et le mode Standard. La configuration du cluster pour le mode Autopilot a des restrictions sur l'édition de l'espace de noms kube-system. Cependant, Rancher doit créer des ressources dans l'espace de noms kube-system lors de l'installation. En conséquence, vous ne pourrez pas installer Rancher sur un cluster GKE créé en mode Autopilot. Pour plus d'informations sur la différence entre le mode Autopilot GKE et le mode Standard, visitez https://cloud.google.com/kubernetes-engine/docs/resources/autopilot-standard-feature-comparison[Comparer GKE Autopilot et Standard.]
+
+----
+gcloud container clusters create cluster-name --num-nodes=3 --cluster-version=<VERSION>
+----
+
+[#_6_get_authentication_credentials]
+== 6. Obtenir des références d'authentification
+
+Après avoir créé votre cluster, vous devez obtenir des références d'authentification pour interagir avec le cluster{nbsp}:
+
+----
+gcloud container clusters get-credentials cluster-name
+----
+
+Cette commande configure `kubectl` pour utiliser le cluster que vous avez créé.
+
+[#_7_install_an_ingress]
+== 7. Installer un Ingress
+
+Le cluster a besoin d'un Ingress afin que Rancher puisse être accessible depuis l'extérieur du cluster. L'installation d'un Ingress nécessite l'attribution d'une adresse IP publique. Assurez-vous d'avoir un quota suffisant, sinon l'attribution de l'adresse IP échouera. Les limites pour les adresses IP publiques s'appliquent au niveau régional par abonnement. Vous pouvez utiliser un contrôleur d'ingress géré fourni par GCP ou un contrôleur d'ingress tiers comme Traefik.
+
+[WARNING]
+====
+Il n'est pas recommandé d'installer un contrôleur d'ingress tiers, comme Traefik, si un contrôleur d'ingress géré est déjà utilisé.
+====
+
+[WARNING]
+====
+**Ingress-NGINX EOL:** Le contrôleur `ingress-nginx` de la communauté atteindra la fin du service en mars 2026. Cette page utilise Traefik, qui est le chemin de migration recommandé pour les environnements Rancher.
+====
+
+Traefik inclut un fournisseur Ingress NGINX natif. Cela vous permet de migrer depuis NGINX sans réécrire vos objets Ingress existants, car Traefik interprétera automatiquement les annotations `nginx.ingress.kubernetes.io`. Si vous mettez à niveau un cluster qui utilise déjà `ingress-nginx`, suivez ce https://doc.traefik.io/traefik/migrate/nginx-to-traefik/[guide] pour plus d'informations.
+
+Pour installer Traefik, nous recommandons fortement d'utiliser l'application Traefik dans le https://apps.rancher.io/applications/traefik-proxy[Rancher Prime Application Collection]. Consultez leur https://docs.apps.rancher.io/howto-guides/integrate-with-rancher-manager[documentation pour intégrer avec Rancher Manager].
+
+
+[#_8_get_load_balancer_ip]
+== 8. Obtenir l'adresse IP du Load Balancer
+
+Pour obtenir l'adresse du load balancer, exécutez{nbsp}:
+
+----
+kubectl get service traefik --namespace=traefik
+----
+
+Le résultat doit ressembler à ce qui suit{nbsp}:
+
+----
+NAME                       TYPE           CLUSTER-IP     EXTERNAL-IP                                                              PORT(S)
+ AGE
+traefik  LoadBalancer   10.0.116.18    40.31.180.83   80:31229/TCP,443:31050/TCP 27m
+----
+
+Enregistrez le `EXTERNAL-IP`.
+
+[#_9_set_up_dns]
+== 9. Configurer les DNS
+
+Le trafic externe vers le serveur Rancher devra être dirigé vers le répartiteur de charge que vous avez créé.
+
+Configurez un DNS pour pointer vers l'IP externe que vous avez enregistrée. Ce DNS sera utilisé comme l'URL du serveur Rancher.
+
+Il existe de nombreuses façons valides de configurer le DNS. Pour obtenir de l'aide, consultez la documentation de Google Cloud concernant https://cloud.google.com/dns/docs/records[la gestion des enregistrements DNS.]
+
+[#_10_install_the_rancher_helm_chart]
+== 10. Installez le chart Helm de Rancher
+
+Ensuite, installez le Rancher Helm chart en suivant les instructions sur {xref-install-rancher}#_install_the_rancher_helm_chart[cette page]. Les instructions Helm sont les mêmes pour installer Rancher sur n'importe quelle distribution Kubernetes.
+
+Utilisez le nom DNS de l'étape précédente comme l'URL du serveur Rancher lors de l'installation de Rancher. Il peut être passé en tant qu'option Helm. Par exemple, si le nom DNS est `rancher.my.org`, vous pourriez exécuter la commande d'installation Helm avec l'option `--set hostname=rancher.my.org`.
+
+Lors de l'installation de Rancher dans cette configuration, vous devrez également définir le nom du contrôleur d'ingress à utiliser avec la ressource d'ingress de Rancher{nbsp}:
+
+----
+--set ingress.ingressClassName=traefik
+----
+
+Référez-vous {xref-install-rancher}#_5_install_rancher_with_helm_and_your_chosen_certificate_option[ici pour la commande d'installation Helm] pour votre option de certificat choisie.
+
+Dans Rancher v2.7.5, si vous avez l'intention d'utiliser l'ingress GKE par défaut sur votre cluster sans activer le mode de cluster natif VPC, vous devez définir le drapeau suivant{nbsp}:
+
+----
+--set service.type=NodePort
+----
+
+Ceci est nécessaire en raison de problèmes de compatibilité entre cette configuration et ClusterIP, le type par défaut pour `cattle-system/rancher` :

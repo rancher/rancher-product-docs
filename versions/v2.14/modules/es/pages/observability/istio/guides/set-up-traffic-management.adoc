@@ -1,0 +1,97 @@
+= Configura los componentes de Istio para la gestión del tráfico
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc 
+:product-path: observability/istio/guides/set-up-traffic-management.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-generate-and-view-traffic: xref:observability/istio/guides/generate-and-view-traffic.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-generate-and-view-traffic: xref:how-to-guides/advanced-user-guides/istio-setup-guide/generate-and-view-traffic.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] ha quedado obsoleto desde Rancher v2.12.0; recurran a la https://apps.rancher.io[SUSE Application Collection] de Istio para una mayor seguridad (incluida en las suscripciones de SUSE Rancher Prime).
+Se puede encontrar información detallada en https://forums.suse.com/t/deprecation-of-rancher-istio/45043[este anuncio].
+====
+
+Una ventaja central de la gestión del tráfico en Istio es que permite el enrutamiento dinámico de solicitudes. Algunas aplicaciones comunes para el enrutamiento dinámico de solicitudes incluyen despliegues canarios y despliegues azul/verde. Los dos recursos clave en la gestión del tráfico de Istio son _servicios virtuales_ y _reglas de destino_.
+
+* https://istio.io/docs/reference/config/networking/v1alpha3/virtual-service/[Los servicios virtuales] interceptan y dirigen el tráfico a tus servicios de Kubernetes, permitiéndote dividir porcentajes de tráfico de una solicitud entre diferentes servicios. Puedes utilizarlos para definir un conjunto de reglas de enrutamiento que se aplican cuando se dirige a un host.
+* https://istio.io/docs/reference/config/networking/v1alpha3/destination-rule/[Las reglas de destino] sirven como la única fuente de verdad sobre qué versiones de servicio están disponibles para recibir tráfico de los servicios virtuales. Puedes usar estos recursos para definir políticas que se aplican al tráfico destinado a un servicio después de que se ha realizado el enrutamiento.
+
+Esta sección describe cómo añadir un ejemplo de servicio virtual que corresponde al `reviews` microservicio en la aplicación de muestra BookInfo. El propósito de este servicio es dividir el tráfico entre dos versiones del servicio `reviews`.
+
+En este ejemplo, tomamos el tráfico del servicio `reviews` y lo interceptamos para que el 50 por ciento vaya a `v1` del servicio y el 50 por ciento vaya a `v2`.
+
+Después de que este servicio virtual se despliegue, generaremos tráfico y veremos en la visualización de Kiali que el tráfico se está enrutando de manera uniforme entre las dos versiones del servicio.
+
+Para desplegar el servicio virtual y las reglas de destino para el servicio `reviews`,
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster donde está instalado Istio y haz clic en *Explorar*.
+. En el clúster donde está instalado Istio, haz clic en menu:Istio[reglas de destino] en la barra de navegación izquierda.
+. Haga clic en *Crear*.
+. Copia y pega el yaml de DestinationRule proporcionado a continuación.
+. Haga clic en *Crear*.
+. Haz clic en *Editar como YAML* y utiliza esta configuración:
++
+[,yaml]
+----
+ apiVersion: networking.istio.io/v1alpha3
+ kind: DestinationRule
+ metadata:
+   name: reviews
+ spec:
+   host: reviews
+   subsets:
+   - name: v1
+     labels:
+       version: v1
+   - name: v2
+     labels:
+       version: v2
+   - name: v3
+     labels:
+       version: v3
+----
+
+. Haga clic en *Crear*.
+
+Luego, para desplegar el VirtualService que proporciona el enrutamiento de tráfico que utiliza la DestinationRule:
+
+. Haz clic en *VirtualService* en la barra de navegación lateral.
+. Haz clic en *Crear desde Yaml*.
+. Copia y pega el yaml de VirtualService proporcionado a continuación.
+. Haga clic en *Crear*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: reviews
+spec:
+  hosts:
+  - reviews
+  http:
+  - route:
+    - destination:
+        host: reviews
+        subset: v1
+      weight: 50
+    - destination:
+        host: reviews
+        subset: v3
+      weight: 50
+---
+----
+
+*Resultado:* Cuando generes tráfico a este servicio (por ejemplo, al actualizar la URL de la puerta de enlace de ingreso), el gráfico de tráfico de Kiali reflejará que el tráfico hacia el servicio `reviews` se divide equitativamente entre `v1` y `v3`.
+
+[#__xref_istio_generate_and_view_traffic_next_generate_and_view_traffic]
+== {xref-istio-generate-and-view-traffic}[Siguiente: Generar y Ver Tráfico]

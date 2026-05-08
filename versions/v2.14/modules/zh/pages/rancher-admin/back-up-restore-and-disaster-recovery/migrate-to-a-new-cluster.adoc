@@ -1,33 +1,52 @@
 = 将 {rancher-product-name} 迁移到新集群
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2026-01-26
+endif::[]
+:revdate: 2026-04-16
 :page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+ifeval::["{build-type}" != "community"]
+:url-k3s-installation: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/installation.html
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-ds-backup-restore: xref:cluster-admin/backups-and-restore/backups-and-restore.adoc
+:xref-backup-configuration: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-installation: https://docs.k3s.io/installation
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-backup-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc
+:xref-ds-backup-restore: xref:getting-started/installation-and-upgrade/upgrade-and-roll-back-kubernetes.adoc
+:xref-backup-configuration: xref:reference-guides/backup-restore-configuration/backup-configuration.adoc
+endif::[]
 
-如果你要将 Rancher 迁移到一个新的 Kubernetes 集群，先不要在新集群上安装 Rancher。这是因为如果将 Rancher 还原到已安装 Rancher 的新集群，可能会导致问题。
+如果您正在将 Rancher 迁移到新的 Kubernetes 集群，则无需先在新集群上安装 Rancher。如果在已经安装 Rancher 的新集群上恢复 Rancher，可能会导致问题。
 
+[#_prerequisites]
 == 先决条件
 
-以下说明假设你已经完成xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc[备份创建]，并且已经安装了用于部署 Rancher 的新 Kubernetes 集群。
+这些说明假设您已经 {xref-backup-cluster}[创建了备份] 并且已经安装了将要部署 Rancher 的新 Kubernetes 集群。备份是特定于 Rancher 应用程序的，只能迁移 Rancher 应用程序。
 
 [CAUTION]
 ====
 
-你需要使用与第一个集群中设置的 Server URL 相同的主机名。否则，下游集群会在 UI 的管理页面显示为不可用，并且你不能点击集群内或集群的 *Explore* 按钮。
+您必须使用在原始集群中设置为服务器 URL 的相同主机名。如果不这样做，下游集群将在 UI 的集群管理页面中显示为不可用，您将无法点击集群内部或集群的 *探索* 按钮。
 ====
 
 
-Rancher 必须是 2.5.0 或更高版本。
+Rancher 版本必须为 v2.5.0 及以上
 
-Rancher 可以安装到任意 Kubernetes 集群上，包括托管的 Kubernetes 集群（如 Amazon EKS 集群）。如需获取安装 Kubernetes 的帮助，请参见 Kubernetes 发行版的文档。你也可以使用以下 Rancher 的 Kubernetes 发行版：
+Rancher 可以安装在任何 Kubernetes 集群上，包括托管的 Kubernetes 集群，如 Amazon EKS 集群。有关安装 Kubernetes 的帮助，请参考 Kubernetes 发行版的文档。可以使用 Rancher 创建的 Kubernetes 发行版，例如但不限于 https://rke.docs.rancher.com/installation[RKE] 或 {url-k3s-installation}[K3s]。
 
-* https://rancher.com/docs/rke/latest/en/installation/[RKE Kubernetes 安装文档]
-* https://rancher.com/docs/k3s/latest/en/installation/[K3s Kubernetes 安装文档]
+由于 Rancher 可以安装在任何 Kubernetes 集群上，您可以使用此备份和恢复方法将 Rancher 从一个 Kubernetes 集群迁移到任何其他 Kubernetes 集群。此方法 _仅_ 迁移与 Rancher 相关的资源，不会影响集群上的其他应用程序。请参考 https://www.suse.com/lifecycle/[支持矩阵] 以确定哪些 Kubernetes 集群类型和版本与您的 Rancher 版本兼容。
 
-== 1. 安装 rancher-backup Helm Chart
+[#_1_install_the_rancher_backup_helm_chart]
+== 1.安装 rancher-backup Helm chart
 
-安装 https://github.com/rancher/backup-restore-operator/tags[rancher-backup chart]，请使用 2.x.x 主要版本内的版本：
+安装 https://github.com/rancher/backup-restore-operator/tags[`rancher-backup chart`]：
 
-. 添加 helm 仓库：
+. 添加 Helm 储存库：
 +
 [,bash]
 ----
@@ -35,15 +54,14 @@ helm repo add rancher-charts https://charts.rancher.io
 helm repo update
 ----
 
-. 使用 2.x.x rancher-backup 版本设置 `CHART_VERSION` 变量：
+. 设置一个 `CHART_VERSION` 变量，选择与您的 Rancher 版本兼容的 `rancher-backup` chart 版本。请参阅 https://www.suse.com/suse-rancher/support-matrix/all-supported-versions[支持矩阵]，在 *Rancher 应用程序 / 集群工具* 部分，查看哪些 `rancher-backup` 版本是受支持的：
 +
 [,bash]
 ----
-helm search repo --versions rancher-charts/rancher-backup
-CHART_VERSION=<2.x.x>
+CHART_VERSION=<chart-version>
 ----
 
-. 安装 Chart：
+. 安装 charts：
 +
 [,bash]
 ----
@@ -54,22 +72,43 @@ helm install rancher-backup rancher-charts/rancher-backup -n cattle-resources-sy
 
 [NOTE]
 ====
-以上假设你的环境具有到 Docker Hub 的出站连接。
+上述假设环境具有与 Docker Hub 的出站连接。
 
-对于**离线环境**，在安装 rancher-backup Helm Chart 时，使用下面的 Helm 值从你的私有镜像仓库中拉取 `backup-restore-operator` 和 `kubectl` 镜像。
+对于 *隔离的环境*，在安装 rancher-backup Helm 图表时，使用以下 Helm 值从您的私有注册表中拉取 `backup-restore-operator` 和 `kubectl` 镜像。
 
 [,bash]
 ----
---set image.repository <registry>/rancher/backup-restore-operator --set global.kubectl.repository=<registry>/rancher/kubectl
+--set image.repository=<registry>/rancher/backup-restore-operator --set global.kubectl.repository=<registry>/rancher/kubectl
+----
+
+如果运行 Helm 命令的主机 *也是隔离的，无法访问 charts.rancher.io*，请在非隔离的主机上下载图表，然后从隔离的主机的本地文件中安装它们。
+
+在非隔离主机上：
+
+[,bash]
+----
+helm repo add rancher-charts https://charts.rancher.io
+helm repo update
+helm fetch rancher-charts/rancher-backup-crd --version $CHART_VERSION
+helm fetch rancher-charts/rancher-backup --version $CHART_VERSION
+----
+
+将 `rancher-backup-crd-<chart-version>.tgz` 和 `rancher-backup-<chart-version>.tgz` 文件复制到隔离主机，然后使用它们安装图表：
+
+[,bash]
+----
+helm install rancher-backup-crd ./rancher-backup-crd-<chart-version>.tgz -n cattle-resources-system --create-namespace
+helm install rancher-backup ./rancher-backup-<chart-version>.tgz -n cattle-resources-system --set image.repository=<registry>/rancher/backup-restore-operator --set global.kubectl.repository=<registry>/rancher/kubectl
 ----
 ====
 
 
-== 2. 使用 Restore 自定义资源来还原备份
+[#_2_restore_from_backup_using_a_restore_custom_resource]
+== 2.使用恢复自定义资源从备份中恢复
 
-. 在使用 S3 对象存储作为需要使用凭证的还原的备份源时，请在此集群中创建一个 `Secret` 对象以添加 S3 凭证。Secret 数据必须有两个密钥，分别是包含 S3 凭证的 `accessKey` 和 `secretKey`。
+. 当使用 S3 对象存储作为需要凭据的恢复的备份源时，在此集群中创建一个 `Secret` 对象以添加 S3 凭据。秘密数据必须具有两个键 - `accessKey` 和 `secretKey`，包含 S3 凭据。
 +
-你可以在任何命名空间中创建 Secret，本示例使用 default 命名空间。
+秘密可以在任何名称空间中创建，此示例使用默认名称空间。
 +
 [,bash]
 ----
@@ -81,7 +120,7 @@ kubectl create secret generic s3-creds \
 
 [NOTE]
 ====
-在上面的命令中添加你的 Access Key 和 Secret Key 作为 `accessKey` 和 `secretKey` 的值。
+在上面的命令中将您的访问密钥和秘密密钥作为 `accessKey` 和 `secretKey` 的值添加。
 ====
 
 
@@ -114,25 +153,27 @@ spec:
 +
 
 [NOTE]
-.重要提示：
+.重要说明
 ====
-只有在创建备份时启用了加密功能时，才需要设置 `encryptionConfigSecretName` 字段。
+字段 `encryptionConfigSecretName` 仅在您的备份是使用启用加密创建时使用。
 
-如果适用，请提供包含加密配置文件的 `Secret` 对象的名称。如果你只有加密配置文件，但没有在此集群中创建 Secret，请按照以下步骤创建 Secret。
+如果适用，请提供包含加密配置文件的 `Secret` 对象的名称。如果您只有加密配置文件，但在此集群中没有创建秘密，请使用以下步骤创建秘密：
 
- .. 创建xref:./configuration/backup.adoc#_加密[加密配置文件]
- .. 下面的命令使用一个名为 `encryption-provider-config.yaml` 的文件，使用了 `--from-file` 标志。将 `EncryptionConfiguration` 保存到名为 `encryption-provider-config.yaml` 的文件中之后，运行以下命令：
-
+ .. 创建一个 {xref-backup-configuration}#_encryption[加密配置文件]
+ .. 下面的命令使用名为 `encryption-provider-config.yaml` 的文件，并带有 `--from-file` 标志。在 `EncryptionConfiguration` 保存到名为 `encryption-provider-config.yaml` 的文件后运行以下命令：
++
 [,bash]
 ----
 kubectl create secret generic encryptionconfig \
   --from-file=./encryption-provider-config.yaml \
   -n cattle-resources-system
 ----
+
++
 ====
 
 
-. 应用清单，并监控 Restore 的状态：
+. 应用清单，并监控恢复状态：
 .. 应用 `Restore` 对象资源：
 +
 [,bash]
@@ -140,7 +181,7 @@ kubectl create secret generic encryptionconfig \
 kubectl apply -f restore-migration.yaml
 ----
 
-.. 观察 Restore 的状态：
+.. 查看恢复状态：
 +
 [,bash]
 ----
@@ -154,41 +195,41 @@ kubectl get restore
 kubectl logs -n cattle-resources-system --tail 100 -f -l app.kubernetes.io/instance=rancher-backup
 ----
 
-.. Restore 资源的状态变成 `Completed` 后，你可以继续安装 cert-manager 和 Rancher。
+.. 一旦恢复资源的状态为`Completed`，您可以继续 cert-manager 和 Rancher 的安装。
 +
 [IMPORTANT]
 ====
-When migrating Rancher between any two different Kubernetes distributions (e.g. from K3s to RKE2), the object representing the local cluster has to be modified to allow Rancher to detect the new distribution. After the restoration is completed, and **before** bringing up Rancher on the new cluster, edit the local cluster object:
+在不同的 Kubernetes 发行版之间迁移 Rancher 时（例如，从 K3s 到 RKE2），必须修改表示本地群集的对象，以便 Rancher 能够检测到新的发行版。恢复完成后，在将 Rancher 启动到新群集**之前**，请编辑本地群集对象：
 
 [,bash]
 ----
 kubectl edit clusters.management.cattle.io local
 ----
 
-. Change the value of `status.driver` to `imported`.
-. Remove `status.provider`.
-. Remove the entire `status.version` map.
-. Remove the label with the key `provider.cattle.io` in `metadata.labels`.
-. Remove the annotation with the key `management.cattle.io/current-cluster-controllers-version` in `metadata.annotations`.
-. Remove the entire `spec.rke2Config` or `spec.k3sConfig` map, if present.
-. Save the changes.
+. 将 `status.driver` 的值更改为 `imported`。
+. 去除 `status.provider`。
+. 去除整个 `status.version` 映射。
+. 去除 `metadata.labels` 中键为 `provider.cattle.io` 的标签。
+. 去除 `metadata.annotations` 中键为 `management.cattle.io/current-cluster-controllers-version` 的注释。
+. 如果存在，去除整个 `spec.rke2Config` 或 `spec.k3sConfig` 映射。
+. 保存更改。
 
-Note that removing `spec.rke2Config` or `spec.k3sConfig` will erase your distribution-specific upgrade configuration for the local cluster. It can be xref:cluster-admin/backups-and-restore/backups-and-restore.adoc[reconfigured] if the new distribution is configurable for the local cluster.
+请注意，去除 `spec.rke2Config` 或 `spec.k3sConfig` 将会删除您本地群集特定于发行版的升级配置。如果新的发行版可以为本地群集配置，则可以 {xref-ds-backup-restore}[重新配置]。
 ====
 
-== 3. 安装 cert-manager
+[#_3_install_cert_manager]
+== 3.安装 cert-manager
 
-按照在 Kubernetes 上安装 cert-manager的步骤xref:installation-and-upgrade/install-rancher.adoc#_4_安装_cert_manager[安装 cert-manager]。
+按照文档中关于在 Kubernetes 上安装 cert-manager 的步骤 {xref-install-rancher}#_4_install_cert_manager[安装 cert-manager]。
 
-== 4. 使用 Helm 安装 Rancher
+[#_4_bring_up_rancher_with_helm]
+== 4.使用 Helm 启动 Rancher
 
-使用与第一个集群上使用的相同版本的 Helm 来安装 Rancher：
+使用与第一个集群相同版本的 Helm 安装 Rancher。
 
-include::shared:ROOT:partial$zh/rancher-chart-rename.adoc[]
-
-[,bash]
+[,bash,subs="attributes+"]
 ----
-helm install rancher rancher-prime/rancher \
+helm install rancher {rancher-helm-repo}/rancher \
   --namespace cattle-system \
   --set hostname=<same hostname as the server URL from the first Rancher server> \
   --version x.y.z
@@ -197,35 +238,35 @@ helm install rancher rancher-prime/rancher \
 [NOTE]
 ====
 
-如果原始的 Rancher 环境正在运行，你可以使用 kubeconfig 为原始环境收集当前值：
+如果原始 Rancher 环境正在运行，您可以使用原始环境的 kubeconfig 收集当前值：
 
 [,bash]
 ----
 helm get values rancher -n cattle-system -o yaml > rancher-values.yaml
 ----
 
-你可以使用 `rancher-values.yaml` 文件来复用这些值。确保将 kubeconfig 切换到新的 Rancher 环境。
+这些值可以使用 `rancher-values.yaml` 文件重复使用。确保将 kubeconfig 切换到新的 Rancher 环境。
 
-include::shared:ROOT:partial$zh/rancher-chart-rename.adoc[]
-
-[,bash]
+[,bash,subs="attributes+"]
 ----
-helm install rancher rancher-prime/rancher -n cattle-system -f rancher-values.yaml --version x.y.z
+helm install rancher {rancher-helm-repo}/rancher -n cattle-system -f rancher-values.yaml --version x.y.z
 ----
 ====
 
 
-== 5. Redirect Traffic to the New Cluster
+[#_5_redirect_traffic_to_the_new_cluster]
+== 5.将流量重定向到新集群
 
-After migration completes, update your DNS records and any load balancers, so that traffic is routed correctly to the migrated cluster. Remember that you must use the same hostname that was set as the server URL in the original cluster.
+迁移完成后，更新您的DNS记录和任何负载均衡器，以便流量正确路由到迁移后的集群。请记住，您必须使用在原始集群中设置为服务器 URL 的相同主机名。
 
-Full instructions on how to redirect traffic to the migrated cluster differ based on your specific environment. Refer to your hosting provider's documentation for more details.
+有关如何将流量重定向到迁移集群的完整说明会因您的具体环境而异。有关更多详细信息，请参考您的托管服务提供商的文档。
 
-== 6. Scale Down the Original Rancher Instance
+[#_6_scale_down_the_original_rancher_instance]
+== 6.缩减原始Rancher实例
 
-After redirecting traffic to the new Rancher environment, *scale the original Rancher instance to 0 replicas* so it no longer contacts your managed clusters.
+在将流量重定向到新的Rancher环境后，*将原始Rancher实例缩减到0个副本*，以便它不再联系您的托管集群。
 
-Leaving the old server up can cause agents to keep contacting the original `server-url`, which often leaves clusters stuck in *Updating* in the new environment.
+保留旧服务器可能会导致代理继续联系原始`server-url`，这通常会使集群在新环境中停留在*更新中*。
 
 [,bash]
 ----
@@ -234,12 +275,12 @@ kubectl scale deployment rancher -n cattle-system --replicas=0
 
 [NOTE]
 ====
-If you wish to keep the original Rancher environment running, you can also restart the `cattle-cluster-agent` pods on each cluster connected to your Rancher environment.
+如果您希望保持原始Rancher环境运行，您还可以在连接到您的Rancher环境的每个集群上重新启动`cattle-cluster-agent`的pod。
 
 [,bash]
 ----
 kubectl rollout restart deployment cattle-cluster-agent -n cattle-system
 ----
 
-This triggers a rolling restart of the agent so it re-establishes the connection to the new Rancher environment.
+这会触发代理的滚动重启，以便重新建立与新Rancher环境的连接。
 ====

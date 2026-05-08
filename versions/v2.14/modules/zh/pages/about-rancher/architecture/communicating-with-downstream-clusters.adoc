@@ -1,135 +1,262 @@
-= 与下游集群通信
+= 与下游用户集群通信
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-22
+endif::[]
+:revdate: 2026-05-05
 :page-revdate: {revdate}
+:community-path: reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc 
+:product-path: about-rancher/architecture/communicating-with-downstream-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
 
-本节介绍 Rancher 如何配置和管理运行应用和服务的下游集群。
+本节描述了Rancher如何配置和管理运行您的应用程序和服务的下游用户集群。
 
-下图显示了 Cluster Controller、Cluster Agent 和 Node Agent 让 Rancher 控制下游集群的。
+下图显示了集群控制器、集群代理和Rancher系统代理如何使Rancher控制下游集群。
 
 .与下游集群通信
-image::rancher-architecture-cluster-controller.svg[Rancher 组件]
+image::rancher-architecture-cluster-controller.svg[Rancher组件]
 
 以下描述对应于上图中的数字：
 
-. <<_1_认证代理,认证代理>>
-. <<_2_cluster_controller_和_cluster_agent,Cluster Controller 和 Cluster Agent>>
-. <<_3_node_agents,Node Agents>>
-. <<_4_授权集群端点,授权集群端点>>
+. <<_1_the_authentication_proxy,身份验证代理>>
+. <<_2_cluster_controllers_and_cluster_agents,集群控制器和集群代理>>
+. <<_3_rancher_system_agent,Rancher System Agent>>
+. <<_4_authorized_cluster_endpoint,授权集群端点>>
 
-== Components
+[#_1_the_authentication_proxy]
+== 1.身份验证代理
 
-=== 1. 认证代理
+在此图中，一个名为Bob的用户想查看在名为用户集群1的下游用户集群上运行的所有Pod。在Rancher中，他可以运行一个`kubectl`命令来查看Pod。Bob通过Rancher的身份验证代理进行身份验证。
 
-在此图中，名为 Bob 的用户希望查看在名为 User Cluster 1 的下游集群上运行的所有 Pod。在 Rancher 中，他可以运行 `kubectl` 命令来查看
-Pod。Bob 通过 Rancher 的认证代理进行身份验证。
+身份验证代理将所有Kubernetes API调用转发到下游集群。它与本地身份验证、Active Directory和GitHub等身份验证服务集成。在每个Kubernetes API调用中，身份验证代理验证调用者并在将调用转发到Kubernetes主节点之前设置适当的Kubernetes模拟头。
 
-认证代理将所有 Kubernetes API 调用转发到下游集群。它集成了本地身份验证、Active Directory 和 GitHub 等身份验证方式。在每个 Kubernetes API 调用请求时，认证代理会验证请求方的身份，并在转发给 Kubernetes master 节点之前，设置正确的 Kubernetes 消息头。
+Rancher使用一个 https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/[服务帐户]与Kubernetes集群进行通信。Rancher中的每个用户账户与下游集群中的相应服务帐户相关联。Rancher使用服务账户来 https://kubernetes.io/docs/reference/access-authn-authz/authentication/#user-impersonation[模拟]用户，这提供了用户应有的所有权限。
 
-Rancher 使用 https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/[ServiceAccount] 与 Kubernetes 集群通信，该 ServiceAccount 为在 Pod 中运行的进程提供身份。
+默认情况下，Rancher生成一个{xref-access-cluster-kubectl}[kubeconfig文件]，其中包含通过Rancher服务器代理连接到下游用户集群的Kubernetes API服务器的凭据。kubeconfig文件（`kube_config_rancher-cluster.yml`）包含对集群的完全访问权限。
 
-默认情况下，Rancher 生成一个 xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc[kubeconfig 文件]，文件包含凭证信息，用于为 Rancher Server 连接下游集群的 Kubernetes API Server 的代理。kubeconfig 文件 (`kube_config_rancher-cluster.yml`) 包含对集群的完全访问权限。
+[#_2_cluster_controllers_and_cluster_agents]
+== 2.集群控制器和集群代理
 
-=== 2. Cluster Controller 和 Cluster Agent
+每个下游用户集群都有一个集群代理，它在 Rancher 服务器内打开与相应集群控制器的隧道。
 
-每个下游集群都有一个 Cluster Agent，用于打开与 Rancher Server 中对应的 Cluster Controller 之间的通道。
+每个下游集群都有一个集群控制器和一个集群代理。每个集群控制器：
 
-每个下游集群有一个 Cluster Controller 和一个 Cluster Agent。每个 Cluster Controller 都能：
+* 监视下游集群中的资源变化
+* 将下游集群的当前状态带到所需状态
+* 配置对集群和项目的访问控制策略
+ifeval::["{build-type}" != "srfa"]
+* 通过调用所需的 Docker 机器驱动程序和 Kubernetes 引擎（如 GKE）来配置集群
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+* 通过调用所需的 Docker 机器驱动程序和 Kubernetes 引擎来配置集群
+endif::[]
 
-* 检测下游集群中的资源变化
-* 将下游集群的当前状态变更到目标状态
-* 配置集群和项目的访问控制策略
-* 通过调用所需的 Docker Machine 驱动和 Kubernetes 引擎（例如 和 GKE）来配置集群
+默认情况下，为了使 Rancher 能够与下游集群通信，集群控制器连接到集群代理。如果集群代理不可用，集群控制器可以连接到 <<_3_rancher_system_agent,Rancher 系统代理>>。
 
-默认情况下，Cluster Controller 连接到 Cluster Agent，Rancher 才能与下游集群通信。如果 Cluster Agent 不可用，Cluster Controller 可以连接到 <<_3_node_agents,Node Agent>>。
+集群代理，也称为 `cattle-cluster-agent`，是一个在下游用户集群中运行的组件。它执行以下任务：
 
-Cluster Agent，也叫做 `cattle-cluster-agent`，是运行在下游集群中的组件。它具有以下功能：
+* 连接到 Rancher 启动的 Kubernetes 集群的 Kubernetes API
+* 管理每个集群内的工作负载、Pod 创建和部署
+* 应用每个集群全局策略中定义的角色和绑定
+* 通过与集群控制器的隧道在集群和 Rancher 服务器之间传递事件、统计信息、节点信息和健康状况
 
-* 连接 Rancher 启动的 Kubernetes 集群中的 Kubernetes API。
-* 管理集群内的工作负载，pod 创建和部署。
-* 根据每个集群的全局策略，应用定义的角色和绑定。
-* 通过与 Cluster Controller 之间的通道，实现集群和 Rancher Server 之间的通信，包括事件，统计数据，节点信息和健康状况。
+[#_3_rancher_system_agent]
+== 3.Rancher System Agent
 
-=== 3. Node Agents
+如果集群代理（也称为 `cattle-cluster-agent`）不可用，Rancher 系统代理会创建一个隧道到集群控制器以与 Rancher 通信。
 
-如果 Cluster Agent（也称为 `cattle-cluster-agent`）不可用，其中一个 Node Agent 会创建一个连接到 Cluster Controller 的通道与 Rancher 通信。
+`rancher-system-agent` 在 RKE2 和 K3s Kubernetes 集群的每个节点上运行。它用于在执行集群操作时与节点进行交互。集群操作的示例包括升级 Kubernetes 版本和创建或恢复 etcd 快照。
 
-`cattle-node-agent` 使用 https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/[DaemonSet] 资源进行部署，以确保它能在 Rancher 启动的 Kubernetes 集群中的每个节点上运行，用于在执行集群操作时与节点交互。集群操作的包括升级 Kubernetes 版本，创建或恢复 etcd 快照等。
+[#_4_authorized_cluster_endpoint]
+== 4.授权集群端点
 
-=== 4. 授权集群端点
-
-授权集群端点（ACE）可连接到下游集群的 Kubernetes API Server，而不用通过 Rancher 认证代理调度请求。
-
-____
-ACE is available on RKE2 and K3s clusters that are provisioned or registered with Rancher. It's not available on  clusters in a hosted Kubernetes provider, such as Amazon's EKS.
-____
-
-授权集群端点的主要用途：
-
-* 在 Rancher 不可用时访问下游集群
-* 在 Rancher Server 和与下游集群之间相距甚远时降低延迟
-
-`kube-api-auth` 微服务为授权集群端点提供用户验证功能。当使用 ``kubectl``访问下游集群时，集群的 Kubernetes API Server 使用 `kube-api-auth` 服务作为 webhook 对用户进行身份验证。
-
-与授权集群端点一样，`kube-api-auth` 的身份验证功能也仅适用于 Rancher 启动的 Kubernetes 集群。
+授权集群端点（ACE）允许用户在不通过Rancher身份验证代理路由请求的情况下，连接到下游集群的Kubernetes API服务器。
 
 ____
-*示例场景：* 假设 Rancher Server 位于美国，User Cluster 1 与用户 Alice 均位于澳大利亚。Alice 可以使用 Rancher UI 操作 User Cluster 1 中的资源，但她的请求必须从澳大利亚发送到美国的 Rancher Server，然后通过代理返回澳大利亚，即下游集群所在的位置。地理距离可能导致明显延迟，因此，Alice 可以使用授权集群端点来降低延迟。
+ACE可用于与Rancher一起配置或注册的RKE2和K3s集群。它不适用于托管Kubernetes提供商中的集群，例如亚马逊的EKS。
 ____
 
-为下游集群启用授权集群端点后，Rancher 会在 kubeconfig 文件中额外生成一段 Kubernetes 上下文，用于直连到集群。该文件具有 `kubectl` 和 ``helm``的凭证。
+用户可能需要授权集群端点的两个主要原因是：
 
-如果 Rancher 出现问题，你需要使用此 kubeconfig 文件中定义的上下文来访问集群。因此，我们建议你导出 kubeconfig 文件，以便在 Rancher 出现问题时，仍能使用文件中的凭证访问集群。详情请参见使用 xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc[kubectl 和 kubeconfig 文件]访问集群的章节。
+* 在Rancher宕机时访问下游用户集群
+* 在Rancher服务器与下游集群之间距离较远的情况下减少延迟
 
+`kube-api-auth`微服务被部署以提供授权集群端点的用户身份验证功能。当您使用`kubectl`访问用户集群时，集群的Kubernetes API服务器通过将`kube-api-auth`服务作为Webhook进行身份验证。
+
+与授权集群端点一样，`kube-api-auth`身份验证服务也仅适用于Rancher启动的Kubernetes集群。
+
+____
+*示例场景:*假设Rancher服务器位于美国，而用户集群1位于澳大利亚。用户Alice也住在澳大利亚。Alice可以通过使用Rancher UI操作用户集群1中的资源，但她的请求必须从澳大利亚发送到位于美国的Rancher服务器，然后再代理回澳大利亚，即下游用户集群所在的位置。地理距离可能导致显著的延迟，Alice可以通过使用授权集群端点来减少这种延迟。
+____
+
+启用此端点后，Rancher在kubeconfig文件中生成一个额外的Kubernetes上下文，以便直接连接到集群。该文件包含`kubectl`和`helm`的凭据。
+
+[NOTE]
+====
+
+要在您的kubeconfig中使用ACE上下文，请在启用后运行`kubectl use-context <ace context name>`。
+====
+
+
+有关更多信息，请参阅关于使用 {xref-access-cluster-kubectl}[kubectl 和 kubeconfig 文件] 访问您的集群的部分。
+
+我们建议导出 kubeconfig 文件，以便在 Rancher 停止运行时，您仍然可以使用文件中的凭据访问您的集群。
+
+[#_impersonation]
+== 模拟
+
+用户在技术上仅存在于上游集群中。Rancher 创建了 https://kubernetes.io/docs/reference/access-authn-authz/rbac/#rolebinding-and-clusterrolebinding[角色绑定和集群角色绑定]，这些绑定引用了 Rancher 用户，尽管在下游集群中 https://kubernetes.io/docs/reference/access-authn-authz/authentication/#users-in-kubernetes[没有实际的用户资源]。
+
+当用户通过身份验证代理与下游集群交互时，必须有某个实体在下游充当这些请求的执行者。Rancher 创建服务帐户来充当该实体。每个服务帐户仅被授予一个权限，即 *模拟* 它们所属的用户。如果只有一个服务帐户可以模拟任何用户，那么恶意用户就有可能破坏该帐户并通过模拟其他用户来提升其权限。此问题是 https://github.com/rancher/rancher/security/advisories/GHSA-pvxj-25m6-7vqr[CVE] 的基础。
+
+[#_impersonation_troubleshooting]
+=== 模拟故障排除
+
+在下游集群中，有五个资源处理模拟：
+
+* 名称空间：`cattle-impersonation-system`
+* 服务帐户：`cattle-impersonation-system/cattle-impersonation-<user ID>`
+* 帐户词元密钥：`cattle-impersonation-system/cattle-impersonation-<user ID>-token-<hash>`
+* 集群角色：`cattle-impersonation-<user ID>`
+* 集群角色绑定：`cattle-impersonation-<user ID>`
+
+在这个典型的模拟集群角色示例中，系统配置为使用 `github` 作为身份验证提供者：
+
+[,yaml]
+----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+ creationTimestamp: "2021-10-06T18:20:13Z"
+ labels:
+   authz.cluster.cattle.io/impersonator: "true"
+   cattle.io/creator: norman
+ name: cattle-impersonation-user-abcde
+ resourceVersion: "3528"
+ uid: a7478731-72a0-4343-b09f-c3bf12552d77
+rules:
+# allowed to impersonate user user-abcde
+- apiGroups:
+ - ""
+ resourceNames:
+ - user-abcde
+ resources:
+ - users
+ verbs:
+ - impersonate
+# allowed to impersonate listed groups
+- apiGroups:
+ - ""
+ resourceNames:
+ - github_team://123 # group from GitHub auth provider
+ - system:authenticated # automatic group from Kubernetes
+ - system:cattle:authenticated # automatic group from Rancher
+ resources:
+ - groups
+ verbs:
+ - impersonate
+# allowed to impersonate principal ID github_user://098
+- apiGroups:
+ - authentication.k8s.io
+ resourceNames:
+ - github_user://098 # principal ID from GitHub auth provider
+ resources:
+ - userextras/principalid
+ verbs:
+ - impersonate
+# allowed to impersonate username example
+- apiGroups:
+ - authentication.k8s.io
+ resourceNames:
+ - example # username from GitHub auth provider
+ resources:
+ - userextras/username
+ verbs:
+ - impersonate
+----
+
+当您排查模拟问题时，请检查这些资源是否存在于用户中，以及集群角色中的规则是否与上述内容相似。例如：
+
+[,bash]
+----
+kubectl --namespace cattle-impersonation-system get serviceaccount cattle-impersonation-<user ID>
+kubectl --namespace cattle-impersonation-system get secret cattle-impersonation-<user ID>-token-<hash>
+kubectl get clusterrole cattle-impersonation-<user ID> --output yaml
+kubectl get clusterrolebinding cattle-impersonation-<user ID>
+----
+
+如果您在 UI 中看到与 "模拟" 相关的错误，请特别注意错误消息的 _结束_，这应该指示请求失败的真正原因。
+
+[#_important_files]
 == 重要文件
 
-维护、排除问题和升级集群需要用到以下文件，请妥善保管这些文件：
+下面提到的文件是维护、故障排除和升级您的集群所需的：
 
-* `config.yaml`: The RKE2 and K3s cluster configuration file.
-* `rke2.yaml` or `k3s.yaml`: The Kubeconfig file for your RKE2 or K3s cluster. This file contains credentials for full access to the cluster. You can use this file to authenticate with a Rancher-launched Kubernetes cluster if Rancher goes down.
+* `config.yaml`：RKE2 和 K3s 集群配置文件。
+* `rke2.yaml` 或 `k3s.yaml`：您 RKE2 或 K3s 集群的 Kubeconfig 文件。此文件包含对集群的完全访问权限的凭据。如果 Rancher 出现故障，您可以使用此文件与 Rancher 启动的 Kubernetes 集群进行身份验证。
 
-有关在没有 Rancher 认证代理和其他配置选项的情况下连接到集群的更多信息，请参见 xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc[kubeconfig 文件]。
+有关在没有 Rancher 身份验证代理的情况下连接到集群和其他配置选项的更多信息，请参阅 {xref-access-cluster-kubectl}[kubeconfig 文件] 文档。
 
-== 配置 Kubernetes 集群的工具
+[#_tools_for_provisioning_kubernetes_clusters]
+== 用于配置 Kubernetes 集群的工具
 
-Rancher 使用什么工具配置下游集群，取决于集群的类型。
+Rancher 用于配置下游用户集群的工具取决于正在配置的集群类型。
 
-=== Rancher 为托管在云提供商中的节点启动 Kubernetes
+[#_rancher_launched_kubernetes_for_nodes_hosted_in_an_infrastructure_provider]
+=== Rancher 为托管在基础设施提供商中的节点启动 Kubernetes
 
-Rancher 可以动态启动云上（如 Amazon EC2、DigitalOcean、Azure 或 vSphere 等）的节点，然后在节点上安装 Kubernetes。
+ifeval::["{build-type}" != "srfa"]
+Rancher 可以在 Amazon EC2、DigitalOcean、Azure 或 vSphere 等提供商中动态配置节点，然后在其上安装 Kubernetes。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+Rancher 可以在 Amazon EC2 中动态配置节点，然后在其上安装 Kubernetes。
+endif::[]
 
-Rancher provisions this type of cluster using [docker-machine.](https://github.com/rancher/machine).
+Rancher 使用 https://github.com/rancher/machine[docker-machine.] 配置此类型的集群
 
-=== Rancher Launched Kubernetes for Custom Nodes
+[#_rancher_launched_kubernetes_for_custom_nodes]
+=== Rancher 为自定义节点启动 Kubernetes
 
-When setting up this type of cluster, Rancher installs Kubernetes on existing nodes, which creates a custom cluster.
+在设置此类型的集群时，Rancher 在现有节点上安装 Kubernetes，从而创建一个自定义集群。
 
-Rancher provisions this type of cluster using https://github.com/rancher/rke2[RKE2] or https://github.com/rancher/k3s[K3s].
+Rancher 使用 https://github.com/rancher/rke2[RKE2] 或 https://github.com/rancher/k3s[K3s] 配置此类型的集群。
 
-=== 托管的 Kubernetes 提供商
+[#_hosted_kubernetes_providers]
+=== 托管 Kubernetes 提供商
 
-配置此类集群时，Kubernetes 由云提供商安装，如 GKE、ECS 或 AKS 等。
+ifeval::["{build-type}" != "srfa"]
+在设置此类型的集群时，Kubernetes 由 Google Kubernetes Engine、Amazon Elastic Container Service for Kubernetes 或 Azure Kubernetes Service 等提供商安装。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+在设置此类型的集群时，Kubernetes 由 Amazon Elastic Container Service for Kubernetes 安装。
+endif::[]
 
-Rancher 使用 https://github.com/rancher/kontainer-engine[kontainer-engine] 配置此类型的集群。
+Rancher 使用 https://github.com/rancher/kontainer-engine[kontainer-engine.] 配置此类型的集群。
 
+[#_imported_kubernetes_clusters]
 === 导入的 Kubernetes 集群
 
-这种情况下，Rancher 需要连接到一个设置好的 Kubernetes 集群。因此，Rancher 不提供 Kubernetes，只设置 Rancher Agent 实现与集群通信。
+在这种类型的集群中，Rancher 连接到已经设置好的 Kubernetes 集群。因此，Rancher 不会配置 Kubernetes，而只是设置 Rancher 代理以与集群进行通信。
 
-== Rancher Server 组件和源码
+[#_rancher_server_components_and_source_code]
+== Rancher 服务器组件和源代码
 
-下图展示了 Rancher Server 的组件：
+该图展示了构成 Rancher 服务器的各个组件：
 
-image::rancher-architecture-rancher-components.svg[Rancher 组件]
+image::rancher-architecture-rancher-components.svg[Rancher组件]
 
-Rancher 的 GitHub 代码仓库如下：
+Rancher 的 GitHub 储存库可以在以下链接找到：
 
-* https://github.com/rancher/rancher[Rancher Server 主代码库]
+* https://github.com/rancher/rancher[主要 Rancher 服务器储存库]
 * https://github.com/rancher/ui[Rancher UI]
 * https://github.com/rancher/api-ui[Rancher API UI]
-* https://github.com/rancher/norman[Norman]（Rancher 的 API 框架）
+* https://github.com/rancher/norman[Norman,] Rancher 的 API 框架
 * https://github.com/rancher/types[类型]
 * https://github.com/rancher/cli[Rancher CLI]
-* https://github.com/rancher/helm[应用商店]
+* https://github.com/rancher/helm[目录应用程序]
 
-以上仅列出部分 Rancher 最重要的仓库。详情请参见xref:contribute-to-rancher.adoc#_rancher_仓库[参与 Rancher 开源贡献]。如需获取 Rancher 使用的所有库和项目，请参见 `rancher/rancher` 仓库中的 https://github.com/rancher/rancher/blob/master/go.mod[`go.mod` 文件]。
+这是部分最重要的 Rancher 储存库。有关 Rancher 源代码的更多详细信息，请参阅 xref:contribute-to-rancher.adoc#_rancher_repositories[为 Rancher 做贡献] 部分。要查看 Rancher 中使用的所有库和项目，请在 `rancher/rancher` 储存库中查看 https://github.com/rancher/rancher/blob/master/go.mod[`go.mod` 文件。]

@@ -1,0 +1,119 @@
+= Helmチャートオプション
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/monitoring-v2-configuration/helm-chart-options.adoc 
+:product-path: observability/monitoring-and-dashboards/configuration/helm-chart-options.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-configure-alertmanager: xref:observability/monitoring-and-dashboards/configuration/advanced/alertmanager.adoc
+:xref-selectors-and-scrape-configurations: xref:observability/istio/configuration/selectors-and-scrape-configurations.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-configure-alertmanager: xref:how-to-guides/advanced-user-guides/monitoring-v2-configuration-guides/advanced-configuration/alertmanager.adoc
+:xref-selectors-and-scrape-configurations: xref:integrations-in-rancher/istio/configuration-options/selectors-and-scrape-configurations.adoc
+endif::[]
+
+[#_configuring_resource_limits_and_requests]
+== リソース制限とリクエストの設定
+
+リソースのリクエストと制限は、`rancher-monitoring`をインストールする際に設定できます。
+
+デフォルト値は、 https://github.com/rancher/charts/blob/main/charts/rancher-monitoring/values.yaml[values.yaml]にあり、`rancher-monitoring` Helmチャートに含まれています。
+
+以下の表に示すデフォルト値は、必要な最小リソース制限とリクエストです。
+
+|===
+| Resource Name | Memory Limit | CPU Limit | メモリリクエスト | CPUリクエスト
+
+| alertmanager
+| 500Mi
+| 1000m
+| 100Mi
+| 100m
+
+| grafana
+| 200Mi
+| 200m
+| 100Mi
+| 100m
+
+| kube-state-metrics subchart
+| 200Mi
+| 100m
+| 130Mi
+| 100m
+
+| prometheus-node-exporterサブチャート
+| 50Mi
+| 200m
+| 30Mi
+| 100m
+
+| prometheusOperator
+| 500Mi
+| 200m
+| 100Mi
+| 100m
+
+| prometheus
+| 2500Mi
+| 1000m
+| 1750Mi
+| 750m
+
+| *合計*
+| *3950Mi*
+| *2700m*
+| *2210Mi*
+| *1250m*
+|===
+
+少なくとも50Giのストレージを推奨します。
+
+[#_trusted_ca_for_notifiers]
+== 通知者用の信頼されたCA
+
+通知者に信頼されたCAを追加する必要がある場合は、次の手順に従ってください：
+
+. `cattle-monitoring-system`ネームスペースを作成します。
+. 信頼されたCAのシークレットを`cattle-monitoring-system`ネームスペースに追加します。
+. `rancher-monitoring` Helmチャートをデプロイまたはアップグレードする。チャートオプションでは、menu:Alerting[Additional Secrets]内のシークレットを参照します。
+
+*結果:*デフォルトのAlertmanagerカスタムリソースは、信頼されたCAにアクセスできます。
+
+[#_additional_scrape_configurations]
+== 追加のスクレイプ構成
+
+現在、ServiceMonitorまたはPodMonitorを介して指定できないスクレイプ構成が必要な場合は、`additionalScrapeConfigSecret`を提供して`rancher-monitoring`をデプロイまたはアップグレードできます。
+
+https://prometheus.io/docs/prometheus/latest/configuration/configuration/#scrape_config[スクレイプ構成セクション]は、ターゲットのセットとそれらをスクレイプする方法を説明するパラメータを指定します。一般的な場合、1つのスクレイプ構成は単一のジョブを指定します。
+
+これが使用される可能性のある例は、Istioです。詳細については、{xref-selectors-and-scrape-configurations}[このセクション]を参照してください。
+
+[#_configuring_applications_packaged_within_monitoring_v2]
+== Monitoring v2内にパッケージ化されたアプリケーションの構成
+
+私たちは、kube-state-metricsとnode-exporterをMonitoring v2でデプロイします。ノードエクスポータはDaemonSetsとしてデプロイされます。これらのエンティティはすべて、monitoring v2 Helmチャートのvalues.yamlを通じてサブチャートとしてデプロイされます。
+
+私たちはまた、Prometheusによって管理されていないGrafanaをデプロイします。
+
+多くの値はトップレベルのチャートでは表示されていません。ただし、サブチャートに存在する値を上書きするために、トップレベルのチャートに値を追加することができます。
+
+[#_increase_the_replicas_of_alertmanager]
+=== Alertmanagerのレプリカを増やす
+
+チャートのデプロイオプションの一部として、クラスターにデプロイされるAlertmanagerのレプリカの数を増やすことを選択できます。レプリカはすべて、同じ基盤となるAlertmanager Config Secretを使用して管理できます。Alertmanager Config Secretに関する詳細は、{xref-configure-alertmanager}#_multiple_alertmanager_replicas[このセクション]を参照してください。
+
+[#_configuring_the_namespace_for_a_persistent_grafana_dashboard]
+=== 永続的なGrafanaダッシュボードのためのネームスペースの設定
+
+GrafanaがすべてのネームスペースでConfigMapを監視するように指定するには、この値を`rancher-monitoring` Helmチャートに設定してください：
+
+----
+grafana.sidecar.dashboards.searchNamespace=ALL
+----
+
+Grafanaダッシュボードを追加するためにMonitoringチャートによって公開されるRBACロールは、`grafana.dashboards.namespace`で定義されたネームスペース内でユーザーがダッシュボードを追加するための権限を与えることに制限されていることに注意してください。デフォルトは`cattle-dashboards`です。

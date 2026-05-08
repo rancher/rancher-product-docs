@@ -1,0 +1,85 @@
+= Wie persistenter Speicher funktioniert
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/about-persistent-storage.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/about-persistent-storage.adoc
+:experimental:
+
+Ein Persistent Volume (PV) ist ein Speicherbereich im Kubernetes-Cluster, während ein Persistent Volume Claim (PVC) eine Anforderung für Speicher ist.
+
+Es gibt zwei Möglichkeiten, persistenten Speicher in Kubernetes zu verwenden:
+
+* Einen bestehenden persistenten Speicher verwenden.
+* Neue persistente Volumen dynamisch bereitstellen.
+
+Um ein bestehendes PV zu verwenden, muss Ihre Anwendung ein PVC verwenden, das an ein PV gebunden ist, und das PV sollte die minimalen Ressourcen enthalten, die das PVC benötigt.
+
+Für die dynamische Speicherbereitstellung muss Ihre Anwendung ein PVC verwenden, das an eine StorageClass gebunden ist. Die StorageClass enthält die Berechtigung zur Bereitstellung neuer persistenter Volumen.
+
+image::rancher-storage.svg[Einrichten von neuem und bestehendem persistenten Speicher]
+
+Für weitere Informationen siehe die https://kubernetes.io/docs/concepts/storage/volumes/[offizielle Kubernetes-Dokumentation zu Speicher]
+
+[#_about_persistent_volume_claims]
+== Über persistente Volume Claims
+
+Persistente Volume Claims (PVCs) sind Objekte, die Speicherressourcen von Ihrem Cluster anfordern. Sie ähneln einem Gutschein, mit dem Ihr Deployment den Zugriff auf Speicher einlösen kann. Ein PVC wird in eine Arbeitslast als Volume eingebunden, damit die Arbeitslast ihren festgelegten Anteil am persistenten Speicher beanspruchen kann.
+
+Um auf persistenten Speicher zuzugreifen, muss ein Pod ein PVC als Volume eingebunden haben. Dieses PVC ermöglicht es Ihrem Deployment, seine Daten an einem externen Ort zu speichern, sodass, wenn ein Pod ausfällt, dieser durch einen neuen Pod ersetzt werden kann und der Zugriff auf die extern gespeicherten Daten nahtlos fortgesetzt wird.
+
+Jedes Rancher-Projekt enthält eine Liste von PVCs, die Sie erstellt haben, verfügbar unter menu:Ressourcen[Arbeitslasten> Volumen]. Sie können diese PVCs bei der Erstellung von Deployments in Zukunft wiederverwenden.
+
+[#_pvcs_are_required_for_both_new_and_existing_persistent_storage]
+=== PVCs sind erforderlich für sowohl neuen als auch bestehenden persistenten Speicher
+
+Ein PVC ist erforderlich, damit Pods jeden persistenten Speicher verwenden können, unabhängig davon, ob die Arbeitslast Speicher verwenden soll, der bereits existiert, oder ob die Arbeitslast neuen Speicher nach Bedarf dynamisch bereitstellen muss.
+
+Wenn Sie bestehenden Speicher für eine Arbeitslast einrichten, bindet die Arbeitslast ein PVC, das auf ein PV verweist, das der bestehenden Speicherinfrastruktur entspricht.
+
+Wenn eine Arbeitslast neuen Speicher anfordern soll, bindet die Arbeitslast ein PVC, das auf eine StorageClass verweist, die die Fähigkeit hat, ein neues PV zusammen mit der zugrunde liegenden Speicherinfrastruktur zu erstellen.
+
+Rancher ermöglicht es Ihnen, so viele PVCs innerhalb eines Projekts zu erstellen, wie Sie möchten.
+
+Sie können PVCs bei der Erstellung eines Deployments oder später, nachdem das Deployment läuft, einbinden.
+
+[#_setting_up_existing_storage_with_a_pvc_and_pv]
+== Einrichten von vorhandenem Speicher mit einem PVC und PV
+
+Ihre Pods können Daten in https://kubernetes.io/docs/concepts/storage/volumes/[Volumes,] speichern, aber wenn der Pod ausfällt, gehen diese Daten verloren. Um dieses Problem zu lösen, bietet Kubernetes persistente Volumes (PVs) an, die Kubernetes-Ressourcen sind, die externen Speicherfestplatten oder Dateisystemen entsprechen, auf die Ihre Pods zugreifen können. Wenn ein Pod abstürzt, kann sein Ersatzpod auf die Daten im persistenten Speicher zugreifen, ohne dass Daten verloren gehen.
+
+PVs können eine physische Festplatte oder ein Dateisystem darstellen, das Sie vor Ort hosten, oder eine vom Anbieter gehostete Speicherressource, wie Amazon EBS oder Azure Disk.
+
+Das Erstellen eines PersistentVolumes in Rancher erstellt kein Speicher-Volume. Es erstellt lediglich eine Kubernetes-Ressource, die auf ein vorhandenes Volume verweist. Daher müssen Sie, bevor Sie ein PersistentVolume als Kubernetes-Ressource erstellen können, Speicher bereitgestellt haben.
+
+[NOTE]
+.Wichtig:
+====
+
+PVs werden auf Cluster-Ebene erstellt, was bedeutet, dass in einem Multi-Tenant-Cluster Teams mit Zugriff auf separate Namespaces auf dieselben PVs zugreifen könnten.
+====
+
+
+[#_binding_pvs_to_pvcs]
+=== Binden von PVs an PVCs
+
+Wenn Pods so eingerichtet sind, dass sie persistenten Speicher verwenden, binden sie einen persistenten Volume Claim (PVC), der auf die gleiche Weise wie jedes andere Kubernetes-Volume eingebunden wird. Wenn jeder PVC erstellt wird, betrachtet der Kubernetes-Master ihn als Anfrage für Speicher und bindet ihn an ein PV, das den minimalen Ressourcenanforderungen des PVC entspricht. Nicht jeder PVC ist garantiert an ein PV gebunden. Laut der Kubernetes https://kubernetes.io/docs/concepts/storage/persistent-volumes/[Dokumentation,]
+
+____
+Claims bleiben unbegrenzt ungebunden, wenn kein passendes Volume vorhanden ist. Claims werden gebunden, sobald passende Volumes verfügbar sind. Zum Beispiel würde ein Cluster, das mit vielen 50Gi PVs bereitgestellt wurde, nicht mit einem PVC übereinstimmen, das 100Gi anfordert. Der PVC kann gebunden werden, wenn ein 100Gi PV zum Cluster hinzugefügt wird.
+____
+
+Mit anderen Worten, Sie können unbegrenzt PVCs erstellen, aber sie werden nur an PVs gebunden, wenn der Kubernetes-Master einen ausreichenden PV finden kann, der mindestens den für das PVC erforderlichen Speicherplatz hat.
+
+Um neuen Speicher dynamisch bereitzustellen, müsste der im Pod eingebundene PVC einer StorageClass entsprechen, anstatt einem persistenten Volume.
+
+[#_provisioning_new_storage_with_a_pvc_and_storage_class]
+== Bereitstellung neuer Speicher mit einem PVC und StorageClass.
+
+StorageClasses ermöglichen es Ihnen, PVs dynamisch zu erstellen, ohne zuerst persistenten Speicher bei einem Infrastruktur-Anbieter bereitzustellen.
+
+Zum Beispiel, wenn eine Arbeitslast an einen PVC gebunden ist und der PVC auf eine Amazon EBS StorageClass verweist, kann die StorageClass dynamisch ein EBS-Volume und ein entsprechendes PV erstellen.
+
+Der Kubernetes-Master wird dann das neu erstellte PV mit dem PVC Ihrer Arbeitslast verbinden, sodass Ihre Arbeitslast den persistenten Speicher nutzen kann.

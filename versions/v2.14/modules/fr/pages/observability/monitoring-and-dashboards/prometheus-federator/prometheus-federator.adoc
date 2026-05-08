@@ -1,0 +1,121 @@
+= Prometheus Federator
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/prometheus-federator/index.adoc 
+:product-path: observability/monitoring-and-dashboards/prometheus-federator/prometheus-federator.adoc
+ifeval::["{build-type}" != "community"]
+:xref-prometheus-federator-rbac: xref:observability/monitoring-and-dashboards/prometheus-federator/rbac.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-prometheus-federator-rbac: xref:reference-guides/prometheus-federator/rbac.adoc
+endif::[]
+
+Prometheus Federator, également appelé Project Monitoring v2, déploie un opérateur de projet Helm (basé sur le https://github.com/rancher/helm-project-operator[rancher/helm-project-operator]), un opérateur qui gère le déploiement de charts Helm, chacun contenant une pile de surveillance de projet, où chaque pile contient{nbsp}:
+
+* https://prometheus.io/[Prometheus] (géré de manière externe par https://github.com/prometheus-operator/prometheus-operator[Prometheus Operator])
+* https://prometheus.io/docs/alerting/latest/alertmanager/[Alertmanager] (géré de manière externe par https://github.com/prometheus-operator/prometheus-operator[Prometheus Operator])
+* https://github.com/helm/charts/tree/master/stable/grafana[Grafana] (déployé via un chart Helm intégré)
+* Règles Prometheus et tableaux de bord Grafana par défaut basés sur la collection de ressources curées par la communauté provenant de https://github.com/prometheus-operator/kube-prometheus/[kube-prometheus]
+* ServiceMonitors par défaut qui surveillent les ressources déployées
+
+[NOTE]
+.Important :
+====
+
+Prometheus Federator est conçu pour être déployé aux côtés d'un déploiement existant de Prometheus Operator dans un cluster qui a déjà installé les CRD de Prometheus Operator.
+====
+
+
+[#_how_does_the_operator_work]
+== Comment fonctionne l'opérateur{nbsp}?
+
+. Lors du déploiement de ce chart, les utilisateurs peuvent créer des CR ProjectHelmCharts avec `spec.helmApiVersion` défini sur `monitoring.cattle.io/v1alpha1` (également connu sous le nom de "Project Monitors" dans l'interface utilisateur de Rancher) dans un *espace de noms d'enregistrement de projet (`cattle-project-<id>`)*.
+. En voyant chaque ProjectHelmChartCR, l'opérateur déploiera automatiquement une pile Prometheus de projet au nom du propriétaire du projet dans le *espace de noms de publication de projet (`cattle-project-<id>-monitoring`)* basé sur un CR HelmChart et un CR HelmRelease créés automatiquement par le contrôleur ProjectHelmChart dans le *espace de noms de l'opérateur / système*.
+. RBAC sera automatiquement attribué dans l'espace de noms de publication de projet pour permettre aux utilisateurs de voir les interfaces utilisateur Prometheus, Alertmanager et Grafana de la pile de surveillance de projet déployée{nbsp}; cela sera basé sur le RBAC défini sur l'espace de noms d'enregistrement de projet par rapport aux https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[rôles par défaut de Kubernetes visibles par l'utilisateur]. Pour plus d'informations, consultez la section sur {xref-prometheus-federator-rbac}[la configuration de RBAC].
+
+[#_what_is_a_project]
+== Qu'est-ce qu'un projet{nbsp}?
+
+Dans Prometheus Federator, un projet est un groupe d'espaces de noms qui peuvent être identifiés par un `metav1.LabelSelector`. Par défaut, l'étiquette utilisée pour identifier les projets est `field.cattle.io/projectId`, l'étiquette utilisée pour identifier les espaces de noms qui sont contenus dans un projet Rancher donné.
+
+[#_configuring_the_helm_release_created_by_a_projecthelmchart]
+== Configuration de la release Helm créée par un ProjectHelmChart
+
+Le `spec.values` des ressources de ce ProjectHelmChart correspondra à l'override `values.yaml` à fournir au chart Helm sous-jacent déployé par l'opérateur au nom de l'utilisateur{nbsp}; pour voir la spécification `values.yaml` du chart sous-jacent, soit{nbsp}:
+
+* Consultez la définition du chart située à https://github.com/rancher/prometheus-federator/blob/main/charts/rancher-project-monitoring[`rancher/prometheus-federator` sous `charts/rancher-project-monitoring`] (où la version du chart sera liée à la version de cet opérateur).
+* Recherchez le ConfigMap nommé `monitoring.cattle.io.v1alpha1` qui est automatiquement créé dans chaque espace de noms d'enregistrement de projet, qui contiendra à la fois le `values.yaml` et le `questions.yaml` utilisés pour configurer le chart (qui a été intégré directement dans le binaire `prometheus-federator`).
+
+[#_namespaces]
+== Espaces de noms
+
+En tant qu'opérateur de projet basé sur https://github.com/rancher/helm-project-operator[rancher/helm-project-operator], Prometheus Federator a trois classifications différentes d'espaces de noms que l'opérateur surveille{nbsp}:
+
+. *Espace de noms de l'opérateur / système*{nbsp}: L'espace de noms dans lequel l'opérateur est déployé (par exemple, `cattle-monitoring-system`). Cet espace de noms contiendra tous les HelmCharts et HelmReleases pour tous les ProjectHelmCharts surveillés par cet opérateur. *Seuls les administrateurs de cluster devraient avoir accès à cet espace de noms.*
+. *Espace de noms d'enregistrement de projet (`cattle-project-<id>`)*{nbsp}: L'ensemble des espaces de noms que l'opérateur surveille pour les ProjectHelmCharts. Les RoleBindings et ClusterRoleBindings qui s'appliquent à cet espace de noms seront également la source de vérité pour le RBAC auto-attribué créé dans l'espace de noms de publication de projet. Pour plus de détails, reportez-vous à la {xref-prometheus-federator-rbac}[page RBAC]. *Les propriétaires de projet (admin), les membres du projet (édition) et les membres en lecture seule (vue) devraient avoir accès à cet espace de noms.*
++
+
+[NOTE]
+.Remarques :
+====
+
+ ** Les espaces de noms d'enregistrement de projet seront générés automatiquement par l'opérateur et importés dans le projet auquel ils sont liés si `.Values.global.cattle.projectLabel` est fourni, ce qui est défini par défaut sur `field.cattle.io/projectId`. Cela indique qu'un espace de noms d'enregistrement de projet doit être créé par l'opérateur si au moins un espace de noms est observé avec cette étiquette. L'opérateur ne permettra pas la suppression de ces espaces de noms à moins que tous les espaces de noms avec cette étiquette ne soient plus présents (par exemple, c'est le dernier espace de noms dans ce projet, auquel cas l'espace de noms sera marqué avec l'étiquette `"helm.cattle.io/helm-project-operator-orphaned": "true"`, ce qui signale qu'il peut être supprimé), ou il ne surveille plus ce projet parce que l'ID du projet a été fourni sous `.Values.helmProjectOperator.otherSystemProjectLabelValues`, qui sert de liste rouge pour les projets. Ces espaces de noms ne seront également jamais supprimés automatiquement pour éviter de détruire les données utilisateur{nbsp}; il est recommandé que les utilisateurs nettoient ces espaces de noms manuellement si désiré lors de la création ou de la suppression d'un projet.
+ ** Si `.Values.global.cattle.projectLabel` n'est pas fourni, l'espace de noms de l'opérateur / système sera également l'espace de noms d'enregistrement de projet.
+
++
+====
+
+
+. *Espace de noms de publication de projet (`cattle-project-<id>-monitoring`) :* L'ensemble des espaces de noms dans lesquels l'opérateur déploie des piles de surveillance de projet au nom d'un ProjectHelmChart{nbsp}; l'opérateur attribuera également automatiquement le RBAC aux rôles créés dans cet espace de noms par la pile de surveillance de projet en fonction des liaisons trouvées dans l'espace de noms d'enregistrement de projet. *Seuls les administrateurs de cluster devraient avoir accès à cet espace de noms{nbsp}; les propriétaires de projet (admin), les membres du projet (édition) et les membres en lecture seule (vue) se verront attribuer un accès limité à cet espace de noms par le chart Helm déployé et Prometheus Federator.*
++
+
+[NOTE]
+.Remarques :
+====
+
+ ** Les espaces de noms de publication de projet sont automatiquement déployés et importés dans le projet dont l'ID est spécifié sous `.Values.helmProjectOperator.projectReleaseNamespaces.labelValue`, qui prend par défaut la valeur de `.Values.global.cattle.systemProjectId` si non spécifié, chaque fois qu'un ProjectHelmChart est spécifié dans un espace de noms d'enregistrement de projet.
+ ** Les espaces de noms de publication de projet suivent les mêmes conventions d'orphelinage que les espaces de noms d'enregistrement de projet (voir la note ci-dessus).
+ ** Si `.Values.projectReleaseNamespaces.enabled` est faux, l'espace de noms de publication de projet sera le même que l'espace de noms d'enregistrement de projet.
+
++
+====
+
+
+[#_helm_resources_helmchart_helmrelease]
+== Ressources Helm (HelmChart, HelmRelease)
+
+Lors du déploiement d'un ProjectHelmChart, le fédérateur Prometheus créera et gérera automatiquement deux ressources personnalisées enfants qui gèrent à leur tour les ressources Helm sous-jacentes{nbsp}:
+
+* Une CR HelmChart (gérée via un https://github.com/k3s-io/helm-controller[k3s-io/helm-contoller] intégré dans l'opérateur) : Cette ressource personnalisée crée automatiquement un Job dans le même espace de noms qui déclenche un `helm install`, `helm upgrade` ou `helm uninstall` en fonction du changement appliqué à la CR HelmChart. Cette CR est automatiquement mise à jour lors des modifications apportées au ProjectHelmChart (par exemple, en modifiant le values.yaml) ou lors des modifications de la définition du projet sous-jacent (par exemple, en ajoutant ou en supprimant des espaces de noms d'un projet).
+
+[NOTE]
+.Important :
+====
+
+Si un ProjectHelmChart ne déploie pas ou ne met pas à jour la pile de surveillance du projet pour une raison quelconque, le Job créé par cette ressource dans l'espace de noms de l'opérateur / système devrait être le premier endroit où vous vérifiez s'il y a un problème avec l'opération Helm. Cependant, cela est généralement accessible uniquement par un *Cluster Admin.*
+====
+
+
+* Une CR HelmRelease (gérée via un https://github.com/rancher/helm-locker[rancher/helm-locker] intégré dans l'opérateur) : Cette ressource personnalisée verrouille automatiquement une release Helm déployée en place et écrase automatiquement les mises à jour des ressources sous-jacentes, sauf si le changement se produit via une opération Helm (`helm install`, `helm upgrade` ou `helm uninstall` effectués par la CR HelmChart).
+
+[NOTE]
+====
+
+Les CR HelmRelease émettent des événements Kubernetes qui détectent quand une release Helm sous-jacente est modifiée et la verrouillent à nouveau en place. Pour voir ces événements, vous pouvez utiliser `kubectl describe helmrelease <helm-release-name> -n <operator/system-namespace>`{nbsp}; vous pouvez également consulter les journaux de cet opérateur pour voir quand des changements sont détectés et sur quelles ressources des modifications ont été tentées.
+====
+
+
+Ces deux ressources sont créées pour tous les charts Helm dans les espaces de noms de l'opérateur / système afin d'éviter l'escalade des privilèges pour les utilisateurs sous-privilégiés.
+
+[#_advanced_helm_project_operator_configuration]
+=== Configuration avancée de l'opérateur de projet Helm
+
+Pour plus d'informations sur les configurations avancées, consultez https://github.com/rancher/prometheus-federator/blob/main/charts/prometheus-federator/README.md#advanced-helm-project-operator-configuration[cette page].
+
+[#_prometheus_federator_on_the_local_cluster]
+== Fédérateur Prometheus sur la grappe locale
+
+Le fédérateur Prometheus est une application gourmande en ressources. Il est possible de l'installer sur la grappe locale, mais *non recommandé*.

@@ -1,0 +1,123 @@
+= Migration de VMware vSphere in-tree vers out-of-tree
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-vsphere.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/vsphere.adoc
+:experimental:
+
+Kubernetes s'éloigne de la gestion des fournisseurs de cloud in-tree. VMware vSphere dispose d'un fournisseur de cloud out-of-tree qui peut être utilisé en installant le fournisseur de cloud vSphere et les plugins de stockage cloud.
+
+Cette page explique comment migrer du fournisseur de cloud vSphere in-tree vers out-of-tree, et gérer les VM existantes après la migration.
+
+Elle suit les étapes fournies dans la https://vsphere-csi-driver.sigs.k8s.io/features/vsphere_csi_migration.html[documentation de migration vSphere officielle] et fournit les étapes à réaliser dans Rancher.
+
+[#_cloud_config_format_limitation]
+== Limitation du format cloud-config
+
+Les volumes existants qui ont été provisionnés en utilisant le format cloud-config suivant ne seront pas migrés en raison d'un bug existant dans vSphere Cloud Storage Interface (CSI).
+
+Si le cloud-config a ce format pour le chemin du datastore et du resource pool, le pilote vSphere CSI ne peut pas le reconnaître{nbsp}:
+
+[,yaml]
+----
+default-datastore: </datacenter>/datastore/<default-datastore-name>
+resourcepool-path: "</datacenter>/host/<cluster-name>/Resources/<resource-pool-name>"
+----
+
+Les volumes provisionnés avec le fournisseur in-tree en utilisant le format suivant seront migrés correctement{nbsp}:
+
+[,yaml]
+----
+default-datastore: <default-datastore-name>
+resourcepool-path: "<cluster-name>/Resources/<resource-pool-name>"
+----
+
+Bug en amont : https://github.com/kubernetes-sigs/vsphere-csi-driver/issues/628
+
+Problème Rancher relatif à ce bug{nbsp}: https://github.com/rancher/rancher/issues/31105
+
+[#_prerequisites]
+== Conditions préalables
+
+* La migration CSI vSphere nécessite vSphere 7.0u1. Pour pouvoir gérer les volumes vSphere in-tree existants, mettez à niveau vSphere vers 7.0u1.
+* La version de Kubernetes doit être 1.19 ou supérieure.
+
+[#_migration]
+== Migration
+
+[#_1_install_the_cpi_plugin]
+=== 1. Installer le plugin CPI
+
+Avant d'installer le CPI, nous devons appliquer un taint à tous les nœuds avec `node.cloudprovider.kubernetes.io/uninitialized=true:NoSchedule`.
+
+Cela peut être fait en exécutant les commandes suivantes{nbsp}:
+
+----
+curl -O https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+----
+
+Ou :
+
+----
+wget https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+chmod +x taints.sh
+./taints.sh <path to kubeconfig if running the command outside the cluster>
+----
+
+Une fois que tous les nœuds ont été marqués grâce à l'exécution du script, lancez le chart Helm vSphere CPI.
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster où le chart vSphere CPI sera installé et cliquez sur *Explorer*.
+. Cliquez sur menu:Apps[Charts].
+. Cliquez sur *vSphere CPI*.
+. Cliquez sur *Installer*.
+. Remplissez les détails requis du vCenter et cliquez sur *Installer*.
+
+vSphere CPI initialise tous les nœuds avec ProviderID, qui est nécessaire pour le pilote vSphere CSI.
+
+Vérifiez si tous les nœuds sont initialisés avec le ProviderID avec la commande suivante{nbsp}:
+
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_2_install_the_csi_driver]
+=== 2. Installer le pilote CSI
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez au cluster où le chart vSphere CSI sera installé et cliquez sur *Explorer*.
+. Cliquez sur menu:Apps[Charts].
+. Click *vSphere CSI*.
+. Cliquez sur *Installer*.
+. Remplissez les détails requis du vCenter et cliquez sur *Installer*.
+. Cochez *Personnaliser les options Helm avant l'installation* et cliquez sur *Suivant*.
+. Dans l'onglet *Fonctionnalités*, cochez *Activer la migration CSI*.
+. Optionnellement, allez à l'onglet *Stockage* et configurez un datastore. Ce chart crée un StorageClass avec le `csi.vsphere.vmware.com` comme provisionneur. Vous pouvez fournir l'URL du datastore à utiliser pour le provisionnement des volumes CSI lors de la création de ce StorageClass. L'URL du datastore peut être trouvée dans le client vSphere en sélectionnant le datastore et en allant à l'onglet Résumé. Remplissez les détails pour le StorageClass.
+. Cliquez sur *Installer*.
+
+[#_3_edit_the_cluster_to_enable_csi_migration_feature_flags]
+=== 3. Modifiez le cluster pour activer les indicateurs de fonctionnalité de migration CSI.
+
+. Lors de la modification du cluster, si la version de Kubernetes est inférieure à 1.19, sélectionnez la version de Kubernetes 1.19 ou supérieure dans le menu déroulant *Version de Kubernetes*.
+. Pour activer les indicateurs de fonctionnalité, cliquez sur "Modifier en tant que YAML", et ajoutez ce qui suit sous kube-controller et kubelet{nbsp}:
++
+[,yaml]
+----
+   extra_args:
+     feature-gates: "CSIMigration=true,CSIMigrationvSphere=true"
+----
+
+[#_4_drain_worker_nodes]
+=== 4. Vider les nœuds de travail
+
+Les nœuds de travail doivent être vidés pendant la mise à niveau avant de modifier les arguments du kubelet et du kube-controller-manager.
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Allez dans le cluster où vous allez vider les nœuds de travail et cliquez sur *⋮ > Modifier la configuration*.
+. Dans la section *Options avancées*, définissez le champ *Nœuds de travail maximum non disponibles* sur 1.
+. Pour vider les nœuds pendant la mise à niveau, sélectionnez menu:Vider les nœuds[Oui].
+. Définissez *Forcer* et *Supprimer les données locales* sur *vrai*.
+. Cliquez sur *Enregistrer* pour mettre à niveau le cluster.

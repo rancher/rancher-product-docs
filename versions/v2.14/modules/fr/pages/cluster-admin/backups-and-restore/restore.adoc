@@ -1,0 +1,114 @@
+= Restaurer un cluster à partir d'une sauvegarde
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: xref:how-to-guides/nouveaux-utilisateurs/sauvegarde-restauration-et-récupération/restaurer-des-clusters-kubernetes-lancés-par-rancher-à-partir-d'une-sauvegarde.adoc 
+:product-path: cluster-admin/backups-and-restore/restore.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-clean-cluster-nodes: xref:cluster-admin/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:cluster-admin/backups-and-restore/backups.adoc
+:xref-ds-backup-restore: xref:cluster-admin/backups-and-restore/backups-and-restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-clean-cluster-nodes: xref:how-to-guides/new-user-guides/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:how-to-guides/nouveaux-utilisateurs/sauvegarde-restauration-et-récupération/sauvegarde-des-clusters-kubernetes-lancés-par-rancher.adoc
+:xref-ds-backup-restore: xref:getting-started/installation-and-upgrade/upgrade-and-roll-back-kubernetes.adoc
+endif::[]
+
+La sauvegarde et la récupération d'etcd pour {xref-launch-k8s-with-rancher}[les clusters Kubernetes lancés par Rancher] peuvent être facilement effectuées. Les instantanés de la base de données etcd sont pris et sauvegardés soit localement sur les nœuds etcd, soit vers une cible compatible S3. Les avantages de la configuration de S3 sont que si tous les nœuds etcd sont perdus, votre instantané est sauvegardé à distance et peut être utilisé pour restaurer le cluster.
+
+Rancher recommande d'activer la {xref-ds-backup}#_configurer_des_instantanés_récurrents[capacité à configurer des instantanés récurrents d'etcd], mais {xref-ds-backup}#_instantanés_uniques[les instantanés uniques] peuvent également être facilement effectués. Rancher permet la restauration à partir de <<_restoring_a_cluster_from_a_snapshot,instantanés sauvegardés>>.
+
+Les clusters peuvent également être restaurés à une version Kubernetes antérieure et à une configuration de cluster.
+
+[#_viewing_available_snapshots]
+== Affichage des instantanés disponibles
+
+La liste de tous les instantanés disponibles pour le cluster est accessible.
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Dans la page *Clusters*, allez au cluster où vous souhaitez voir les instantanés et cliquez sur le nom du cluster.
+. Cliquez sur l'onglet *Instantanés*. Les instantanés listés incluent un horodatage de leur création.
+
+[#_restoring_a_cluster_from_a_snapshot]
+== Restaurer un cluster à partir d'un instantané
+
+Si votre cluster Kubernetes est endommagé, vous pouvez restaurer le cluster à partir d'un instantané.
+
+Les instantanés sont composés des données du cluster dans etcd, de la version Kubernetes et de la configuration du cluster dans le `cluster.yml.` Ces composants vous permettent de choisir parmi les options suivantes lors de la restauration d'un cluster à partir d'un instantané{nbsp}:
+
+* *Restaurer uniquement le contenu d'etcd:* Cette restauration est similaire à la restauration à partir des instantanés dans Rancher avant la version v2.4.0.
+* *Restaurer la version etcd et Kubernetes:* Cette option doit être utilisée si une mise à niveau de Kubernetes est la raison pour laquelle votre cluster échoue, et que vous n'avez apporté aucun changement à la configuration du cluster.
+* *Restaurer les versions etcd, Kubernetes et la configuration du cluster:* Cette option doit être utilisée si vous avez changé à la fois la version de Kubernetes et la configuration du cluster lors de la mise à niveau.
+
+Lors du retour à une version Kubernetes antérieure, les {xref-ds-backup-restore}#_configurer_la_stratégie_de_mise_à_niveau[options de stratégie de mise à niveau] sont ignorées. Les nœuds de travail ne sont pas isolés ou vidés avant d'être rétablis à l'ancienne version de Kubernetes, afin qu'un cluster non sain puisse être restauré plus rapidement à un état sain.
+
+[NOTE]
+.Condition préalable :
+====
+Pour restaurer des instantanés depuis S3, le cluster doit être configuré pour {xref-ds-backup}#_configurer_des_instantanés_récurrents[prendre des instantanés récurrents sur S3.]
+====
+
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Dans la page *Clusters*, allez au cluster où vous souhaitez voir les instantanés et cliquez sur le nom du cluster.
+. Cliquez sur l'onglet *Snapshots* pour voir la liste des instantanés enregistrés.
+. Allez à l'instantané que vous souhaitez restaurer et cliquez sur *⋮ > Restaurer*.
+. Sélectionnez un *Type de restauration*.
+. Cliquez sur *Restaurer*.
+
+*Résultat :* Le cluster passera en état `updating` et le processus de restauration des nœuds `etcd` à partir de l'instantané commencera. Le cluster est restauré lorsqu'il revient à un état `active`.
+
+[#_restoring_a_cluster_from_a_snapshot_when_the_controlplane_etcd_are_completely_unavailable]
+== Restaurer un cluster à partir d'un instantané lorsque le plan de contrôle/etcd sont complètement indisponibles.
+
+Dans un scénario de récupération après sinistre, le plan de contrôle et les nœuds etcd gérés par Rancher dans un cluster en aval peuvent ne plus être disponibles ou fonctionner. Le cluster peut être reconstruit en ajoutant à nouveau des nœuds de plan de contrôle et etcd, suivi de la restauration à partir d'un instantané disponible.
+
+Si vous avez une défaillance complète du cluster, vous devez supprimer tous les nœuds/machines etcd de votre cluster avant de pouvoir ajouter un "nouveau" nœud etcd pour la restauration.
+
+[NOTE]
+====
+Si vous utilisez {xref-ds-backup}#_local_backup_target[instantanés locaux], il est *TRÈS* important de vous assurer que vous sauvegardez l'instantané correspondant que vous souhaitez restaurer à partir du dossier `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/` sur le nœud etcd que vous allez supprimer. Vous pouvez copier l'instantané sur votre nouveau nœud dans le dossier `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/`. De plus, si vous utilisez des instantanés locaux et que vous restaurez sur un nouveau nœud, la restauration ne peut pas être effectuée via l'interface utilisateur pour le moment.
+====
+
+. Supprimez tous les nœuds etcd de votre cluster.
+ .. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+ .. Dans la page *Clusters*, allez au cluster où vous souhaitez supprimer des nœuds.
+ .. Dans l'onglet *Machines*, cliquez sur *⋮ > Supprimer* sur chaque nœud que vous souhaitez supprimer. Au départ, vous verrez les nœuds suspendus dans un état `deleting`, mais une fois que tous les nœuds etcd sont en cours de suppression, ils seront supprimés ensemble. Cela est dû au fait que Rancher voit tous les nœuds etcd en cours de suppression et procède à "court-circuiter" la logique de suppression sécurisée d'etcd.
+. Après que tous les nœuds etcd aient été supprimés, ajoutez le nouveau nœud etcd à partir duquel vous prévoyez de restaurer. Attribuez au nouveau nœud le rôle de `all` (etcd, plan de contrôle et worker).
+ ** Si le nœud était précédemment dans un cluster, {xref-clean-cluster-nodes}#_cleaning_up_nodes[nettoyez le nœud] d'abord.
+ ** Pour les clusters personnalisés, allez à l'onglet *Inscription* et cochez la case pour `etcd, controlplane, and worker`. Ensuite, copiez et exécutez la commande d'inscription sur votre nœud.
+ ** Pour les clusters de pilotes de nœuds, un nouveau nœud est provisionné automatiquement.
++
+À ce stade, Rancher indiquera qu'une restauration à partir d'un instantané etcd est requise.
++
+. Restaurez à partir d'un instantané etcd.
++
+[NOTE]
+====
+Comme le nœud etcd est un nœud propre, vous devrez peut-être créer manuellement le chemin `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/`.
+====
++
+ ** Pour les instantanés S3, restaurez en utilisant l'interface utilisateur.
+  ... Cliquez sur l'onglet *Snapshots* pour voir la liste des instantanés enregistrés.
+  ... Allez à l'instantané que vous souhaitez restaurer et cliquez sur *⋮ > Restaurer*.
+  ... Sélectionnez un *Type de restauration*.
+  ... Cliquez sur *Restaurer*.
+ ** Pour les instantanés locaux, la restauration via l'interface utilisateur n'est *pas* disponible.
+  ... Dans le coin supérieur droit, cliquez sur *⋮ > Modifier YAML*.
+  ... L'exemple YAML ci-dessous peut être ajouté sous votre `rkeConfig` pour configurer la restauration etcd{nbsp}:
++
+[,yaml]
+----
+  ...
+  rkeConfig:
+    etcdSnapshotRestore:
+      name: <string> # This field is required. Refers to the filename of the associated etcdsnapshot object.
+  ...
+----
++
+. Après une restauration réussie, vous pouvez augmenter le nombre de vos nœuds etcd jusqu'à la redondance souhaitée.

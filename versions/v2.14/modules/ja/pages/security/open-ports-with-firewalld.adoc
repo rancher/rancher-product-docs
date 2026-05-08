@@ -1,0 +1,132 @@
+= firewalldを使用したポートの開放
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/open-ports-with-firewalld.adoc 
+:product-path: security/open-ports-with-firewalld.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+[WARNING]
+====
+
+firewalldを有効にすると、深刻なネットワーク通信の問題が発生する可能性があります。
+
+適切なネットワーク機能のため、RKE2を実行しているシステムではfirewalldを無効にする必要があります。 https://documentation.suse.com/cloudnative/rke2/latest/en/known_issues.html#_firewalld_conflicts_with_default_networking[firewalldは、RKE2のデフォルトのネットワーキングスタックであるCanalと競合します。]
+
+Kubernetes 1.19以降を実行しているシステムでもfirewalldを無効にする必要があります。
+
+Kubernetes 1.18以前を実行しているシステムでfirewalldを有効にする場合、これがネットワーキングの問題を引き起こす可能性があることを理解してください。KubernetesのCNIは、firewalldなどの外部ファイアウォールとは独立して、iptablesおよびネットワーキングルールを動的に更新します。CNIと外部ファイアウォールが競合すると、予期しない動作が発生する可能性があります。
+====
+
+
+Linuxの一部のディストリビューション https://en.wikipedia.org/wiki/Red_Hat_Enterprise_Linux#Rebuilds[RHELから派生した,]、Oracle Linuxを含むものでは、Helmとの通信をブロックするデフォルトのファイアウォールルールが設定されている可能性があります。
+
+たとえば、AWSのあるOracle Linuxイメージには、HelmがTillerと通信するのを妨げるREJECTルールがあります。
+
+----
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+ACCEPT     all  --  anywhere             anywhere             state RELATED,ESTABLISHED
+ACCEPT     icmp --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere
+ACCEPT     tcp  --  anywhere             anywhere             state NEW tcp dpt:ssh
+REJECT     all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination
+REJECT     all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+----
+
+デフォルトのファイアウォールルールは、次のコマンドで確認できます：
+
+----
+sudo iptables --list
+----
+
+このセクションでは、`firewalld`を使用して、高可用性のRancherサーバークラスター内のノードに対して{xref-install-reqs}#_port_requirements[ファイアウォールポートルール]を適用する方法について説明します。
+
+[#_prerequisite]
+== 前提条件
+
+v7.x以降の``firewalld``をインストールします：
+
+----
+yum install firewalld
+systemctl start firewalld
+systemctl enable firewalld
+----
+
+[#_applying_firewall_port_rules]
+== ファイアウォールポートルールの適用
+
+Rancherの高可用性インストール手順では、Rancherサーバーはetcd、controlplane、workerの3つのKubernetesロールを持つ3つのノードに設定されます。Rancherサーバーノードがすべて3つのロールを持っている場合は、各ノードで次のコマンドを実行してください：
+
+----
+firewall-cmd --permanent --add-port=22/tcp
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=2379/tcp
+firewall-cmd --permanent --add-port=2380/tcp
+firewall-cmd --permanent --add-port=6443/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+----
+
+Rancherサーバーノードが別々のロールを持っている場合は、ノードのロールに基づいて次のコマンドを使用してください：
+
+----
+# For etcd nodes, run the following commands:
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=2379/tcp
+firewall-cmd --permanent --add-port=2380/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+
+# For control plane nodes, run the following commands:
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=6443/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+
+# For worker nodes, run the following commands:
+firewall-cmd --permanent --add-port=22/tcp
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+----
+
+`firewall-cmd`コマンドがノードで実行された後、次のコマンドを使用してファイアウォールルールを有効にします：
+
+----
+firewall-cmd --reload
+----
+
+*結果:*ファイアウォールが更新され、HelmがRancherサーバーノードと通信できるようになります。

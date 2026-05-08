@@ -1,0 +1,212 @@
+= Resolvendo problemas no {rancher-product-name} Cluster Kubernetes do Servidor
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-19
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc 
+:product-path: installation-and-upgrade/troubleshooting/troubleshooting.adoc
+ifeval::["{build-type}" != "community"]
+:xref-tls-secrets: xref:installation-and-upgrade/resources/tls-secrets.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-tls-secrets: xref:getting-started/installation-and-upgrade/resources/add-tls-secrets.adoc
+endif::[]
+
+Esta seção descreve como resolver problemas em uma instalação do Rancher em um cluster Kubernetes.
+
+[#_relevant_namespaces]
+== Namespaces Relevantes
+
+A maior parte da resolução de problemas será feita em objetos nesses 3 namespaces.
+
+* `cattle-system` - implantação `rancher` e pods.
+* `traefik` - Pods e serviços do controlador de Ingress.
+* `cert-manager` - `cert-manager` pods.
+
+[#__default_backend_404]
+== "backend padrão - 404"
+
+Várias coisas podem fazer com que o controlador de Ingress não encaminhe o tráfego para sua instância do Rancher. Na maioria das vezes, isso se deve a uma configuração SSL incorreta.
+
+Coisas a verificar
+
+* <<_check_if_rancher_is_running,O Rancher está em execução>>
+* <<_cert_cn_is_kubernetes_ingress_controller_fake_certificate,O CN do Certificado é "Certificado Falso do Controlador de Ingress do Kubernetes">>
+
+[#_check_if_rancher_is_running]
+== Verifique se o Rancher está em execução
+
+Use `kubectl` para verificar o namespace do sistema `cattle-system` e ver se os pods do Rancher estão em estado de execução.
+
+----
+kubectl -n cattle-system get pods
+
+NAME                           READY     STATUS    RESTARTS   AGE
+pod/rancher-784d94f59b-vgqzh   1/1       Running   0          10m
+----
+
+Se o estado não for `Running`, execute um `describe` no pod e verifique os Eventos.
+
+----
+kubectl -n cattle-system describe pod
+
+...
+Events:
+  Type     Reason                 Age   From                Message
+  ----     ------                 ----  ----                -------
+  Normal   Scheduled              11m   default-scheduler   Successfully assigned rancher-784d94f59b-vgqzh to localhost
+  Normal   SuccessfulMountVolume  11m   kubelet, localhost  MountVolume.SetUp succeeded for volume "rancher-token-dj4mt"
+  Normal   Pulling                11m   kubelet, localhost  pulling image "rancher/rancher:v2.0.4"
+  Normal   Pulled                 11m   kubelet, localhost  Successfully pulled image "rancher/rancher:v2.0.4"
+  Normal   Created                11m   kubelet, localhost  Created container
+  Normal   Started                11m   kubelet, localhost  Started container
+----
+
+[#_check_the_rancher_logs]
+== Verifique os Logs do Rancher
+
+Use `kubectl` para listar os pods.
+
+----
+kubectl -n cattle-system get pods
+
+NAME                           READY     STATUS    RESTARTS   AGE
+pod/rancher-784d94f59b-vgqzh   1/1       Running   0          10m
+----
+
+Use `kubectl` e o nome do pod para listar os logs do pod.
+
+----
+kubectl -n cattle-system logs -f rancher-784d94f59b-vgqzh
+----
+
+[#_cert_cn_is_kubernetes_ingress_controller_fake_certificate]
+== O CN do Certificado é "Kubernetes Ingress Controller Fake Certificate"
+
+Use seu navegador para verificar os detalhes do certificado. Se disser que o Nome Comum é "Kubernetes Ingress Controller Fake Certificate", algo pode ter dado errado ao ler ou emitir seu certificado SSL.
+
+[NOTE]
+====
+
+Se você estiver usando o LetsEncrypt para emitir certificados, pode levar alguns minutos para emitir o certificado.
+====
+
+
+[#_checking_for_issues_with_cert_manager_issued_certs_rancher_generated_or_letsencrypt]
+== Verificando problemas com certificados emitidos pelo cert-manager (Gerados pelo Rancher ou LetsEncrypt)
+
+`cert-manager` tem 3 partes.
+
+* Pod `cert-manager` no namespace `cert-manager`.
+* Objeto `Issuer` no namespace `cattle-system`.
+* Objeto `Certificate` no namespace `cattle-system`.
+
+Trabalhe de trás para frente e faça um `kubectl describe` em cada objeto e verifique os eventos. Você pode descobrir o que pode estar faltando.
+
+Por exemplo, há um problema com o Emissor:
+
+----
+kubectl -n cattle-system describe certificate
+...
+Events:
+  Type     Reason          Age                 From          Message
+  ----     ------          ----                ----          -------
+  Warning  IssuerNotReady  18s (x23 over 19m)  cert-manager  Issuer rancher not ready
+----
+
+----
+kubectl -n cattle-system describe issuer
+...
+Events:
+  Type     Reason         Age                 From          Message
+  ----     ------         ----                ----          -------
+  Warning  ErrInitIssuer  19m (x12 over 19m)  cert-manager  Error initializing issuer: secret "tls-rancher" not found
+  Warning  ErrGetKeyPair  9m (x16 over 19m)   cert-manager  Error getting keypair for CA issuer: secret "tls-rancher" not found
+----
+
+[#_checking_for_issues_with_your_own_ssl_certs]
+== Verificando problemas com seus próprios certificados SSL
+
+Seus certificados são aplicados diretamente ao objeto Ingress no namespace `cattle-system`.
+
+Verifique o status do objeto Ingress e veja se está pronto.
+
+----
+kubectl -n cattle-system describe ingress
+----
+
+Se estiver pronto e o SSL ainda não estiver funcionando, você pode ter um certificado ou segredo malformado.
+
+Verifique os logs do nginx-ingress-controller. Como o nginx-ingress-controller tem múltiplos contêineres em seu pod, você precisará especificar o nome do contêiner.
+
+----
+kubectl logs -n traefik traefik-6b94b8b688-bngw2
+...
+W0705 23:04:58.240571       7 backend_ssl.go:49] error obtaining PEM from secret cattle-system/tls-rancher-ingress: error retrieving secret cattle-system/tls-rancher-ingress: secret cattle-system/tls-rancher-ingress was not found
+----
+
+[#_no_matches_for_kind_issuer]
+== Nenhuma correspondência para o tipo "Issuer"
+
+A opção de configuração SSL que você escolheu requer que o cert-manager esteja instalado antes de instalar o Rancher, caso contrário, o seguinte erro é exibido:
+
+----
+Error: validation failed: unable to recognize "": no matches for kind "Issuer" in version "certmanager.k8s.io/v1alpha1"
+----
+
+Instale o cert-manager e tente instalar o Rancher novamente.
+
+[#_canal_pods_show_ready_2_3]
+== Canal Pods mostra PRONTO 2/3
+
+A causa mais comum deste problema é que a porta 8472/UDP não está aberta entre os nós. Verifique seu gateway de segurança local, roteamento de rede ou grupos de segurança.
+
+Uma vez que o problema de rede seja resolvido, `canal` os pods devem sofrer timeout e reiniciar para restabelecer suas conexões.
+
+[#_failed_to_dial_to_var_run_docker_sock_ssh_rejected_administratively_prohibited_open_failed]
+== Falha ao conectar ao /var/run/docker.sock: ssh: rejeitado: administrativamente proibido (falha ao abrir)
+
+Algumas causas deste erro incluem:
+
+* O usuário especificado para conectar não tem permissão para acessar o socket do Docker. Isso pode ser verificado fazendo login no host e executando o comando `docker ps`:
+
+ $ ssh user@server
+ user@server$ docker ps
+ CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                    NAMES
+
+Veja https://docs.docker.com/install/linux/linux-postinstall/#manage-docker-as-a-non-root-user[Gerenciar o Docker como um usuário não-root] como configurar isso corretamente.
+
+* Ao usar RedHat/CentOS como sistema operacional, você não pode usar o usuário `root` para se conectar aos nós devido a https://bugzilla.redhat.com/show_bug.cgi?id=1527565[Bugzilla #1527565]. Você precisará adicionar um usuário separado e configurá-lo para acessar o socket do Docker. Veja https://docs.docker.com/install/linux/linux-postinstall/#manage-docker-as-a-non-root-user[Gerenciar o Docker como um usuário não-root] como configurar isso corretamente.
+* A versão do servidor SSH não é a versão 6.7 ou superior. Isso é necessário para que o encaminhamento de socket funcione, o que é usado para se conectar ao socket do Docker via SSH. Isso pode ser verificado usando `sshd -V` no host ao qual você está se conectando, ou usando netcat:
+
+ $ nc xxx.xxx.xxx.xxx 22
+ SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.10
+
+[#_failed_to_dial_ssh_using_address_xxx_xxx_xxx_xxx_xx_ssh_handshake_failed_ssh_unable_to_authenticate_attempted_methods_none_publickey_no_supported_methods_remain]
+== Falha ao conectar via ssh usando o endereço [xxx.xxx.xxx.xxx:xx]: ssh: falha na negociação: ssh: não foi possível autenticar, métodos tentados [nenhum chave pública], nenhum método suportado restante
+
+O arquivo de chave especificado como `ssh_key_path` não está correto para acessar o nó. Verifique novamente se você especificou o `ssh_key_path` correto para o nó e se você especificou o usuário correto para se conectar.
+
+[#_cannot_connect_to_the_docker_daemon_at_unix_var_run_docker_sock_is_the_docker_daemon_running]
+== Não é possível conectar ao daemon do Docker em unix:///var/run/docker.sock. O daemon do Docker está em execução?
+
+O nó não é acessível nas configurações `address` e `port`.
+
+[#_agent_reports_tls_errors]
+== O agente relata erros de TLS
+
+Ao usar o Rancher, você pode encontrar mensagens de erro do `fleet-agent`, `system-agent` ou `cluster-agent`, como a mensagem abaixo:
+
+----
+tls: failed to verify certificate: x509: failed to load system roots and no roots provided; readdirent /dev/null: not a directory
+----
+
+Isso ocorre quando o Rancher foi configurado com `agent-tls-mode` definido como `strict`, mas não conseguiu encontrar cacerts na configuração `cacert`. Para resolver o problema, defina o `agent-tls-mode` como `system-store`, ou faça o upload do CA para o Rancher conforme descrito em {xref-tls-secrets}[Adicionando Segredos TLS].
+
+[#_new_cluster_deployment_is_stuck_in_waiting_for_agent_to_check_in]
+== A implantação do novo cluster está presa em "Aguardando o agente se registrar"
+
+Quando o Rancher tem `agent-tls-mode` definido como `strict`, novos clusters podem falhar na provisão e relatar uma mensagem de erro genérica "Aguardando o agente se registrar". A causa raiz disso é semelhante ao caso acima de erros de TLS - o agente do Rancher não consegue determinar qual CA o Rancher está usando (ou não consegue verificar se o certificado do Rancher está realmente assinado pela autoridade certificadora especificada).
+
+Para resolver o problema, defina o `agent-tls-mode` como `system-store` ou faça o upload do CA para o Rancher conforme descrito em {xref-tls-secrets}[Adicionando Segredos TLS].

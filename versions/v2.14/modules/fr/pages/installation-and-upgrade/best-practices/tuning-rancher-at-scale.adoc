@@ -1,0 +1,155 @@
+= Optimisation et meilleures pratiques pour {rancher-product-name} à grande échelle
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/tuning-and-best-practices-for-rancher-at-scale.adoc 
+:product-path: installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc
+ifeval::["{build-type}" != "community"]
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/communicating-with-downstream-clusters.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+:xref-tips-for-running-rancher: xref:installation-and-upgrade/best-practices/tips-for-running-rancher.adoc
+:xref-tuning-etcd-for-large-installs: xref:installation-and-upgrade/best-practices/tuning-etcd-for-large-installs.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+:xref-tips-for-running-rancher: xref:reference-guides/best-practices/rancher-server/tips-for-running-rancher.adoc
+:xref-tuning-etcd-for-large-installs: xref:how-to-guides/advanced-user-guides/tune-etcd-for-large-installs.adoc
+endif::[]
+
+Ce guide décrit les meilleures pratiques et les approches d'ajustement pour faire évoluer les configurations de Rancher et les défis associés à cette évolution. À mesure que les systèmes se développent, les performances vont naturellement diminuer, mais il existe des étapes qui peuvent minimiser la charge sur Rancher et optimiser sa capacité à gérer des infrastructures plus grandes.
+
+[#_optimizing_rancher_performance]
+== Optimisation des performances de Rancher
+
+* Maintenez Rancher à jour avec les correctifs. Nous améliorons continuellement Rancher avec des améliorations de performance et des correctifs. La dernière version de Rancher contient toutes les améliorations accumulées en matière de performance et de stabilité, ainsi que des mises à jour basées sur l'expérience des développeurs et les retours des utilisateurs.
+* Augmentez toujours progressivement la capacité, et surveillez et observez tout changement de comportement pendant ce processus. Il est généralement plus facile de résoudre les problèmes de performance dès qu'ils apparaissent, avant que d'autres problèmes n'obscurcissent la cause profonde.
+* Réduisez la latence réseau entre le cluster Rancher en amont et les clusters en aval dans la mesure du possible. Notez que la latence est, entre autres facteurs, fonction de la distance géographique - si vous avez besoin de clusters ou de nœuds répartis à travers le monde, envisagez plusieurs installations de Rancher.
+
+[#_minimizing_load_on_the_upstream_cluster]
+== Minimiser la charge sur le cluster en amont
+
+Lors de l'augmentation de la capacité de Rancher, un goulot d'étranglement typique est la croissance des ressources dans le cluster Kubernetes en amont (local). Le cluster en amont contient des informations pour tous les clusters en aval. De nombreuses opérations qui s'appliquent aux clusters en aval créent de nouveaux objets dans le cluster en amont et nécessitent des calculs de la part des gestionnaires fonctionnant dans le cluster en amont.
+
+[#_minimizing_third_party_software_on_the_upstream_cluster]
+=== Minimiser les logiciels tiers sur le cluster en amont
+
+Les recommandations décrites dans le {xref-tips-for-running-rancher}#_minimize_third-party_software_on_the_upstream_cluster[recommandations générales pour Rancher] sont particulièrement importantes dans un contexte de grande échelle.
+
+[#_managing_your_object_counts]
+=== Gestion du nombre d'objets
+
+Etcd est la base de données sous-jacente pour Kubernetes et pour Rancher. La base de données peut éventuellement rencontrer des limitations quant au nombre d'un seul type de ressource Kubernetes qu'elle peut stocker. Les limites exactes varient et dépendent de plusieurs facteurs. Cependant, l'expérience indique que des problèmes de performance surviennent fréquemment lorsque le nombre d'objets d'un seul type de ressource dépasse 60 000. Souvent, ce type est `RoleBinding`.
+
+C'est typique dans Rancher, car de nombreuses opérations créent de nouveaux objets `RoleBinding` dans le cluster en amont comme effet secondaire.
+
+Vous pouvez réduire le nombre de `RoleBindings` dans le cluster en amont de la manière suivante{nbsp}:
+
+* Ajoutez des utilisateurs aux clusters et projets uniquement lorsque cela est nécessaire.
+* Supprimez les clusters et projets lorsqu'ils ne sont plus nécessaires.
+* N'utilisez des rôles personnalisés que si nécessaire.
+* Utilisez le moins de règles possible dans les rôles personnalisés.
+* Considérez si l'ajout d'un rôle à un utilisateur est redondant.
+* Envisagez d'utiliser moins de clusters, mais plus puissants.
+* Les permissions Kubernetes sont toujours « additives » (liste d'autorisation) plutôt que « soustractives » (liste de refus). Essayez de minimiser les configurations qui donnent accès à tout sauf un aspect d'un cluster, d'un projet ou d'un espace de noms, car cela entraînera la création d'un grand nombre d'objets `RoleBinding`.
+* Expérimentez pour voir si la création de nouveaux projets ou clusters se traduit par moins de `RoleBindings` pour votre cas d'utilisation spécifique.
+
+[#_using_external_authentication]
+=== Utilisation de l'authentification externe
+
+Si vous avez cinquante utilisateurs ou plus, vous devez configurer un {xref-authn-authz}[fournisseur d'authentification externe]. C'est nécessaire pour de meilleures performances.
+
+Après avoir configuré l'authentification externe, assurez-vous d'attribuer des permissions aux groupes plutôt qu'aux utilisateurs individuels. Cela aide à réduire le nombre d'objets `RoleBinding`.
+
+[#_rolebinding_count_estimation]
+=== Estimation du nombre de liaisons de rôle
+
+Prédire combien d'objets `RoleBinding` une configuration donnée créera est compliqué. Cependant, les considérations suivantes peuvent offrir une estimation approximative{nbsp}:
+
+* Pour une estimation minimale, utilisez la formule `32C + U + 2UaC + 8P + 5Pa`.
+ ** `C` est le nombre total de clusters.
+ ** `U` est le nombre total d'utilisateurs.
+ ** `Ua` est le nombre moyen d'utilisateurs ayant une adhésion à un cluster.
+ ** `P` est le nombre total de projets.
+ ** `Pa` est le nombre moyen d'utilisateurs ayant une adhésion à un projet.
+* Le nombre de `RoleBindings` augmente linéairement avec le nombre de clusters, de projets et d'utilisateurs.
+
+[#_using_new_apps_over_legacy_apps]
+=== Utilisation de nouvelles applications par rapport aux applications héritées
+
+Rancher utilise deux ressources d'application Kubernetes{nbsp}: `apps.projects.cattle.io` et `apps.cattle.cattle.io`. Les applications héritées, représentées par `apps.projects.cattle.io`, ont été introduites avec l'ancienne interface utilisateur du gestionnaire de cluster et sont désormais obsolètes. Les applications actuelles, représentées par `apps.catalog.cattle.io`, se trouvent dans l'interface utilisateur de l'explorateur de cluster pour leur cluster respectif. Les applications `Apps.cattle.cattle.io` sont préférables car leurs données résident dans des clusters en aval, ce qui libère des ressources dans le cluster en amont.
+
+Vous devez supprimer toutes les applications héritées restantes qui apparaissent dans l'interface utilisateur du gestionnaire de cluster et les remplacer par des applications dans l'interface utilisateur de l'explorateur de cluster. Créez toutes les nouvelles applications uniquement dans l'interface utilisateur de l'explorateur de cluster.
+
+[#_using_the_authorized_cluster_endpoint_ace]
+=== Utilisation du point de terminaison de cluster autorisé (ACE)
+
+Un {xref-arch-com-ds-cluster}#_4_point_de_terminaison_de_cluster_autorisé[Point de terminaison de cluster autorisé] (ACE) fournit un accès à l'API Kubernetes des clusters RKE2 et K3s provisionnés par Rancher. Lorsqu'il est activé, l'ACE ajoute un contexte aux fichiers kubeconfig générés pour le cluster. Le contexte utilise un point de terminaison direct vers le cluster, contournant ainsi Rancher. Cela réduit la charge sur Rancher dans les cas où l'accès API non médié est acceptable ou préférable. Voir {xref-arch-com-ds-cluster}#_4_point_de_terminaison_de_cluster_autorisé[Point de terminaison de cluster autorisé] pour plus d'informations et d'instructions de configuration.
+
+[#_reducing_event_handler_executions]
+=== Réduction des exécutions de gestionnaires d'événements
+
+La majeure partie de la logique de Rancher se déroule sur les gestionnaires d'événements. Ces gestionnaires d'événements s'exécutent sur un objet chaque fois que l'objet est mis à jour, et lorsque Rancher est démarré. De plus, ils s'exécutent toutes les 10 heures lorsque Rancher synchronise les caches. Dans les configurations à grande échelle, ces exécutions programmées entraînent d'énormes coûts de performance car chaque gestionnaire est exécuté sur chaque objet applicable. Cependant, l'exécution programmée des gestionnaires peut être désactivée avec la variable d'environnement `CATTLE_SYNC_ONLY_CHANGED_OBJECTS`. Si des pics d'allocation de ressources sont observés toutes les 10 heures, ce paramètre peut aider.
+
+La valeur pour `CATTLE_SYNC_ONLY_CHANGED_OBJECTS` peut être une liste séparée par des virgules des options suivantes. Les valeurs se réfèrent aux types de gestionnaires et de contrôleurs (les structures qui contiennent et exécutent des gestionnaires). Ajouter les types de contrôleurs à la variable désactive cet ensemble de contrôleurs de l'exécution de leurs gestionnaires dans le cadre de la resynchronisation du cache.
+
+* `mgmt` fait référence aux contrôleurs de gestion qui ne s'exécutent que sur un nœud Rancher.
+* `user` fait référence aux contrôleurs d'utilisateur qui s'exécutent pour chaque cluster. Certains d'entre eux s'exécutent sur le même nœud que les contrôleurs de gestion, tandis que d'autres s'exécutent dans le cluster en aval. Cette option cible les contrôleurs de gestion.
+* `scaled` fait référence aux contrôleurs à grande échelle qui s'exécutent sur chaque nœud Rancher. Vous devriez éviter de définir cette valeur, car les gestionnaires à grande échelle sont responsables de fonctions critiques et des changements peuvent perturber la stabilité du cluster.
+
+En résumé, si vous remarquez des pics d'utilisation du CPU toutes les 10 heures, ajoutez la variable d'environnement `CATTLE_SYNC_ONLY_CHANGED_OBJECTS` à votre déploiement Rancher (dans la liste `spec.containers.env`) avec la valeur `mgmt,user`.
+
+[#_optimizations_outside_of_rancher]
+== Optimisations en dehors de Rancher :
+
+Les facteurs d'influence importants sont la performance et la configuration du cluster sous-jacent. Le cluster en amont, s'il est mal configuré, peut introduire un goulot d'étranglement que le logiciel Rancher n'a aucune chance de résoudre.
+
+[#_manage_upstream_cluster_nodes_directly_with_rke2_product_name]
+=== Gérez directement les nœuds du cluster en amont avec {rke2-product-name}
+
+Comme Rancher peut être très exigeant sur le cluster en amont, surtout à grande échelle, vous devez avoir un contrôle administratif complet sur la configuration et les nœuds du cluster. Pour identifier la cause profonde de la consommation excessive de ressources, utilisez des techniques et des outils de dépannage Linux standard. Cela peut aider à distinguer si Rancher, Kubernetes ou les composants du système d'exploitation causent des problèmes.
+
+Bien que les services Kubernetes gérés facilitent le déploiement et l'exécution des clusters Kubernetes, ils sont déconseillés pour le cluster en amont dans des scénarios à grande échelle. Les services Kubernetes gérés limitent généralement l'accès à la configuration et aux informations sur les nœuds et services individuels.
+
+Utilisez RKE2 pour des cas d'utilisation à grande échelle.
+
+[#_keep_all_upstream_cluster_nodes_co_located]
+=== Gardez tous les nœuds du cluster en amont co-localisés
+
+Pour assurer une haute disponibilité, Kubernetes est conçu pour exécuter des nœuds et des composants de contrôle dans différentes zones. Cependant, si les nœuds et les composants du plan de contrôle sont situés dans différentes zones, le trafic réseau peut être plus lent.
+
+Le trafic entre les composants Rancher et l'API Kubernetes est particulièrement sensible à la latence réseau, tout comme le trafic etcd entre les nœuds.
+
+Pour améliorer les performances, exécutez tous les clusters de nœuds en amont au même endroit. En particulier, assurez-vous que la latence entre les nœuds etcd et Rancher est aussi faible que possible.
+
+[#_keeping_kubernetes_versions_up_to_date]
+=== Maintenir les versions de Kubernetes à jour
+
+Vous devez garder le cluster Kubernetes local à jour. Cela garantira que votre cluster dispose de toutes les améliorations de performance et des correctifs disponibles.
+
+[#_optimizing_etcd]
+=== Optimiser etcd
+
+Etcd est la base de données backend pour Kubernetes et pour Rancher. Il joue un rôle très important dans la performance de Rancher.
+
+Les deux principaux goulets d'étranglement de la performance de https://etcd.io/docs/v3.5/op-guide/performance/[etcd] sont la vitesse du disque et celle du réseau. Etcd doit fonctionner sur des nœuds dédiés avec une configuration réseau rapide et des SSD ayant un nombre élevé d'opérations d'entrée/sortie par seconde (IOPS). Pour plus d'informations concernant la performance d'etcd, consultez https://www.suse.com/support/kb/doc/?id=000020100[Performance lente d'etcd (tests de performance et optimisation)] et {xref-tuning-etcd-for-large-installs}[Optimisation d'etcd pour de grandes installations]. Des informations sur les disques peuvent également être trouvées dans le {xref-install-reqs}#_disks[Exigences d'installation].
+
+Il est préférable de faire fonctionner etcd sur exactement trois nœuds, car l'ajout de nœuds supplémentaires réduira la vitesse d'opération. Cela peut sembler contre-intuitif par rapport aux approches de mise à l'échelle courantes, mais c'est dû aux https://etcd.io/docs/v3.5/faq/#what-is-maximum-cluster-size[mécanismes de réplication d'etcd].
+
+La performance d'etcd sera également affectée négativement par la latence réseau entre les nœuds, car cela ralentira la communication réseau. Les nœuds etcd doivent être situés avec les nœuds Rancher.
+
+[#_browser_requirements]
+=== Configuration navigateur requise
+
+À grande échelle, Rancher transfère plus de données du cluster en amont vers les composants de l'interface utilisateur fonctionnant dans le navigateur, et ces composants doivent également effectuer davantage de traitement.
+
+Pour une performance optimale, assurez-vous que l'hôte exécutant le matériel répond à ces exigences{nbsp}:
+
+* Processeur Intel i5 de 10e génération 2020 (4 cœurs) ou équivalent
+* 8 Go de mémoire vive (RAM)
+* Bande passante totale du réseau vers le cluster en amont{nbsp}: 72 Mb/s (équivalent à un seul flux de lien Wi-Fi 4 802.11n, ~8 Mo/s de débit de téléchargement http)
+* Temps de réponse (temps de ping) du navigateur au cluster en amont{nbsp}: 150 ms ou moins

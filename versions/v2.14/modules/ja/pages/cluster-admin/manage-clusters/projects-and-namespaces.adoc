@@ -1,0 +1,248 @@
+= プロジェクトとKubernetesネームスペース{rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/projects-and-namespaces.adoc 
+:product-path: cluster-admin/manage-clusters/projects-and-namespaces.adoc
+:description: Rancherプロジェクトは、クラスタの管理負担を軽減し、マルチテナンシーをサポートします。プロジェクトを作成し、Kubernetesネームスペースに分割する方法を学びます。
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-persistent-storage: xref:cluster-admin/manage-clusters/persistent-storage/manage-persistent-storage.adoc
+:xref-configmaps: xref:cluster-admin/kubernetes-resources/configmaps.adoc
+:xref-workloads-and-pods: xref:cluster-admin/kubernetes-resources/workloads-and-pods/workloads-and-pods.adoc
+:xref-project-resource-quotas: xref:cluster-admin/project-admin/project-resource-quotas/project-resource-quotas.adoc
+:xref-custom-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/custom-roles.adoc
+:xref-http-encrypt: xref:security/encrypting-http.adoc
+:xref-namespaces: xref:cluster-admin/namespaces.adoc
+:xref-k8s-docker-registries: xref:cluster-admin/kubernetes-resources/kubernetes-and-docker-registries.adoc
+:xref-create-services: xref:cluster-admin/kubernetes-resources/create-services.adoc
+:xref-lb-and-ingress-controller: xref:cluster-admin/kubernetes-resources/load-balancer-and-ingress-controller/load-balancer-and-ingress-controller.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-persistent-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/index.adoc
+:xref-configmaps: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/configmaps.adoc
+:xref-workloads-and-pods: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/workloads-and-pods/index.adoc
+:xref-project-resource-quotas: xref:how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/index.adoc
+:xref-custom-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/custom-roles.adoc
+:xref-http-encrypt: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/encrypt-http-communication.adoc
+:xref-namespaces: xref:how-to-guides/new-user-guides/manage-namespaces.adoc
+:xref-k8s-docker-registries: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/kubernetes-and-docker-registries.adoc
+:xref-create-services: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/create-services.adoc
+:xref-lb-and-ingress-controller: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/load-balancer-and-ingress-controller/index.adoc
+endif::[]
+
+ネームスペースは、クラスタ内の仮想クラスタを可能にするKubernetesの概念であり、各自のアクセス制御とリソースクォータを持つ「仮想クラスタ」にクラスタを分割するのに役立ちます。
+
+プロジェクトはネームスペースのグループであり、Rancherによって導入された概念です。プロジェクトを使用すると、複数のネームスペースをグループとして管理し、それらの中でKubernetes操作を実行できます。プロジェクトを使用してマルチテナンシーをサポートできるため、チームは同じクラスタ内の他のプロジェクトにアクセスすることなく、クラスタ内のプロジェクトにアクセスできます。
+
+[NOTE]
+====
+プロジェクトはUI上で強調されていません。なぜなら、プロジェクトの範囲内でKubernetesリソースを作成する必要はないからです。ただし、{xref-secrets}#_creating_secrets_in_projects[Secrets]のようなリソースは、プロジェクトの範囲内で作成することができます。
+====
+
+
+このセクションでは、プロジェクトとネームスペースがRancherとどのように機能するかを説明します。
+
+[#_about_namespaces]
+== ネームスペースについて
+
+ネームスペースはKubernetesによって導入された概念です。 https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/[ネームスペースに関する公式Kubernetesドキュメント,]によると、
+
+[NOTE]
+====
+
+Kubernetesは、同じ物理クラスタに支えられた複数の仮想クラスタをサポートします。これらの仮想クラスタはネームスペースと呼ばれます。[...] ネームスペースは、複数のチームやプロジェクトにまたがる多くのユーザーがいる環境での使用を意図しています。数人から数十人のユーザーがいるクラスタでは、ネームスペースを作成したり考えたりする必要はありません。
+====
+
+
+ネームスペースは次の機能を提供します：
+
+* *名前の範囲を提供する:*リソースの名前はネームスペース内で一意である必要がありますが、ネームスペース間では一意である必要はありません。ネームスペースは互いに入れ子にすることはできず、各Kubernetesリソースは1つのネームスペースのみに存在できます。
+* *リソースクォータ:*ネームスペースは、複数のユーザー間でクラスタリソースを分割する方法を提供します。
+
+プロジェクトレベルでリソースを割り当てることができるため、プロジェクト内の各ネームスペースはそれらを使用できます。ネームスペースにリソースを明示的に割り当てることで、この継承をバイパスすることもできます。
+
+次のリソースをネームスペースに直接割り当てることができます：
+
+* {xref-workloads-and-pods}[ワークロード]
+* {xref-lb-and-ingress-controller}[ロードバランサー/イングレス]
+* {xref-create-services}[サービスディスカバリーレコード]
+* {xref-persistent-storage}[永続ボリューム要求]
+* {xref-http-encrypt}[証明書]
+* {xref-configmaps}[ConfigMaps]
+* {xref-k8s-docker-registries}[レジストリ]
+* {xref-secrets}[シークレット]
+
+バニラKubernetesクラスタのアクセス権を管理するために、クラスタ管理者は各ネームスペースごとにロールベースのアクセス制御ポリシーを設定します。Rancherでは、ユーザのパーミッションはプロジェクトレベルで割り当てられ、特定のプロジェクトに属する任意のネームスペースによって自動的に継承されます。
+
+ネームスペースの作成と移動に関する詳細は、{xref-namespaces}[ネームスペース]を参照してください。
+
+[#_role_based_access_control_issues_with_namespaces_and_kubectl]
+=== ネームスペースとkubectlに関するロールベースのアクセス制御の問題
+
+プロジェクトはRancherによって導入された概念であるため、kubectlには作成者がアクセスできるプロジェクトにネームスペースの作成を制限する機能はありません。
+
+つまり、プロジェクトスコープのパーミッションを持つ標準ユーザが`kubectl`を使用してネームスペースを作成すると、`kubectl`では新しいネームスペースを特定のプロジェクト内でスコープする必要がないため、使用できない場合があります。
+
+パーミッションがプロジェクトレベルに制限されている場合は、{xref-namespaces}[Rancherを通じてネームスペースを作成する]方が良いです。そうすることで、ネームスペースにアクセスするためのパーミッションを確保できます。
+
+標準ユーザがプロジェクトオーナーである場合、そのユーザはそのプロジェクト内でネームスペースを作成することができます。RancherのUIは、そのユーザがアクセスできるプロジェクトの範囲外でネームスペースを作成することを防ぎます。
+
+[#_about_projects]
+== プロジェクトについて
+
+階層に関しては：
+
+* クラスタにはプロジェクトが含まれる
+* プロジェクトにはネームスペースが含まれる
+
+プロジェクトを使用してマルチテナンシーをサポートできるため、チームは同じクラスタ内の他のプロジェクトにアクセスすることなく、クラスタ内のプロジェクトにアクセスできます。
+
+Kubernetesの基本バージョンでは、ロールベースのアクセス権やクラスターリソースなどの機能は、個々のネームスペースに割り当てられます。プロジェクトを使用すると、個人またはチームに複数のネームスペースへの同時アクセスを提供することで、時間を節約できます。
+
+プロジェクトを使用して、次のようなアクションを実行できます：
+
+* ユーザをネームスペースのグループに割り当てることができます（つまり、{xref-cluster-project-roles}[プロジェクトメンバーシップ]）。
+* プロジェクト内でユーザに特定のロールを割り当てます。ロールはオーナー、メンバー、読み取り専用、または{xref-custom-roles}[カスタム]です。
+* プロジェクトにリソースを割り当てます。
+
+クラスターを作成すると、自動的に2つのプロジェクトがその中に作成されます：
+
+* <<_the_clusters_default_project,デフォルトプロジェクト>>
+* <<_the_system_project,システムプロジェクト>>
+
+[#_the_clusters_default_project]
+=== クラスターのデフォルトプロジェクト
+
+Rancherでクラスターをプロビジョニングすると、自動的にクラスター用の`default`プロジェクトが作成されます。これはクラスターを始めるために使用できるプロジェクトですが、いつでも削除して、より説明的な名前のプロジェクトに置き換えることができます。
+
+デフォルトのネームスペース以上の必要がない場合、Rancherでは*デフォルト*プロジェクト以上は必要ありません。
+
+*デフォルト*プロジェクトを超える組織のレベルが必要な場合、Rancherでさらにプロジェクトを作成してネームスペース、アプリケーション、リソースを分離できます。
+
+[#_the_system_project]
+=== システムプロジェクト
+
+トラブルシューティングする際に、`system`プロジェクトを表示して、Kubernetesシステムの重要なネームスペースが適切に機能しているかどうかを確認できます。この簡単にアクセス可能なプロジェクトにより、個々のシステムネームスペースコンテナのトラブルシューティングを行う必要がなくなります。
+
+これを開くには、クラスターのビューを開き、menu:クラスター[プロジェクト/ネームスペース]をクリックします。このビューは、`system`プロジェクト内のすべてのネームスペースを表示します。
+
+`system`プロジェクト：
+
+* クラスターをプロビジョニングすると自動的に作成されます。
+* `v3/settings/system-namespaces`に存在するすべてのネームスペースを、存在する場合はリストします。
+* さらにネームスペースを追加したり、そのネームスペースを他のプロジェクトに移動したりできます。
+* クラスターの操作に必要なため、削除できません。
+
+[NOTE]
+====
+
+プロジェクトネットワークの分離オプションが有効なRKE2/K3sクラスターでは、`system`プロジェクトがプロジェクトネットワークの分離オプションを上書きし、他のプロジェクトと通信し、ログを収集し、ヘルスを確認できるようにします。
+====
+
+
+[#_project_authorization]
+== プロジェクトの認可
+
+標準ユーザーは、次の2つの状況でのみプロジェクトアクセスが許可されます：
+
+* 管理者、クラスターオーナー、またはクラスターのメンバーが明示的に標準ユーザーをプロジェクトの*メンバー*タブに追加します。
+* 標準ユーザーは、自分が作成したプロジェクトにアクセスできます。
+
+
+[#_creating_projects]
+== プロジェクトの作成
+
+このセクションでは、名前を付け、オプションのポッドセキュリティポリシー、メンバー、およびリソースクォータを持つ新しいプロジェクトを作成する方法について説明します。
+
+. <<_name_a_new_project,新しいプロジェクトに名前を付けます。>>
+. <<_recommended_add_project_members,推奨：プロジェクトメンバーを追加します。>>
+. <<_optional_add_resource_quotas,オプション：リソースクォータを追加します。>>
+
+[#_name_a_new_project]
+=== 新しいプロジェクトに名前を付けてください。
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、プロジェクトを作成したいクラスターに移動し、*Explore*をクリックします。
+. menu:クラスター[プロジェクト/名前空間]をクリックします。
+. *プロジェクトを作成*をクリックします。
+. *プロジェクト名*を入力してください。
+
+[#_recommended_add_project_members]
+=== 推奨:プロジェクトメンバーを追加
+
+*メンバー*セクションを使用して、他のユーザーにプロジェクトへのアクセスと役割を提供します。
+
+デフォルトでは、あなたのユーザーはプロジェクトの`Owner`として追加されます。
+
+[NOTE]
+.権限に関する注意事項：
+====
+
+* プロジェクトに`Owner`または`Member`ロールが割り当てられたユーザーは、自動的に`namespace creation`ロールを継承します。ただし、このロールは https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole[Kubernetes ClusterRole]であり、その範囲はクラスタ内のすべてのプロジェクトに及びます。したがって、プロジェクトに明示的に`Owner`または`Member`ロールが割り当てられたユーザーは、`Read Only`ロールのみが割り当てられている他のプロジェクトでネームスペースを作成できます。
+* デフォルトでは、`project-member`のRancherロールは`Kubernetes-edit`ロールを継承し、`project-owner`ロールは`Kubernetes-admin`ロールを継承します。そのため、`project-member`および`project-owner`ロールはネームスペースの管理を許可し、ネームスペースの作成および削除が可能です。
+* `Custom`を選択して、カスタムロールを即座に作成します：{xref-cluster-project-roles}#_custom_project_roles[カスタムプロジェクトロール]。
+====
+
+
+メンバーを追加するには：
+
+. *メンバー*タブで、*追加*をクリックします。
+. *メンバーを選択*フィールドから、プロジェクトアクセスを割り当てたいユーザーまたはグループを検索します。外部認証が有効になっている場合にのみ、グループを検索できます。
++
+[NOTE]
+.備考
+====
+* 結果が表示されるには、検索ボックスに少なくとも2文字を入力する必要があります。
+* ユーザーは、ユーザー名または表示名に基づいて検索できます。
+* 検索は接頭辞ベースです（例：`Stan Dard`という名前のユーザーは、`Sta`を検索すると表示されますが、`Dar`を検索すると表示されません）かつ大文字と小文字を区別します。
+====
+
+. *プロジェクトの権限*セクションで、役割を選択します。詳細については、{xref-cluster-project-roles}[プロジェクトロールに関するドキュメント]を参照してください。
+
+[#_optional_add_resource_quotas]
+=== オプション:リソースクォータの追加
+
+リソースクォータは、プロジェクト（およびそのネームスペース）が消費できるリソースを制限します。詳細については、{xref-project-resource-quotas}[リソースクォータ]を参照してください。
+
+リソースクォータを追加するには、
+
+. *リソースクォータ*タブで、*リソースの追加*をクリックします。
+. *リソースタイプ*を選択してください。詳細については、{xref-project-resource-quotas}[リソースクォータ]を参照してください。
+. *プロジェクト制限*と*ネームスペースのデフォルト制限*の値を入力してください。
+. *オプション:*プロジェクト内で起動されるすべてのコンテナに適用される*コンテナのデフォルトリソース制限*を指定してください。このパラメータは、リソースクォータによって設定されたCPUまたはメモリ制限がある場合に推奨されます。個々のネームスペースまたはコンテナレベルで上書きすることができます。詳細については、{xref-project-resource-quotas}[コンテナのデフォルトリソース制限]を参照してください。
+. ［*作成*］をクリックします。
+
+*結果:*プロジェクトが作成されました。クラスターの*プロジェクト/ネームスペース*ビューから確認できます。
+
+|===
+| フィールド | 説明
+
+| プロジェクト制限
+| プロジェクトの全体的なリソース制限。
+
+| ネームスペースデフォルト制限
+| 各ネームスペースで利用可能なデフォルトのリソース制限。この制限は、作成時にプロジェクト内の各ネームスペースに伝播されます。すべてのプロジェクトネームスペースの合計制限はプロジェクト制限を超えてはなりません。
+|===
+
+[#_deleting_projects]
+== プロジェクトの削除
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、プロジェクトが接続されているクラスターに移動し、*探索*をクリックします。
+. menu:クラスター[プロジェクト/名前空間]をクリックします。
+. 削除したいプロジェクトを見つけて、*⋮*をクリックします。
+. *削除*を選択します。
+
+プロジェクトを削除すると、以前そのプロジェクトに関連付けられていたネームスペースはクラスターに残ります。これらのネームスペースは、Rancher UIの*プロジェクトにない*タブの*プロジェクト/ネームスペース*ページで見つけることができます。これらのネームスペースをプロジェクトに再割り当てするには、{xref-namespaces}#_moving_namespaces_to_another_project[移動]します。
+
+[#_further_reading]
+== 詳細情報
+
+xref:api/quickstart.adoc[パブリックAPI]を通じて、よりプログラム的にプロジェクトやプロジェクトメンバーを作成できます。詳細については、xref:api/workflows/projects.adoc[プロジェクトワークフロードキュメント]をご覧ください。

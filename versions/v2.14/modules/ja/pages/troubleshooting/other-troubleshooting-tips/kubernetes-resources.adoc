@@ -1,0 +1,291 @@
+= Kubernetesリソース
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-23
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/kubernetes-resources.adoc 
+:product-path: troubleshooting/other-troubleshooting-tips/kubernetes-resources.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-enable-istio-in-namespace: xref:observability/istio/guides/enable-istio-in-namespace.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-enable-istio-in-namespace: xref:how-to-guides/advanced-user-guides/istio-setup-guide/enable-istio-in-namespace.adoc
+endif::[]
+
+このページに記載されているコマンド/手順は、最も重要なKubernetesリソースを確認し、{xref-launch-k8s-with-rancher}[Rancherが起動したKubernetes]クラスターに適用するために使用できます。
+
+正しいkubeconfig（例えば、Rancher HA用の`export KUBECONFIG=$PWD/kube_config_cluster.yml`）が設定されていることを確認するか、UIを介して埋め込まれたkubectlを使用していることを確認してください。
+
+[#_nodes]
+== ノード
+
+[#_get_nodes]
+=== ノードを取得
+
+以下のコマンドを実行し、次のことを確認してください：
+
+* クラスター内のすべてのノードがリストされているはずで、欠落しているノードがないことを確認してください。
+* すべてのノードは*Ready*ステータスを持っている必要があります（*Ready*状態でない場合は、そのノードの`kubelet`コンテナログを`docker logs kubelet`を使用して確認してください）。
+* すべてのノードが正しいバージョンを報告しているか確認してください。
+* OS/カーネル/Dockerの値が期待通りに表示されているか確認してください（アップグレードされたOS/カーネル/Dockerに起因する問題があるかもしれません）。
+
+----
+kubectl get nodes -o wide
+----
+
+出力の例：
+
+----
+NAME             STATUS   ROLES          AGE   VERSION   INTERNAL-IP      EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane-0   Ready    controlplane   31m   v1.13.5   138.68.188.91    <none>        Ubuntu 18.04.2 LTS   4.15.0-47-generic   docker://18.9.5
+etcd-0           Ready    etcd           31m   v1.13.5   138.68.180.33    <none>        Ubuntu 18.04.2 LTS   4.15.0-47-generic   docker://18.9.5
+worker-0         Ready    worker         30m   v1.13.5   139.59.179.88    <none>        Ubuntu 18.04.2 LTS   4.15.0-47-generic   docker://18.9.5
+----
+
+[#_get_node_conditions]
+=== ノードの状態を取得
+
+以下のコマンドを実行して、 https://kubernetes.io/docs/concepts/architecture/nodes/#condition[ノードの状態]を持つノードをリストします。
+
+----
+kubectl get nodes -o go-template='{{range .items}}{{$node := .}}{{range .status.conditions}}{{$node.metadata.name}}{{": "}}{{.type}}{{":"}}{{.status}}{{"\n"}}{{end}}{{end}}'
+----
+
+以下のコマンドを実行して、正常な操作を妨げる可能性のあるアクティブな https://kubernetes.io/docs/concepts/architecture/nodes/#condition[ノードの状態]を持つノードをリストします。
+
+----
+kubectl get nodes -o go-template='{{range .items}}{{$node := .}}{{range .status.conditions}}{{if ne .type "Ready"}}{{if eq .status "True"}}{{$node.metadata.name}}{{": "}}{{.type}}{{":"}}{{.status}}{{"\n"}}{{end}}{{else}}{{if ne .status "True"}}{{$node.metadata.name}}{{": "}}{{.type}}{{": "}}{{.status}}{{"\n"}}{{end}}{{end}}{{end}}{{end}}'
+----
+
+出力の例：
+
+----
+worker-0: DiskPressure:True
+----
+
+[#_kubernetes_leader_election]
+== Kubernetesリーダー選挙
+
+[#_kubernetes_controller_manager_leader]
+=== Kubernetesコントローラーマネージャーのリーダー
+
+リーダーはリーダー選挙プロセスによって決定されます。リーダーが決定された後、リーダー（`holderIdentity`）は`kube-controller-manager`エンドポイントに保存されます（この例では、`controlplane-0`）。
+
+----
+kubectl -n kube-system get endpoints kube-controller-manager -o jsonpath='{.metadata.annotations.control-plane\.alpha\.kubernetes\.io/leader}'
+{"holderIdentity":"controlplane-0_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx","leaseDurationSeconds":15,"acquireTime":"2018-12-27T08:59:45Z","renewTime":"2018-12-27T09:44:57Z","leaderTransitions":0}>
+----
+
+[#_kubernetes_scheduler_leader]
+=== Kubernetesスケジューラーのリーダー
+
+リーダーはリーダー選挙プロセスによって決定されます。リーダーが決定された後、リーダー（`holderIdentity`）は`kube-scheduler`エンドポイントに保存されます（この例では、`controlplane-0`）。
+
+----
+kubectl -n kube-system get endpoints kube-scheduler -o jsonpath='{.metadata.annotations.control-plane\.alpha\.kubernetes\.io/leader}'
+{"holderIdentity":"controlplane-0_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx","leaseDurationSeconds":15,"acquireTime":"2018-12-27T08:59:45Z","renewTime":"2018-12-27T09:44:57Z","leaderTransitions":0}>
+----
+
+[#_ingress_controller]
+== Ingressコントローラー
+
+デフォルトのIngressコントローラーはTraefikであり、`traefik`ネームスペースにDaemonSetとしてデプロイされています。ポッドは`worker`ロールを持つノードにのみスケジュールされます。
+
+すべてのノードでポッドが実行されているか確認してください：
+
+----
+kubectl -n traefik get pods -o wide
+----
+
+出力の例：
+
+----
+kubectl -n traefik get pods -o wide
+NAME                                    READY     STATUS    RESTARTS   AGE       IP               NODE
+default-http-backend-797c5bc547-kwwlq   1/1       Running   0          17m       x.x.x.x          worker-1
+traefik-4qd64                           1/1       Running   0          14m       x.x.x.x          worker-1
+traefik-8wxhm                           1/1       Running   0          13m       x.x.x.x          worker-0
+----
+
+ポッドが実行できない場合（ステータスが*Running*でない、Readyステータスが`1/1`を表示していない、または再起動の回数が多い場合）、ポッドの詳細、ログ、および名前空間のイベントを確認してください。
+
+[#_pod_details]
+=== ポッドの詳細
+
+----
+kubectl -n traefik describe pods -l app=traefik
+----
+
+[#_pod_container_logs]
+=== ポッドコンテナのログ
+
+以下のコマンドは、"app=traefik"というラベルが付けられたすべてのポッドのログを表示できますが、`kubectl logs`コマンドの制限により、ログの最初の10行のみが表示されます。詳細については、`--tail`の`kubectl logs -h`を参照してください。
+
+----
+kubectl -n traefik logs -l app=traefik
+----
+
+完全なログが必要な場合は、末尾のコマンドでポッド名を指定してください：
+
+----
+kubectl -n traefik logs <pod name>
+----
+
+[#_namespace_events]
+=== ネームスペースのイベント
+
+----
+kubectl -n traefik get events
+----
+
+[#_debug_logging]
+=== デバッグログ
+
+デバッグログを有効にするには：
+
+----
+kubectl -n traefik patch ds traefik --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--v=5"}]'
+----
+
+[#_check_configuration]
+=== 設定を確認する
+
+各ポッドで生成された設定を取得する：
+
+----
+kubectl -n traefik get pods -l app=traefik --no-headers -o custom-columns=.NAME:.metadata.name | while read pod; do kubectl -n traefik exec $pod -- cat /etc/nginx/nginx.conf; done
+----
+
+[#_rancher_agents]
+== Rancherエージェント
+
+クラスターへの通信（`cattle-cluster-agent`経由のKubernetes API）およびノードへの通信（`cattle-node-agent`経由のクラスターのプロビジョニング）は、Rancherエージェントを通じて行われます。
+
+[discrete]
+[#_cattle_node_agent]
+==== cattle-node-agent
+
+各ノードにcattle-node-agentポッドが存在し、ステータスが*Running*であり、再起動の回数が多くないことを確認してください：
+
+----
+kubectl -n cattle-system get pods -l app=cattle-agent -o wide
+----
+
+出力の例：
+
+----
+NAME                      READY     STATUS    RESTARTS   AGE       IP                NODE
+cattle-node-agent-4gc2p   1/1       Running   0          2h        x.x.x.x           worker-1
+cattle-node-agent-8cxkk   1/1       Running   0          2h        x.x.x.x           etcd-1
+cattle-node-agent-kzrlg   1/1       Running   0          2h        x.x.x.x           etcd-0
+cattle-node-agent-nclz9   1/1       Running   0          2h        x.x.x.x           controlplane-0
+cattle-node-agent-pwxp7   1/1       Running   0          2h        x.x.x.x           worker-0
+cattle-node-agent-t5484   1/1       Running   0          2h        x.x.x.x           controlplane-1
+cattle-node-agent-t8mtz   1/1       Running   0          2h        x.x.x.x           etcd-2
+----
+
+特定のcattle-node-agentポッドまたはすべてのcattle-node-agentポッドのログを確認してください：
+
+----
+kubectl -n cattle-system logs -l app=cattle-agent
+----
+
+[discrete]
+[#_cattle_cluster_agent]
+==== cattle-cluster-agent
+
+cattle-cluster-agentポッドがクラスターに存在し、ステータスが*Running*であり、再起動の回数が多くないことを確認してください：
+
+----
+kubectl -n cattle-system get pods -l app=cattle-cluster-agent -o wide
+----
+
+出力の例：
+
+----
+NAME                                    READY     STATUS    RESTARTS   AGE       IP           NODE
+cattle-cluster-agent-54d7c6c54d-ht9h4   1/1       Running   0          2h        x.x.x.x      worker-1
+----
+
+cattle-cluster-agentポッドのログを確認してください：
+
+----
+kubectl -n cattle-system logs -l app=cattle-cluster-agent
+----
+
+[#_jobs_and_pods]
+== ジョブとポッド
+
+[#_check_that_pods_or_jobs_have_status_running_completed]
+=== ポッドまたはジョブのステータスが*Running*/*Completed*であることを確認してください。
+
+確認するには、次のコマンドを実行してください：
+
+----
+kubectl get pods --all-namespaces
+----
+
+ポッドが*Running*の状態でない場合、次のコマンドを実行して根本原因を調査できます：
+
+[#_describe_pod]
+=== ポッドの詳細を表示
+
+----
+kubectl describe pod POD_NAME -n NAMESPACE
+----
+
+[#_pod_container_logs_1]
+=== ポッドコンテナのログ
+
+----
+kubectl logs POD_NAME -n NAMESPACE
+----
+
+ジョブが*Completed*の状態でない場合、次のコマンドを実行して根本原因を調査できます：
+
+[#_describe_job]
+=== ジョブの詳細を表示
+
+----
+kubectl describe job JOB_NAME -n NAMESPACE
+----
+
+[#_logs_from_the_containers_of_pods_of_the_job]
+=== ジョブのポッドのコンテナからのログ
+
+----
+kubectl logs -l job-name=JOB_NAME -n NAMESPACE
+----
+
+[#_evicted_pods]
+=== 追い出されたポッド
+
+ポッドは https://kubernetes.io/docs/tasks/administer-cluster/out-of-resource/#eviction-policy[追い出し信号]に基づいて追い出される可能性があります。
+
+追い出されたポッドのリストを取得します（ポッド名とネームスペース）：
+
+----
+kubectl get pods --all-namespaces -o go-template='{{range .items}}{{if eq .status.phase "Failed"}}{{if eq .status.reason "Evicted"}}{{.metadata.name}}{{" "}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}{{end}}'
+----
+
+すべての追い出されたポッドを削除するには：
+
+----
+kubectl get pods --all-namespaces -o go-template='{{range .items}}{{if eq .status.phase "Failed"}}{{if eq .status.reason "Evicted"}}{{.metadata.name}}{{" "}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}{{end}}' | while read epod enamespace; do kubectl -n $enamespace delete pod $epod; done
+----
+
+追い出されたポッド、スケジュールされたノード、および理由のリストを取得します：
+
+----
+kubectl get pods --all-namespaces -o go-template='{{range .items}}{{if eq .status.phase "Failed"}}{{if eq .status.reason "Evicted"}}{{.metadata.name}}{{" "}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}{{end}}' | while read epod enamespace; do kubectl -n $enamespace get pod $epod -o=custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,MSG:.status.message; done
+----
+
+[#_job_does_not_complete]
+=== ジョブが完了しない
+
+Istioを有効にしている場合、デプロイしたジョブが完了しない問題が発生している場合は、{xref-enable-istio-in-namespace}[これらの手順]を使用してポッドにアノテーションを追加する必要があります。
+
+Istioサイドカーは無期限に実行されるため、ジョブのタスクが完了してもジョブは完了と見なされません。これは一時的な回避策であり、アノテーションが付けられたポッドへのトラフィックのIstioを無効にします。このことを考慮すると、ジョブがサービスメッシュにアクセスできないため、統合テストのためにジョブを使用し続けることができない可能性があります。

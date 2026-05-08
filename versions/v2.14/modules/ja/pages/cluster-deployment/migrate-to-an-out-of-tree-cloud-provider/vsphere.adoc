@@ -1,0 +1,123 @@
+= VMware vSphereのインツリーからアウトオブツリーへの移行
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-vsphere.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/vsphere.adoc
+:experimental:
+
+Kubernetesは、クラウドプロバイダーのインツリー管理から離れつつあります。VMware vSphereには、vSphereクラウドプロバイダーとクラウドストレージプラグインをインストールすることで使用できるアウトオブツリーのクラウドプロバイダーがあります。
+
+このページでは、インツリーのvSphereクラウドプロバイダーからアウトオブツリーへの移行方法と、移行後の既存のVMの管理方法について説明します。
+
+公式の https://vsphere-csi-driver.sigs.k8s.io/features/vsphere_csi_migration.html[vSphere移行ドキュメント]に記載されている手順に従い、Rancherで実行する手順を提供します。
+
+[#_cloud_config_format_limitation]
+== クラウド構成フォーマットの制限
+
+次のクラウド構成フォーマットを使用してプロビジョニングされた既存のボリュームは、vSphereクラウドストレージインターフェース（CSI）の既存のバグのために移行されません。
+
+クラウド構成がデータストアとリソースプールパスのためにこのフォーマットを持っている場合、vSphere CSIドライバーはそれを認識できません：
+
+[,yaml]
+----
+default-datastore: </datacenter>/datastore/<default-datastore-name>
+resourcepool-path: "</datacenter>/host/<cluster-name>/Resources/<resource-pool-name>"
+----
+
+次のフォーマットを使用してインツリーのプロバイダーでプロビジョニングされたボリュームは、正しく移行されます：
+
+[,yaml]
+----
+default-datastore: <default-datastore-name>
+resourcepool-path: "<cluster-name>/Resources/<resource-pool-name>"
+----
+
+上流のバグ： https://github.com/kubernetes-sigs/vsphere-csi-driver/issues/628
+
+このバグを追跡しているRancherの問題： https://github.com/rancher/rancher/issues/31105
+
+[#_prerequisites]
+== 前提条件
+
+* vSphere CSIの移行にはvSphere 7.0u1が必要です。既存のインツリーのvSphereボリュームを管理できるようにするために、vSphereを7.0u1にアップグレードしてください。
+* Kubernetesのバージョンは1.19以上でなければなりません。
+
+[#_migration]
+== マイグレーション
+
+[#_1_install_the_cpi_plugin]
+=== 1.CPIプラグインをインストールする
+
+CPIをインストールする前に、すべてのノードに`node.cloudprovider.kubernetes.io/uninitialized=true:NoSchedule`のテイントを適用する必要があります。
+
+これは、次のコマンドを実行することで行うことができます：
+
+----
+curl -O https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+----
+
+または:
+
+----
+wget https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+chmod +x taints.sh
+./taints.sh <path to kubeconfig if running the command outside the cluster>
+----
+
+すべてのノードがスクリプトを実行してテイントされたら、Helm vSphere CPIチャートを起動してください。
+
+. *☰ > クラスター管理*をクリックします。
+. vSphere CPIチャートがインストールされるクラスターに移動し、*Explore*をクリックします。
+. menu:アプリ[チャート]をクリックしてください。
+. *vSphere CPI*をクリックしてください。
+. ［*インストール］*をクリックします。
+. 必要なvCenterの詳細を入力し、*インストール*をクリックしてください。
+
+vSphere CPIは、vSphere CSIドライバーに必要なProviderIDで全ノードを初期化します。
+
+次のコマンドを使用して、すべてのノードがProviderIDで初期化されているか確認してください：
+
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_2_install_the_csi_driver]
+=== 2.CSIドライバーをインストールしてください。
+
+. *☰ > クラスター管理*をクリックします。
+. vSphere CSIチャートがインストールされるクラスターに移動し、*Explore*をクリックしてください。
+. menu:アプリ[チャート]をクリックしてください。
+. *vSphere CSI*をクリックしてください。
+. ［*インストール］*をクリックします。
+. 必要なvCenterの詳細を入力し、*インストール*をクリックしてください。
+. *インストール前にHelmオプションをカスタマイズ*にチェックを入れ、*次へ*をクリックしてください。
+. *機能*タブで、*CSIマイグレーションを有効にする*にチェックを入れてください。
+. オプションで、*ストレージ*タブに移動し、データストアを設定してください。このチャートは、`csi.vsphere.vmware.com`をプロビジョナーとして持つStorageClassを作成します。このStorageClassを作成する際に、CSIボリュームプロビジョニングに使用するデータストアのURLを提供できます。データストアのURLは、データストアを選択し、サマリータブに移動することでvSphereクライアントで見つけることができます。StorageClassの詳細を入力してください。
+. ［*インストール］*をクリックします。
+
+[#_3_edit_the_cluster_to_enable_csi_migration_feature_flags]
+=== 3.CSIマイグレーション機能フラグを有効にするためにクラスターを編集してください。
+
+. クラスターを編集している間、Kubernetesのバージョンが1.19未満の場合は、*Kubernetesバージョン*のドロップダウンからKubernetesバージョン1.19以上を選択してください。
+. 機能フラグを有効にするために、「YAMLとして編集」をクリックし、kube-controllerとkubeletの下に次の内容を追加してください：
++
+[,yaml]
+----
+   extra_args:
+     feature-gates: "CSIMigration=true,CSIMigrationvSphere=true"
+----
+
+[#_4_drain_worker_nodes]
+=== 4.ワーカーノードをドレインしてください。
+
+ワーカーノードは、kubeletおよびkube-controller-managerの引数を変更する前に、アップグレード中にドレインされなければなりません。
+
+. *☰ > クラスター管理*をクリックします。
+. ワーカーノードをドレインするクラスターに移動し、*⋮ > 設定を編集*をクリックしてください。
+. *高度なオプション*セクションで、フィールド*最大ワーカーノードの利用不可*を1に設定します。
+. アップグレード中にノードをドレインするには、menu:ドレインノード[はい]を選択してください。
+. *強制*と*ローカルデータを削除*を*true*に設定します。
+. クラスターをアップグレードするには、*保存*をクリックします。

@@ -1,0 +1,97 @@
+= Configure os componentes do Istio para gerenciamento de tráfego
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc 
+:product-path: observability/istio/guides/set-up-traffic-management.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-generate-and-view-traffic: xref:observability/istio/guides/generate-and-view-traffic.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-generate-and-view-traffic: xref:how-to-guides/advanced-user-guides/istio-setup-guide/generate-and-view-traffic.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] foi descontinuado desde o Rancher v2.12.0; recorra à https://apps.rancher.io[SUSE Application Collection] versão do Istio para segurança aprimorada (incluída nas assinaturas do SUSE Rancher Prime).
+Informações detalhadas podem ser encontradas em https://forums.suse.com/t/deprecation-of-rancher-istio/45043[este anúncio].
+====
+
+Uma vantagem central do gerenciamento de tráfego no Istio é que ele permite o roteamento dinâmico de requisições. Algumas aplicações comuns para o roteamento dinâmico de requisições incluem implantações canárias e implantações blue/green. Os dois recursos principais no gerenciamento de tráfego do Istio são _serviços virtuais_ e _regras de destino_.
+
+* https://istio.io/docs/reference/config/networking/v1alpha3/virtual-service/[Serviços virtuais] interceptam e direcionam o tráfego para seus serviços Kubernetes, permitindo que você divida porcentagens de tráfego de uma requisição entre diferentes serviços. Você pode usá-los para definir um conjunto de regras de roteamento a serem aplicadas quando um host é endereçado.
+* https://istio.io/docs/reference/config/networking/v1alpha3/destination-rule/[Regras de destino] servem como a única fonte de verdade sobre quais versões de serviço estão disponíveis para receber tráfego dos serviços virtuais. Você pode usar esses recursos para definir políticas que se aplicam ao tráfego destinado a um serviço após o roteamento ter ocorrido.
+
+Esta seção descreve como adicionar um exemplo de serviço virtual que corresponde ao `reviews` microsserviço no aplicativo de exemplo BookInfo. O objetivo deste serviço é dividir o tráfego entre duas versões do serviço `reviews`.
+
+Neste exemplo, pegamos o tráfego do serviço `reviews` e o interceptamos para que 50% dele vá para `v1` do serviço e 50% vá para `v2`.
+
+Após este serviço virtual ser implantado, geraremos tráfego e veremos pela visualização do Kiali que o tráfego está sendo roteado uniformemente entre as duas versões do serviço.
+
+Para implantar o serviço virtual e as regras de destino para o serviço `reviews`,
+
+. Clique em *☰ > Gerenciamento de Cluster*.
+. Vá para o cluster onde o Istio está instalado e clique em *Explorar*.
+. No cluster onde o Istio está instalado, clique em menu:Istio[DestinationRules] na barra de navegação à esquerda.
+. Clique em *Criar*.
+. Copie e cole o yaml da DestinationRule fornecido abaixo.
+. Clique em *Criar*.
+. Clique em *Editar como YAML* e use esta configuração:
++
+[,yaml]
+----
+ apiVersion: networking.istio.io/v1alpha3
+ kind: DestinationRule
+ metadata:
+   name: reviews
+ spec:
+   host: reviews
+   subsets:
+   - name: v1
+     labels:
+       version: v1
+   - name: v2
+     labels:
+       version: v2
+   - name: v3
+     labels:
+       version: v3
+----
+
+. Clique em *Criar*.
+
+Então, para implantar o VirtualService que fornece o roteamento de tráfego que utiliza a DestinationRule:
+
+. Clique em *VirtualService* na barra de navegação lateral.
+. Clique em *Criar a partir do YAML*.
+. Copie e cole o yaml do VirtualService fornecido abaixo.
+. Clique em *Criar*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: reviews
+spec:
+  hosts:
+  - reviews
+  http:
+  - route:
+    - destination:
+        host: reviews
+        subset: v1
+      weight: 50
+    - destination:
+        host: reviews
+        subset: v3
+      weight: 50
+---
+----
+
+*Resultado:* Quando você gerar tráfego para este serviço (por exemplo, atualizando a URL do gateway de entrada), o gráfico de tráfego do Kiali refletirá que o tráfego para o serviço `reviews` está dividido igualmente entre `v1` e `v3`.
+
+[#__xref_istio_generate_and_view_traffic_next_generate_and_view_traffic]
+== {xref-istio-generate-and-view-traffic}[Próximo: Gerar e Visualizar Tráfego]

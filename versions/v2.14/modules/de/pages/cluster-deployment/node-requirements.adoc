@@ -1,0 +1,183 @@
+= Knotenanforderungen für {rancher-product-name} verwaltete Cluster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: how-to-guides/neue-nutzeranleitungen/kubernetes-cluster-in-rancher-einrichten/knotenanforderungen-für-rancher-verwaltete-cluster.adoc 
+:product-path: cluster-deployment/node-requirements.adoc
+ifeval::["{build-type}" != "community"]
+:xref-use-windows-clusters: xref:cluster-deployment/custom-clusters/windows/use-windows-clusters.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-security-overview: xref:security/security-overview.adoc
+:xref-port-reqs: xref:installation-and-upgrade/requirements/port-requirements.adoc
+:xref-provisioning-drivers: xref:rancher-admin/global-configuration/provisioning-drivers/provisioning-drivers.adoc
+:xref-rancher-on-arm64: xref:rancher-admin/experimental-features/rancher-on-arm64.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-use-windows-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-security-overview: xref:reference-guides/rancher-security/index.adoc
+:xref-port-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/port-requirements.adoc
+:xref-provisioning-drivers: xref:anleitungen/neue-nutzeranleitungen/authentifizierung-berechtigungen-und-globale-konfiguration/über-bereitstellungs-treiber/index.adoc
+:xref-rancher-on-arm64: xref:how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64.adoc
+endif::[]
+
+Diese Seite beschreibt die Anforderungen für die von Rancher verwalteten Kubernetes-Cluster, in denen Ihre Apps und Dienste installiert werden. Diese Downstream-Cluster sollten von dem Drei-Knoten-Cluster, das Rancher ausführt, getrennt sein.
+
+[NOTE]
+====
+
+Wenn Rancher auf einem hochverfügbaren Kubernetes-Cluster installiert ist, haben der Rancher-Server-Drei-Knoten-Cluster und die Downstream-Cluster unterschiedliche Anforderungen. Für die Anforderungen an die Rancher-Installation verweisen Sie auf die Knotenanforderungen im {xref-install-reqs}[Installationsabschnitt.]
+====
+
+
+[#_operating_systems_and_container_runtime_requirements]
+== Betriebssysteme und Anforderungen an die Container-Laufzeit
+
+Rancher sollte mit jeder modernen Linux-Distribution und jeder modernen Docker-Version funktionieren. Linux ist für die etcd- und Controlplane-Knoten aller Downstream-Cluster erforderlich. Arbeitsknoten können Linux oder <<_windows_nodes,Windows Server.>> ausführen.
+
+Für Details zu den getesteten Betriebssystem- und Docker-Versionen mit jeder Rancher-Version verweisen Sie auf die https://rancher.com/support-maintenance-terms/[Support-Wartungsbedingungen.]
+
+Alle unterstützten Betriebssysteme sind 64-Bit x86.
+
+Wenn Sie planen, ARM64 zu verwenden, siehe {xref-rancher-on-arm64}[Ausführen auf ARM64 (experimentell).]
+
+Für Informationen zur Installation von Docker verweisen Sie auf die offizielle https://docs.docker.com/[Docker-Dokumentation.]
+
+[#_oracle_linux_and_rhel_derived_linux_nodes]
+=== Oracle Linux und RHEL-abgeleitete Linux-Knoten
+
+Einige Linux-Distributionen, die von RHEL abgeleitet sind, einschließlich Oracle Linux, haben möglicherweise standardmäßig Firewall-Regeln, die die Kommunikation mit Helm blockieren. Wir empfehlen, firewalld zu deaktivieren. Für Kubernetes 1.19 muss firewalld deaktiviert sein.
+
+[NOTE]
+====
+
+In RHEL 8.4 sind zwei zusätzliche Dienste im NetworkManager enthalten: `nm-cloud-setup.service` und `nm-cloud-setup.timer`. Diese Dienste fügen eine Routing-Tabelle hinzu, die die Konfiguration des CNI-Plugins beeinträchtigt. Wenn diese Dienste aktiviert sind, müssen Sie sie mit dem folgenden Befehl deaktivieren und dann den Knoten neu starten, um die Konnektivität wiederherzustellen:
+
+----
+   systemctl disable nm-cloud-setup.service nm-cloud-setup.timer
+   reboot
+----
+====
+
+
+[#_suse_linux_nodes]
+=== SUSE Linux-Knoten
+
+SUSE Linux kann eine Firewall haben, die standardmäßig alle Ports blockiert. In diesem Fall folgen Sie {xref-port-reqs}#_opening_suse_linux_ports[diesen Schritten], um die benötigten Ports zu öffnen, um einen Host zu einem benutzerdefinierten Cluster hinzuzufügen.
+
+[#_flatcar_container_linux_nodes]
+=== Flatcar Container Linux-Knoten
+
+Beim {xref-launch-k8s-with-rancher}[Starten von Kubernetes mit Rancher] unter Verwendung von Flatcar Container Linux-Knoten ist es erforderlich, die folgende Konfiguration in der Cluster-Konfigurationsdatei zu verwenden.
+
+[tabs]
+======
+Canal::
++
+--
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  network:
+    plugin: canal
+    options:
+      canal_flex_volume_plugin_dir: /opt/kubernetes/kubelet-plugins/volume/exec/nodeagent~uds
+      flannel_backend_type: vxlan
+
+  services:
+    kube-controller:
+      extra_args:
+        flex-volume-plugin-dir: /opt/kubernetes/kubelet-plugins/volume/exec/
+----
+--
+
+Calico::
++
+--
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  network:
+    plugin: calico
+    options:
+      calico_flex_volume_plugin_dir: /opt/kubernetes/kubelet-plugins/volume/exec/nodeagent~uds
+      flannel_backend_type: vxlan
+
+  services:
+    kube-controller:
+      extra_args:
+        flex-volume-plugin-dir: /opt/kubernetes/kubelet-plugins/volume/exec/
+----
+--
+======
+
+Es ist auch erforderlich, den Docker-Dienst zu aktivieren; Sie können den Docker-Dienst mit dem folgenden Befehl aktivieren:
+
+----
+systemctl enable docker.service
+----
+
+Der Docker-Dienst wird automatisch aktiviert, wenn Sie {xref-provisioning-drivers}#_node_drivers[Node-Treiber] verwenden.
+
+[#_windows_nodes]
+=== Windows-Knoten
+
+Knoten mit Windows Server müssen Docker Enterprise Edition ausführen.
+
+Windows-Knoten können nur als Arbeitsknoten verwendet werden. Siehe {xref-use-windows-clusters}[Konfigurieren von benutzerdefinierten Clustern für Windows]
+
+[#_hardware_requirements]
+== Hardwareanforderungen
+
+Die Hardwareanforderungen für Knoten mit der `worker`-Rolle hängen hauptsächlich von Ihren Arbeitslasten ab. Das Minimum zum Ausführen der Kubernetes-Knotenkomponenten sind 1 CPU (Kernel) und 1 GB RAM.
+
+In Bezug auf CPU und Speicher wird empfohlen, dass die verschiedenen Ebenen von Kubernetes-Clustern (etcd, Steuerungsebene und Arbeitsknoten) auf verschiedenen Knoten gehostet werden, damit sie unabhängig voneinander skalieren können.
+
+Für Hardwareempfehlungen für große Kubernetes-Cluster verweisen Sie auf die offizielle Kubernetes-Dokumentation zu https://kubernetes.io/docs/setup/best-practices/cluster-large/[großen Clustern.]
+
+Für Hardwareempfehlungen für etcd-Cluster in der Produktion verweisen Sie auf die offizielle https://etcd.io/docs/v3.5/op-guide/hardware/[etcd-Dokumentation.]
+
+[#_networking_requirements]
+== Netzwerkanforderungen
+
+Für einen Produktionscluster empfehlen wir, den Datenverkehr einzuschränken, indem Sie nur die unten definierten Ports öffnen.
+
+Die erforderlichen Ports, die geöffnet werden müssen, sind unterschiedlich, je nachdem, wie der Benutzercluster gestartet wird. Jeder der Abschnitte unten listet die Ports auf, die für verschiedene {xref-cluster-deployment}[Clustererstellungsoptionen] geöffnet werden müssen.
+
+Für eine Aufschlüsselung der Portanforderungen für etcd-Knoten, Steuerungsebene-Knoten und Arbeitsknoten in einem Kubernetes-Cluster verweisen Sie auf die https://rancher.com/docs/rke/latest/en/os/#ports[Portanforderungen für die Rancher Kubernetes Engine.]
+
+Details dazu, welche Ports in jeder Situation verwendet werden, finden Sie unter {xref-port-reqs}#_downstream_kubernetes_cluster_nodes[Anforderungen an die Ports des Downstream-Clusters].
+
+[#_ipv6_address_requirements]
+=== IPv6-Adressenanforderungen
+
+Rancher unterstützt Cluster, die mit IPv4-only, IPv6-only oder Dual-Stack-Netzwerken konfiguriert sind.
+
+Sie müssen jeden Knoten mit mindestens einer gültigen IPv4-Adresse, einer IPv6-Adresse oder beiden gemäß der Cluster-Netzwerkkonfiguration bereitstellen.
+
+Für IPv6-only-Umgebungen stellen Sie sicher, dass Sie das Betriebssystem korrekt konfigurieren und dass die `/etc/hosts` Datei einen gültigen localhost-Eintrag enthält, zum Beispiel:
+
+[source,shell]
+----
+::1       localhost
+----
+
+[CAUTION]
+====
+
+Sie sollten niemals einen Knoten mit demselben Hostnamen oder derselben IP-Adresse wie einen bestehenden Knoten registrieren. Das führt dazu, dass RKE verhindert, dass der Knoten beitritt, und die Bereitstellung hängen bleibt. Dies kann sowohl bei Node-Treiber- als auch bei benutzerdefinierten Clustern auftreten. Wenn ein Knoten einen Hostnamen oder eine IP eines bestehenden Knotens wiederverwenden muss, müssen Sie die `hostname_override` https://rke.docs.rancher.com/config-options/nodes#overriding-the-hostname[RKE-Option] festlegen, bevor Sie den Knoten registrieren, damit er korrekt beitreten kann.
+====
+
+
+[#_optional_security_considerations]
+== Optional: Sicherheitsüberlegungen
+
+Wenn Sie einen Kubernetes-Cluster bereitstellen möchten, der den CIS (Center for Internet Security) Kubernetes Benchmark erfüllt, empfehlen wir, unseren Härtungsleitfaden zu befolgen, um Ihre Knoten vor der Installation von Kubernetes zu konfigurieren.
+
+Für weitere Informationen zum Härtungsleitfaden und zu den Details, welche Version des Leitfadens zu Ihren Rancher- und Kubernetes-Versionen passt, beziehen Sie sich auf den {xref-security-overview}#_rancher_hardening_guide[Sicherheitsabschnitt.]

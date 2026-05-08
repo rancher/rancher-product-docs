@@ -1,0 +1,78 @@
+= Wie Ressourcenkontingente in {rancher-product-name} Projekten funktionieren
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/about-project-resource-quotas.adoc 
+:product-path: cluster-admin/project-admin/project-resource-quotas/resource-quotas-in-projects.adoc
+
+Ressourcenkontingente in Rancher umfassen die gleiche Funktionalität wie die https://kubernetes.io/docs/concepts/policy/resource-quotas/[native Version von Kubernetes]. In Rancher wurden die Ressourcenkontingente jedoch erweitert, sodass Sie sie auf Projekte anwenden können.
+
+In einer Standard-Kubernetes-Bereitstellung werden Ressourcenkontingente auf einzelne Namespaces angewendet. Sie können das Ressourcenkontingent jedoch nicht gleichzeitig mit einer einzigen Aktion auf Ihre Namespaces anwenden. Stattdessen muss das Ressourcenkontingent mehrfach angewendet werden.
+
+Im folgenden Diagramm versucht ein Kubernetes-Administrator, ein Ressourcenkontingent ohne Rancher durchzusetzen. Der Administrator möchte ein Ressourcenkontingent anwenden, das für jeden Namespace in seinem Cluster (`Namespace 1-4`) dasselbe CPU- und Speicherlimit festlegt. In der Basisversion von Kubernetes benötigt jedoch jeder Namespace ein einzigartiges Ressourcenkontingent. Der Administrator muss vier verschiedene Ressourcenkontingente erstellen, die mit den gleichen Spezifikationen konfiguriert sind (`Resource Quota 1-4`), und diese einzeln anwenden.
+
+^Basis Kubernetes: Einzigartige Ressourcenkontingente, die auf jeden Namespace angewendet werden^
+
+image::kubernetes-resource-quota.svg[Implementierung des nativen Kubernetes-Ressourcenkontingents]
+
+Ressourcenkontingente sind in Rancher etwas anders. In Rancher wenden Sie ein Ressourcenkontingent auf das Projekt an, und dann propagiert das Ressourcenkontingent zu jedem Namespace, wonach Kubernetes Ihre Limits mit der nativen Version der Ressourcenkontingente durchsetzt. Wenn Sie das Ressourcenkontingent für einen bestimmten Namespace ändern möchten, können Sie es überschreiben.
+
+Das Ressourcenkontingent umfasst zwei Limits, die Sie beim Erstellen oder Bearbeiten eines Projekts festlegen:
++++<a id="project-limits">++++++</a>+++
+
+* *Projektlimits:*
++
+Dieses Set von Werten konfiguriert ein Gesamtlimit für jede angegebene Ressource, die unter allen Namespaces im Projekt geteilt wird.
+
+* *Namespace-Standardlimits:*
++
+Diese Werte konfigurieren das Standardlimit, das für jeden Namespace für jede angegebene Ressource verfügbar ist.
+  Wenn ein Namespace im Projekt ohne Überschreibungen erstellt wird, wird dieses Limit automatisch an den Namespace gebunden und durchgesetzt.
+
+Im folgenden Diagramm möchte ein Rancher-Administrator ein Ressourcen-Kontingent anwenden, das das gleiche CPU- und Speicherkontingent für jeden Namespace in ihrem Projekt festlegt (`Namespace 1-4`). Allerdings kann der Administrator in Rancher ein Ressourcenkontingent für das Projekt (`Project Resource Quota`) anstelle von einzelnen Namespaces festlegen. Dieses Ressourcenkontingent umfasst Ressourcenlimits sowohl für das gesamte Projekt (`Project Limit`) als auch für einzelne Namespaces (`Namespace Default Limit`). Rancher propagiert dann die `Namespace Default Limit` Ressourcenkontingente an jeden Namespace (`Namespace Resource Quota`), wenn diese erstellt werden.
+
+^Rancher: Ressourcenkontingente, die an jeden Namespace propagiert werden^
+
+image::rancher-resource-quota.png[Implementierung des Rancher-Ressourcenkontingents]
+
+Lassen Sie uns einige nuanciertere Funktionen für Namespaces hervorheben, die *_innerhalb_* der Rancher-Benutzeroberfläche erstellt wurden. Wenn ein Ressourcenkontingent auf Projektebene gelöscht wird, wird es auch aus allen Namespaces entfernt, die in diesem Projekt enthalten sind, unabhängig von vorhandenen Überschreibungen. Darüber hinaus wird das Aktualisieren eines bestehenden Standardlimits für einen Namespace auf Projektebene nicht dazu führen, dass dieser Wert auf bestehende Namespaces im Projekt propagiert wird; der aktualisierte Wert wird nur auf neu erstellte Namespaces in diesem Projekt angewendet. Um ein Standardlimit für bestehende Namespaces zu aktualisieren, können Sie das Ressourcenkontingent auf Projektebene mit dem neuen Standardwert entfernen und anschließend wieder erstellen. Dies führt dazu, dass der neue Standardwert auf alle bestehenden Namespaces im Projekt angewendet wird.
+
+Bevor ein Namespace in einem Projekt erstellt wird, vergleicht Rancher die Mengen der verfügbaren Ressourcen des Projekts und der angeforderten Ressourcen, unabhängig davon, ob sie aus den Standard- oder überschriebenen Limits stammen.
+Wenn die angeforderten Ressourcen die verbleibende Kapazität im Projekt für diese Ressourcen überschreiten, weist Rancher dem Namespace die verbleibende Kapazität für diese Ressource zu.
+
+Dies ist jedoch nicht der Fall bei Namespaces, die *_außerhalb_* der Rancher-Benutzeroberfläche erstellt wurden. Für Namespaces, die über `kubectl` erstellt wurden, weist Rancher ein Ressourcenkontingent zu, das einen *Null* Betrag für jede Ressource hat, die mehr Kapazität angefordert hat, als im Projekt verbleibt.
+
+Um einen Namespace in einem bestehenden Projekt über `kubectl` zu erstellen, verwenden Sie die `field.cattle.io/projectId` Annotation. Um das standardmäßig angeforderte Limit zu überschreiben, verwenden Sie die `field.cattle.io/resourceQuota` Annotation.
+
+Bitte beachten Sie, dass Rancher nur die Limits für Ressourcen überschreibt, die im Ressourcenkontingent des Projekts definiert sind.
+
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    field.cattle.io/projectId: [your-cluster-ID]:[your-project-ID]
+    field.cattle.io/resourceQuota: '{"limit":{"limitsCpu":"100m", "configMaps": "50"}}'
+  name: my-ns
+----
+
+In diesem Beispiel, wenn das Ressourcenkontingent des Projekts configMaps nicht in seiner Liste der Ressourcen enthält, wird Rancher `configMaps` in diesem Override ignorieren.
+
+Benutzern wird geraten, entweder die `extended` Karte zu verwenden, um zusätzliche benutzerdefinierte Limits für Ressourcen zu konfigurieren, die nicht in das Projekt integriert sind, für alle Namespaces im Projekt, oder dedizierte `ResourceQuota` Objekte in bestimmten Namespaces für dasselbe zu erstellen, nur für diese Namespaces. Ressourcenkontingente sind native Kubernetes-Objekte, und Rancher wird benutzerdefinierte Ressourcenkontingente in Namespaces, die zu einem Projekt mit einem Ressourcenkontingent gehören, ignorieren, wodurch den Benutzern mehr Kontrolle gegeben wird.
+
+Die folgende Tabelle erklärt die wichtigsten Unterschiede zwischen den beiden Ressourcenkontingenttypen.
+
+|===
+| Rancher Ressourcenkontingente | Kubernetes Ressourcenkontingente
+
+| Gilt für Projekte und Namespaces.
+| Gilt nur für Namespaces.
+
+| Erstellt einen Ressourcenpool für alle Namespaces in einem Projekt.
+| Wendet statische Ressourcenlimits auf einzelne Namespaces an.
+
+| Wendet Ressourcenkontingente auf Namespaces durch Propagation an.
+| Gilt nur für den zugewiesenen Namespace.
+|===

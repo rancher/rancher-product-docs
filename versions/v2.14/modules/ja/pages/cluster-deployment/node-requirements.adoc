@@ -1,0 +1,183 @@
+= {rancher-product-name}管理クラスターのノード要件
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc 
+:product-path: cluster-deployment/node-requirements.adoc
+ifeval::["{build-type}" != "community"]
+:xref-use-windows-clusters: xref:cluster-deployment/custom-clusters/windows/use-windows-clusters.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-security-overview: xref:security/security-overview.adoc
+:xref-port-reqs: xref:installation-and-upgrade/requirements/port-requirements.adoc
+:xref-provisioning-drivers: xref:rancher-admin/global-configuration/provisioning-drivers/provisioning-drivers.adoc
+:xref-rancher-on-arm64: xref:rancher-admin/experimental-features/rancher-on-arm64.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-use-windows-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-security-overview: xref:reference-guides/rancher-security/index.adoc
+:xref-port-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/port-requirements.adoc
+:xref-provisioning-drivers: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/about-provisioning-drivers/index.adoc
+:xref-rancher-on-arm64: xref:how-to-guides/advanced-user-guides/enable-experimental-features/rancher-on-arm64.adoc
+endif::[]
+
+このページでは、アプリやサービスがインストールされるRancher管理Kubernetesクラスターの要件について説明します。これらの下流クラスターは、Rancherを実行している三ノードクラスターとは別である必要があります。
+
+[NOTE]
+====
+
+Rancherが高可用性Kubernetesクラスターにインストールされている場合、Rancherサーバーの三ノードクラスターと下流クラスターは異なる要件があります。Rancherのインストール要件については、{xref-install-reqs}[インストールセクション]のノード要件を参照してください。
+====
+
+
+[#_operating_systems_and_container_runtime_requirements]
+== オペレーティングシステムとコンテナランタイムの要件
+
+Rancherは、最新のLinux配布パッケージおよび最新のDockerバージョンで動作するはずです。すべての下流クラスターのetcdおよびコントロールプレーンノードにはLinuxが必要です。ワーカーノードはLinuxまたは<<_windows_nodes,Windows Server.>>を実行できます。
+
+各RancherバージョンでテストされたOSおよびDockerバージョンの詳細については、 https://rancher.com/support-maintenance-terms/[サポート保守条件を参照してください。]
+
+すべてのサポートされているオペレーティングシステムは64ビットx86です。
+
+ARM64を使用する予定がある場合は、{xref-rancher-on-arm64}[ARM64での実行（実験的）]を参照してください。
+
+Dockerのインストール方法については、公式の https://docs.docker.com/[Dockerドキュメントを参照してください。]
+
+[#_oracle_linux_and_rhel_derived_linux_nodes]
+=== Oracle LinuxおよびRHEL派生Linuxノード
+
+Oracle Linuxを含むRHELから派生した一部のLinuxディストリビューションには、Helmとの通信をブロックするデフォルトのファイアウォールルールがある場合があります。firewalldを無効にすることをお勧めします。Kubernetes 1.19では、firewalldをオフにする必要があります。
+
+[NOTE]
+====
+
+RHEL 8.4では、NetworkManagerに2つの追加サービスが含まれています：`nm-cloud-setup.service`と`nm-cloud-setup.timer`。これらのサービスは、CNIプラグインの構成に干渉するルーティングテーブルを追加します。これらのサービスが有効になっている場合は、以下のコマンドを使用して無効にし、接続を復元するためにノードを再起動する必要があります:
+
+----
+   systemctl disable nm-cloud-setup.service nm-cloud-setup.timer
+   reboot
+----
+====
+
+
+[#_suse_linux_nodes]
+=== SUSE Linux ノード
+
+SUSE Linux には、デフォルトで全ポートをブロックするファイアウォールがある場合があります。その場合は、{xref-port-reqs}#_opening_suse_linux_ports[これらの手順]に従って、カスタムクラスターにホストを追加するために必要なポートを開いてください。
+
+[#_flatcar_container_linux_nodes]
+=== Flatcar Container Linux ノード
+
+Flatcar Container Linux ノードを使用して {xref-launch-k8s-with-rancher}[Rancher で Kubernetes を起動する] する際には、クラスター構成ファイルに以下の設定を使用する必要があります。
+
+[tabs]
+======
+カナル::
++
+--
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  network:
+    plugin: canal
+    options:
+      canal_flex_volume_plugin_dir: /opt/kubernetes/kubelet-plugins/volume/exec/nodeagent~uds
+      flannel_backend_type: vxlan
+
+  services:
+    kube-controller:
+      extra_args:
+        flex-volume-plugin-dir: /opt/kubernetes/kubelet-plugins/volume/exec/
+----
+--
+
+Calico::
++
+--
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  network:
+    plugin: calico
+    options:
+      calico_flex_volume_plugin_dir: /opt/kubernetes/kubelet-plugins/volume/exec/nodeagent~uds
+      flannel_backend_type: vxlan
+
+  services:
+    kube-controller:
+      extra_args:
+        flex-volume-plugin-dir: /opt/kubernetes/kubelet-plugins/volume/exec/
+----
+--
+======
+
+Docker サービスを有効にする必要もあります。以下のコマンドを使用して Docker サービスを有効にできます。
+
+----
+systemctl enable docker.service
+----
+
+Docker サービスは、{xref-provisioning-drivers}#_node_drivers[ノードドライバー]を使用する際に自動的に有効になります。
+
+[#_windows_nodes]
+=== Windowsノード
+
+Windows Server を搭載したノードは、Docker Enterprise Edition を実行する必要があります。
+
+Windows ノードは、ワーカーノードとしてのみ使用できます。{xref-use-windows-clusters}[Windows 用のカスタムクラスターの構成を参照してください]
+
+[#_hardware_requirements]
+== ハードウェア要件
+
+`worker` ロールを持つノードのハードウェア要件は、主にワークロードに依存します。Kubernetes ノードコンポーネントを実行するための最小要件は、1 CPU（コア）と1GBのメモリです。
+
+CPU とメモリに関しては、Kubernetes クラスターの異なるプレーン（etcd、コントロールプレーン、ワーカー）は、互いに別々にスケールできるように異なるノードにホストすることをお勧めします。
+
+大規模な Kubernetes クラスターのハードウェア推奨については、 https://kubernetes.io/docs/setup/best-practices/cluster-large/[大規模クラスターの構築に関する公式 Kubernetes ドキュメントを参照してください。]
+
+本番環境の etcd クラスターのハードウェア推奨については、公式の https://etcd.io/docs/v3.5/op-guide/hardware/[etcd ドキュメントを参照してください。]
+
+[#_networking_requirements]
+== ネットワーキング要件
+
+本番クラスターの場合、以下のポート要件で定義されたポートのみを開くことでトラフィックを制限することをお勧めします。
+
+開く必要があるポートは、ユーザークラスターの起動方法によって異なります。以下の各セクションには、異なる {xref-cluster-deployment}[クラスター作成オプション] に対して開く必要があるポートがリストされています。
+
+etcdノード、コントロールプレーンノード、およびKubernetesクラスター内のワーカーノードのポート要件の詳細については、 https://rancher.com/docs/rke/latest/en/os/#ports[Rancher Kubernetes Engineのポート要件を参照してください。]
+
+各状況で使用されるポートの詳細は、{xref-port-reqs}#_downstream_kubernetes_cluster_nodes[ダウンストリームクラスターのポート要件]の下にあります。
+
+[#_ipv6_address_requirements]
+=== IPv6アドレス要件
+
+Rancherは、IPv4のみ、IPv6のみ、またはデュアルスタックネットワーキングで構成されたクラスターをサポートしています。
+
+クラスターのネットワーキング構成に従って、各ノードには少なくとも1つの有効なIPv4アドレス、1つのIPv6アドレス、またはその両方をプロビジョニングする必要があります。
+
+IPv6専用環境では、オペレーティングシステムを正しく構成し、`/etc/hosts`ファイルに有効なlocalhostエントリが含まれていることを確認してください。例えば：
+
+[source,shell]
+----
+::1       localhost
+----
+
+[CAUTION]
+====
+
+同じホスト名またはIPアドレスを持つノードを登録してはいけません。そうすると、RKEがノードの参加を防ぎ、プロビジョニングが停止します。これは、ノードドライバーとカスタムクラスターの両方で発生する可能性があります。ノードが既存のノードのホスト名またはIPを再利用する必要がある場合は、ノードを登録する前に`hostname_override` https://rke.docs.rancher.com/config-options/nodes#overriding-the-hostname[RKEオプション]を設定する必要があります。これにより、そのノードが正しく参加できるようになります。
+====
+
+
+[#_optional_security_considerations]
+== オプション:セキュリティ上の考慮事項
+
+CIS（インターネットセキュリティセンター）Kubernetesベンチマークに準拠したKubernetesクラスターをプロビジョニングしたい場合は、Kubernetesをインストールする前にノードを構成するためにハードニングガイドに従うことをお勧めします。
+
+ハードニングガイドおよびガイドのどのバージョンがあなたのRancherおよびKubernetesのバージョンに対応しているかの詳細については、{xref-security-overview}#_rancher_hardening_guide[セキュリティセクション]を参照してください。

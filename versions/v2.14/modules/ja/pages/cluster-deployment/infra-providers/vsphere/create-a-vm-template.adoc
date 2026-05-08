@@ -1,0 +1,172 @@
+= VMware vSphere仮想マシンテンプレートの作成
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/vsphere/create-a-vm-template.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/create-a-vm-template.adoc
+
+仮想マシンを繰り返し利用可能かつ信頼性の高い方法で作成することは、しばしば困難です。VMware vSphereは、1つのVMを構築し、それをテンプレートに変換する機能を提供します。そのテンプレートを使用して、同一に構成されたVMを作成できます。Rancherは、この機能を利用して同一のRKE/K3sノードを作成します。
+
+新しいVMを作成するためにテンプレートを利用するには、Rancherが要求する<<_requirements,特定の要件>>がVMに事前にインストールされている必要があります。これらの要件でVMを構成した後、<<_preparing_your_vm,VMを準備する>>必要があります。<<_creating_a_template,テンプレートを作成する>>前に、必ずこの手順を実行してください。最後に、準備が完了したら、VMは<<_converting_to_a_template,テンプレートに変換され>>、<<_moving_to_a_content_library,コンテンツライブラリに移動されます>>。
+
+[#_requirements]
+== 要件
+
+vSphereノードドライバーで使用するためには、LinuxおよびWindows VMに特定のツールが必要です。最も重要な依存関係は、Linux用の https://cloud-init.io/[cloud-init]とWindows用の https://cloudbase.it/cloudbase-init/[cloudbase-init]です。これらは、ホスト名を構成し、SSHアクセスとデフォルトのRancherユーザーを設定することによって、VMをプロビジョニングするために使用されます。ユーザーは、他の構成が必要な場合、必要に応じてこれらにさらにコンテンツを追加できます。さらに、参考のために他の要件が以下に示されています。
+
+[NOTE]
+====
+
+特定のファイアウォールルールや構成がある場合は、テンプレートを作成する前にこれをVMに追加する必要があります。
+====
+
+
+[#_linux_dependencies]
+== Linuxの依存関係
+
+テンプレートにインストールする必要があるパッケージは以下に示されています。これらはディストリビューションに基づいてわずかに異なる名前を持つ場合があります。たとえば、一部のディストリビューションはこれらの依存関係をデフォルトで提供します。クラスターのプロビジョナーは、Kubernetesに必要な依存関係を自動的にインストールします。以下に示す依存関係は、Rancherクラスターのプロビジョナーの機能に必要です（Kubernetes用ではありません）：
+
+* curl
+* wget
+* git
+* net-tools
+* unzip
+* apparmor-parser
+* ca-certificates
+* cloud-init
+* cloud-guest-utils
+* cloud-image-utils
+* growpart（cloud-guest-utilsの一部）
+* cloud-initramfs-growroot
+* open-iscsi
+* openssh-server
+* https://docs.vmware.com/en/VMware-Tools/11.3.0/com.vmware.vsphere.vmwaretools.doc/GUID-8B6EA5B7-453B-48AA-92E5-DB7F061341D1.html[open-vm-tools]
+
+[#_windows_dependencies]
+== Windows依存関係
+
+テンプレートにインストールする必要があるパッケージのリストは以下の通りです：
+
+* Windowsコンテナ機能
+* https://cloudbase.it/cloudbase-init/#download[cloudbase-init]
+
+[#_creating_a_template]
+== テンプレートの作成
+
+手動でVMを作成するか、<<_alternatives_to_manual_creation,他の代替手段>>を利用してVMを作成することができます。
+
+[#_manual_creation]
+=== 手動作成
+
+. VMwareからの https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AE8AFBF1-75D1-4172-988C-378C35C9FAF2.html[これらの指示]に従って手動でVMを作成します。VMが稼働したら、上記の依存関係を手動でインストールして、vSphereノードドライバー用に正しく構成できます。
+. ご自身の環境や要件に応じてカスタマイズしてください。
+. テンプレートを作成する前に最終準備を進めてください。
+
+[#_alternatives_to_manual_creation]
+=== 手動作成の代替手段
+
+VMを作成するための他の代替オプションは以下に示されています：
+
+* https://developer.vmware.com/powercli[VMware PowerCLI]
+* https://www.packer.io/[Packer]
+* https://saltproject.io/[SaltStack]
+* https://www.ansible.com/[Ansible]
+
+Packerはよく使われる代替手段です。vSphereでの使用例については、この https://github.com/vmware-samples/packer-examples-for-vsphere[リファレンス]を参照してください。
+
+[#_preparing_your_vm]
+== VMの準備
+
+必要な依存関係（および追加で必要な項目）をすべて含むVMを作成した後、次に最も重要なステップを実行する必要があります。それは、VMをテンプレートに変換するための準備です。この準備により、VMのホスト名、IPアドレスなどの重要なデータがリセットされ、新しいVMにその情報が持ち込まれないようにします。このステップを実行しないと、同じホスト名、IPアドレスなどを持つVMを作成する可能性があります。
+
+これらの準備ステップは、LinuxとWindowsで異なることに注意してください。
+
+[#_linux_preparation]
+=== Linuxの準備
+
+以下のコマンドは、LinuxでVMをリセットします：
+
+[,bash]
+----
+# Cleaning logs.
+if [ -f /var/log/audit/audit.log ]; then
+  cat /dev/null > /var/log/audit/audit.log
+fi
+if [ -f /var/log/wtmp ]; then
+  cat /dev/null > /var/log/wtmp
+fi
+if [ -f /var/log/lastlog ]; then
+  cat /dev/null > /var/log/lastlog
+fi
+
+# Cleaning udev rules.
+if [ -f /etc/udev/rules.d/70-persistent-net.rules ]; then
+  rm /etc/udev/rules.d/70-persistent-net.rules
+fi
+
+# Cleaning the /tmp directories
+rm -rf /tmp/*
+rm -rf /var/tmp/*
+
+# Cleaning the SSH host keys
+rm -f /etc/ssh/ssh_host_*
+
+# Cleaning the machine-id
+truncate -s 0 /etc/machine-id
+rm /var/lib/dbus/machine-id
+ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# Cleaning the shell history
+unset HISTFILE
+history -cw
+echo > ~/.bash_history
+rm -fr /root/.bash_history
+
+# Truncating hostname, hosts, resolv.conf and setting hostname to localhost
+truncate -s 0 /etc/{hostname,hosts,resolv.conf}
+hostnamectl set-hostname localhost
+
+# Clean cloud-init
+cloud-init clean -s -l
+----
+
+[#_windows_preparation]
+=== Windowsの準備
+
+Windowsには、 https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep\--generalize\--a-windows-installation?view=windows-11[sysprep]というユーティリティがあり、これは画像を一般化し、Linuxのために上記にリストされた同じ項目をリセットするために使用されます。コマンドは次のとおりです：
+
+[,PowerShell]
+----
+sysprep.exe /generalize /shutdown /oobe
+----
+
+[#_converting_to_a_template]
+== テンプレートへの変換
+
+. VMをシャットダウンして電源をオフにします。
+. インベントリリストのVMを右クリックし、*テンプレート*を選択します。
+. *テンプレートに変換*をクリックします。
+
+*結果:*プロセスが完了すると、使用可能なテンプレートが作成されます。
+
+VMをテンプレートに変換するための追加情報については、 https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-5B3737CC-28DB-4334-BD18-6E12011CDC9F.html[VMwareガイド]を参照してください。
+
+[#_moving_to_a_content_library]
+== コンテンツライブラリへの移動
+
+Rancherはコンテンツライブラリで提供されるテンプレートを利用できます。コンテンツライブラリは、vSphere内でコンテンツを保存および管理し、そのコンテンツを公開および共有する機能も提供します。
+
+以下は、コンテンツライブラリに関するいくつかの役立つリンクです：
+
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-2A0F1C13-7336-45CE-B211-610D39A6E1F4.html[コンテンツライブラリを作成する]
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AC1545F0-F8BA-4CD2-96EB-21B3DFAA1DC1.html[テンプレートをコンテンツライブラリにクローンする]
+
+[#_other_resources]
+== その他のリソース
+
+以下は、役立つ追加リソースです。
+
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-ubuntu-template[Linuxテンプレートを作成するためのチュートリアル]
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-windows-template[Windowsテンプレートを作成するためのチュートリアル]

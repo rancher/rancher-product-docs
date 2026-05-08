@@ -1,0 +1,120 @@
+= Restauration en cours {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-11-04
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:url-continuous-delivery-gitreo-add: https://documentation.suse.com/cloudnative/continuous-delivery/{fleet-docs-version}/en/how-tos-for-users/gitrepo-add.html#_backing_up_and_restoring
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+:xref-rancher-rollback: xref:installation-and-upgrade/rollbacks.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-continuous-delivery-gitreo-add: https://fleet.rancher.io/{fleet-docs-version}/how-tos-for-users/gitrepo-add
+:xref-migrate-cluster: xref:guides-pratiques/nouveaux-guides-utilisateurs/sauvegarde-restauration-et-récupération-en-cas-de-sinistre/migrer-rancher-vers-un-nouveau-cluster.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-back-restore-example-configs: xref:guides-de-reference/sauvegarde-restauration-configuration/exemples.adoc
+:xref-rancher-rollback: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc
+endif::[]
+
+Cette page décrit comment effectuer une restauration avec Rancher.
+
+Suivez les instructions de cette page lorsque{nbsp}:
+
+* L'instance Rancher en cours d'exécution est à la même version que celle à laquelle la sauvegarde a été effectuée.
+* Le cluster en amont (local) est le même que celui où la sauvegarde a été effectuée.
+
+[NOTE]
+.Important
+====
+
+Lors de la restauration de Rancher sur la même configuration, l'opérateur réduira l'échelle du déploiement Rancher lorsque la restauration commencera, et il augmentera à nouveau le déploiement une fois la restauration terminée. Rancher sera indisponible pendant la restauration.
+====
+
+
+[NOTE]
+.Avertissement pour les utilisateurs de Fleet
+====
+Vous devez prendre en compte la disponibilité du serveur API Kubernetes et des GitRepos en pause lors de la restauration d'une configuration Rancher qui exécute des charges de travail Fleet. Voir la {url-continuous-delivery-gitreo-add}[{fleet-product-name} documentation] pour plus de détails.
+====
+
+[TIP]
+====
+
+* Suivez ces étapes pour {xref-migrate-cluster}[migrer Rancher].
+* Si vous devez restaurer Rancher à une version précédente après une mise à niveau, consultez la {xref-rancher-rollback}[documentation de retour à l'état initial].
+====
+
+
+[#_create_the_restore_custom_resource]
+== Créer la Ressource Personnalisée de Restauration
+
+Une restauration est effectuée en créant une ressource personnalisée de restauration.
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster `local` et cliquez sur *Explorer*. Le cluster `local` exécute le serveur Rancher.
+. Dans la barre de navigation à gauche, cliquez sur menu:Sauvegardes Rancher[Restaurations].
+. Cliquez sur *Create*.
+. Créez la restauration avec le formulaire ou avec YAML.  Pour créer la ressource de restauration à l'aide du formulaire, référez-vous à la {xref-rancher-restore-config}[référence de configuration] et aux {xref-back-restore-example-configs}[exemples].
+. Pour utiliser l'éditeur YAML, nous pouvons cliquer sur menu:Créer[Créer à partir de YAML]. Entrez le YAML de restauration.
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Restore
+ metadata:
+   name: restore-migration
+ spec:
+   backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+   encryptionConfigSecretName: encryptionconfig
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+----
++
+Pour obtenir de l'aide sur la configuration de la restauration, référez-vous à la {xref-rancher-restore-config}[référence de configuration] et aux {xref-back-restore-example-configs}[exemples].
+
+. Cliquez sur *Create*.
+
+*Résultat :* L'opérateur Rancher réduit l'échelle du déploiement Rancher pendant la restauration, puis l'augmente à nouveau une fois la restauration terminée. Les ressources sont restaurées dans cet ordre{nbsp}:
+
+. Définitions de ressources personnalisées (CRDs)
+. Ressources à portée de cluster
+. Ressources à portée d'espace de noms
+
+[#_logs]
+== Journaux
+
+Pour vérifier comment la restauration progresse, vous pouvez consulter les journaux de l'opérateur. Exécutez cette commande pour suivre les journaux{nbsp}:
+
+----
+kubectl logs -n cattle-resources-system -l app.kubernetes.io/name=rancher-backup -f
+----
+
+[#_cleanup]
+== Nettoyage
+
+Si vous avez créé la ressource de restauration avec kubectl, supprimez la ressource pour éviter un conflit de nom avec de futures restaurations.
+
+[#_known_issues]
+== Problèmes connus
+
+Dans certains cas, après avoir restauré la sauvegarde, les journaux de Rancher afficheront des erreurs similaires à celles-ci{nbsp}:
+
+----
+2021/10/05 21:30:45 [ERROR] error syncing 'c-89d82/m-4067aa68dd78': handler rke-worker-upgrader: clusters.management.cattle.io "c-89d82" not found, requeuing
+----
+
+Cela se produit parce qu'une des ressources qui vient d'être restaurée a des finalisateurs, mais les ressources associées ont été supprimées, donc le gestionnaire ne peut pas les trouver.
+
+Pour éliminer les erreurs, nous devons trouver et supprimer la ressource qui cause l'erreur. Voir plus d'informations https://github.com/rancher/rancher/issues/35050#issuecomment-937968556[ici]

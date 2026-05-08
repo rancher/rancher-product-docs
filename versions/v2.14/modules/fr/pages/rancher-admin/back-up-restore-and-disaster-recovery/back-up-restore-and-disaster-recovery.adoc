@@ -1,0 +1,127 @@
+= Sauvegarde, Restauration et Récupération après sinistre
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/index.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/back-up-restore-and-disaster-recovery.adoc
+:experimental:
+:keywords: ["rancher sauvegarde restauration", "rancher sauvegarde et restauration", "sauvegarde restauration rancher", "rancher sauvegarde et restauration rancher"]
+ifeval::["{build-type}" != "community"]
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-rancher-restore: xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+:xref-rancher-backup-storage-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/storage.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-migrate-cluster: xref:procédure-guides/nouveaux-utilisateurs-guides/sauvegarde-restauration-et-récupération-après-sinistre/migrer-rancher-vers-nouveau-cluster.adoc
+:xref-backup-cluster: xref:procédure-guides/nouveaux-utilisateurs-guides/sauvegarde-restauration-et-récupération-après-sinistre/sauvegarde-rancher.adoc
+:xref-rancher-restore: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc
+:xref-rancher-backup-storage-config: xref:reference-guides/backup-restore-configuration/storage-configuration.adoc
+endif::[]
+
+Dans cette section, vous apprendrez comment créer des sauvegardes de Rancher, comment restaurer Rancher à partir d'une sauvegarde, et comment migrer Rancher vers un nouveau cluster Kubernetes.
+
+L'opérateur `rancher-backup` est utilisé pour sauvegarder et restaurer Rancher sur n'importe quel cluster Kubernetes. Cette application est un chart Helm, et elle peut être déployée via la page Rancher *Apps*, ou en utilisant l'interface en ligne de commande Helm. Le chart Helm `rancher-backup` est https://github.com/rancher/charts/tree/release-v2.6/charts/rancher-backup[ici.]
+
+L'opérateur de sauvegarde-restauration doit être installé dans la grappe locale, et ne sauvegarde que l'appli Rancher. Les opérations de sauvegarde et de restauration ne sont effectuées que dans la grappe locale Kubernetes.
+
+[#_backup_and_restore_for_rancher_installed_with_docker]
+== Sauvegarde et restauration pour Rancher installé avec Docker
+
+Pour Rancher installé avec Docker, consultez xref:[cette page] pour effectuer des sauvegardes et xref:[cette page] pour effectuer des restaurations.
+
+[#_how_backups_and_restores_work]
+== Comment fonctionnent les sauvegardes et les restaurations
+
+L'opérateur `rancher-backup` introduit trois ressources personnalisées{nbsp}: Sauvegardes, restaurations et ResourceSets. Les définitions de ressources personnalisées à l'échelle du cluster suivantes sont ajoutées au cluster{nbsp}:
+
+* `backups.resources.cattle.io`
+* `resourcesets.resources.cattle.io`
+* `restores.resources.cattle.io`
+
+Le ResourceSet définit quelles ressources Kubernetes doivent être sauvegardées. Le ResourceSet n'est pas disponible pour être configuré dans l'interface utilisateur de Rancher car les valeurs nécessaires pour sauvegarder Rancher sont prédéfinies. Ce ResourceSet ne doit pas être modifié.
+
+Lorsqu'une ressource personnalisée de sauvegarde est créée, l'opérateur `rancher-backup` appelle le `kube-apiserver` pour obtenir les ressources dans le ResourceSet auquel la ressource personnalisée de sauvegarde fait référence.
+
+L'opérateur crée ensuite le fichier de sauvegarde au format .tar.gz et le stocke à l'emplacement configuré dans la ressource de sauvegarde.
+
+Lorsqu'une ressource personnalisée de restauration est créée, l'opérateur accède au fichier de sauvegarde .tar.gz spécifié par la restauration et restaure l'application à partir de ce fichier.
+
+Les ressources personnalisées de sauvegarde et de restauration peuvent être créées dans l'interface utilisateur de Rancher, ou en utilisant `kubectl apply`.
+
+[NOTE]
+====
+
+Consultez {xref-migrate-cluster}#_2_restore_from_backup_using_a_restore_custom_resource[ici] pour obtenir de l'aide sur la restauration d'un fichier de sauvegarde existant dans un cluster v1.22 dans Rancher v2.6.3.
+====
+
+
+[#_installing_the_rancher_backup_operator]
+== Installation de l'opérateur rancher-backup
+
+L'opérateur `rancher-backup` peut être installé depuis l'interface utilisateur de Rancher, ou avec le Helm CLI. Dans les deux cas, le chart Helm `rancher-backup` est installé sur le cluster Kubernetes exécutant le serveur Rancher. C'est une fonctionnalité réservée aux administrateurs de cluster et disponible uniquement pour le cluster *local*.  (_Si vous ne voyez pas `rancher-backup` dans l'interface utilisateur de Rancher, vous avez peut-être sélectionné le mauvais cluster._)
+
+[NOTE]
+====
+
+Il existe un problème connu dans Fleet qui se produit après avoir effectué une restauration en utilisant l'opérateur de sauvegarde-restauration{nbsp}: Les secrets utilisés pour clientSecretName et helmSecretName ne sont pas inclus dans les gitrepos de Fleet. Consultez {xref-fleet-overview}#_dépannage[{fleet-product-name} Dépannage] pour une solution de contournement.
+====
+
+
+[#_installing_rancher_backup_with_the_rancher_ui]
+=== Installation de rancher-backup avec l'interface utilisateur de Rancher.
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster `local` et cliquez sur *Explorer*.
+. Dans la barre de navigation de gauche, menu:Apps[Charts].
+. Cliquez sur *Sauvegardes Rancher*.
+. Cliquez sur *Installer*.
+. Facultatives : Configurez l'emplacement de stockage par défaut. Pour obtenir de l'aide, consultez la {xref-rancher-backup-storage-config}[section de configuration.]
+. Cliquez sur *Installer*.
+
+*Résultat :* L'opérateur `rancher-backup` est installé.
+
+Depuis le *Tableau de bord du cluster,* vous pouvez voir l'opérateur `rancher-backup` répertorié sous *Déploiements*.
+
+Pour configurer l'appli de sauvegarde dans Rancher, allez dans le menu de navigation de gauche et cliquez sur *Sauvegardes Rancher*.
+
+[#_rbac]
+=== RBAC
+
+Seuls les administrateurs Rancher et le propriétaire de la grappe locale peuvent{nbsp}:
+
+* Installer le Chart
+* Voir les liens de navigation pour les CRDs de Sauvegarde et de Restauration
+* Effectuer une sauvegarde ou une restauration en créant respectivement un CR de sauvegarde et un CR de restauration.
+* Lister les sauvegardes/restaurations effectuées jusqu'à présent
+
+[#_backing_up_rancher]
+== Sauvegarde de Rancher
+
+Une sauvegarde est effectuée en créant une ressource personnalisée de sauvegarde. Pour un tutoriel, référez-vous à {xref-backup-cluster}[cette page.]
+
+[#_restoring_rancher]
+== Restauration de Rancher
+
+Une restauration est effectuée en créant une ressource personnalisée de restauration. Pour un tutoriel, référez-vous à {xref-rancher-restore}[cette page.]
+
+[#_migrating_rancher_to_a_new_cluster]
+== Migration de Rancher vers un nouveau cluster
+
+Une migration est effectuée en suivant {xref-migrate-cluster}[ces étapes.]
+
+[#_default_storage_location_configuration]
+== Configuration de l'emplacement de stockage par défaut
+
+Configurez un emplacement de stockage par défaut pour vos sauvegardes. Il existe diverses options de configuration, telles que spécifier un magasin d'objets compatible S3 comme emplacement pour des sauvegardes individuelles ou choisir un `StorageClass` existant lors de l'installation du chart Helm `backup-restore-operator`. Vous avez également la possibilité de remplacer l'emplacement de stockage configuré pour chaque sauvegarde, mais vous êtes limité à l'utilisation d'un magasin d'objets compatible S3 ou Minio.
+
+Pour des informations sur la configuration de ces options, référez-vous à {xref-rancher-backup-storage-config}[cette page.]
+
+[#_example_yaml_file_rancher_backup_helm_chart]
+=== Exemple de fichier YAML{nbsp}: Chart Helm de sauvegarde de Rancher
+
+Le {xref-rancher-backup-storage-config}#_example_yaml_file_rancher_backup_helm_chart[values.yaml] peut être utilisé pour configurer le `backup-restore-operator` lorsque le Helm CLI est utilisé pour l'installer.

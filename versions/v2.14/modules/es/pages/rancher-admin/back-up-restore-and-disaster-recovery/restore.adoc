@@ -1,0 +1,120 @@
+= Restaurar {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 4/11/2025
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:url-continuous-delivery-gitreo-add: https://documentation.suse.com/cloudnative/continuous-delivery/{fleet-docs-version}/en/how-tos-for-users/gitrepo-add.html#_backing_up_and_restoring
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/copia-de-seguridad-recuperación-y-desastre/configuración/ejemplos.adoc
+:xref-rancher-rollback: xref:installation-and-upgrade/rollbacks.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-continuous-delivery-gitreo-add: https://fleet.rancher.io/{fleet-docs-version}/how-tos-for-users/gitrepo-add
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:xref-rancher-restore-config: xref:guías-de-referencia/configuración-de-copia-de-seguridad-y-restauración/configuración-de-restauración.adoc
+:xref-back-restore-example-configs: xref:guías-de-referencia/copia-de-seguridad-recuperación-configuración/ejemplos.adoc
+:xref-rancher-rollback: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc
+endif::[]
+
+Esta página describe cómo realizar una restauración con Rancher.
+
+Sigue las instrucciones de esta página cuando:
+
+* La instancia de Rancher en ejecución está en la misma versión que cuando se realizó la copia de seguridad.
+* El clúster local es el mismo en el que se realizó la copia de seguridad.
+
+[NOTE]
+.Importante
+====
+
+Al restaurar Rancher en la misma configuración, el operador reducirá la ampliación de Rancher al comenzar la restauración, y la volverá a desplegar una vez que se complete. Rancher no estará disponible durante la restauración.
+====
+
+
+[NOTE]
+.Advertencia para usuarios de Fleet
+====
+Debes considerar cómo manejar la disponibilidad del servidor API de Kubernetes y los GitRepos en pausa al restaurar una configuración de Rancher que está ejecutando cargas de trabajo de Fleet. Consulta la {url-continuous-delivery-gitreo-add}[{fleet-product-name} documentación] para más detalles.
+====
+
+[TIP]
+====
+
+* Sigue esos pasos para {xref-migrate-cluster}[migrar Rancher].
+* Si necesitas restaurar Rancher a una versión anterior después de una actualización, consulta la {xref-rancher-rollback}[documentación de reversión].
+====
+
+
+[#_create_the_restore_custom_resource]
+== Crea el Recurso Personalizado de Restauración
+
+Una restauración se realiza creando un recurso personalizado de Restauración.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clusters*, ve al cluster `local` y haz clic en *Explorar*. El cluster `local` ejecuta el servidor Rancher.
+. En la barra de navegación izquierda, haz clic en menu:Copias de seguridad de Rancher[Restauraciones].
+. Haga clic en *Crear*.
+. Crea la Restauración con el formulario, o con YAML.  Para crear el recurso de Restauración utilizando el formulario, consulta la {xref-rancher-restore-config}[referencia de configuración] y los {xref-back-restore-example-configs}[ejemplos.]
+. Para usar el editor YAML, podemos hacer clic en menu:Crear[Crear desde YAML]. Introduce el YAML de restauración.
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Restore
+ metadata:
+   name: restore-migration
+ spec:
+   backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+   encryptionConfigSecretName: encryptionconfig
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+----
++
+Para obtener ayuda configurando la Restauración, consulta la {xref-rancher-restore-config}[referencia de configuración] y los {xref-back-restore-example-configs}[ejemplos.]
+
+. Haga clic en *Crear*.
+
+*Resultado:* El operador Rancher reduce la ampliación de Rancher durante la restauración y la vuelve a desplegar una vez que se complete. Los recursos se restauran en este orden:
+
+. Definiciones de Recursos Personalizados (CRDs)
+. Recursos de alcance de clúster
+. Recursos de espacio de nombres
+
+[#_logs]
+== Registros
+
+Para comprobar cómo está progresando la restauración, puedes revisar los registros del operador. Ejecuta este comando para seguir los registros:
+
+----
+kubectl logs -n cattle-resources-system -l app.kubernetes.io/name=rancher-backup -f
+----
+
+[#_cleanup]
+== Limpieza
+
+Si creaste el recurso de restauración con kubectl, elimina el recurso para evitar un conflicto de nombres con futuras restauraciones.
+
+[#_known_issues]
+== Problemas conocidos
+
+En algunos casos, después de restaurar la copia de seguridad, los registros de Rancher mostrarán errores similares a los siguientes:
+
+----
+2021/10/05 21:30:45 [ERROR] error syncing 'c-89d82/m-4067aa68dd78': handler rke-worker-upgrader: clusters.management.cattle.io "c-89d82" not found, requeuing
+----
+
+Esto ocurre porque uno de los recursos que acaba de ser restaurado tiene finalizadores, pero los recursos relacionados han sido eliminados, por lo que el controlador no puede encontrarlo.
+
+Para eliminar los errores, necesitamos encontrar y eliminar el recurso que causa el error. Consulta más información https://github.com/rancher/rancher/issues/35050#issuecomment-937968556[aquí]

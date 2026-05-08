@@ -1,0 +1,139 @@
+= Opciones del Helm Chart de rancher-logging
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-15
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/logging/logging-helm-chart-options.adoc 
+:product-path: observability/logging/logging-helm-chart-options.adoc
+ifeval::["{build-type}" != "community"]
+:xref-selinux-rpm: xref:security/selinux-rpm/selinux-rpm.adoc
+:xref-logging-taints-and-tolerations: xref:observabilidad/logging/taints-y-tolerations.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-selinux-rpm: xref:reference-guides/rancher-security/selinux-rpm/index.adoc
+:xref-logging-taints-and-tolerations: xref:integrations-in-rancher/logging/taints-and-tolerations.adoc
+endif::[]
+
+[#_enable_disable_windows_node_logging]
+== Habilitar/Deshabilitar el registro de nodos de Windows
+
+Puedes habilitar o deshabilitar el registro de nodos de Windows configurando `global.cattle.windows.enabled` a `true` o `false` en el `values.yaml`.
+
+Por defecto, el registro de nodos de Windows estará habilitado si se utiliza la interfaz de usuario del panel de control del clúster para instalar la aplicación de registro en un clúster de Windows.
+
+En este escenario, configurar `global.cattle.windows.enabled` a `false` deshabilitará el registro de nodos de Windows en el clúster.
+Cuando está deshabilitado, los registros seguirán siendo recopilados de los nodos de Linux dentro del clúster de Windows.
+
+[NOTE]
+====
+
+Actualmente existe un https://github.com/rancher/rancher/issues/32325[problema] donde los nodeAgents de Windows no son eliminados al realizar un `helm upgrade` después de deshabilitar el registro de Windows en un clúster de Windows. En este escenario, los usuarios pueden necesitar eliminar manualmente los nodeAgents de Windows si ya están instalados.
+====
+
+
+[#_working_with_a_custom_docker_root_directory]
+== Trabajando con un sistema de archivos raíz de Docker personalizado
+
+Si utilizas un sistema de archivos raíz de Docker personalizado, puedes configurar `global.dockerRootDirectory` en `values.yaml`.
+
+Esto asegurará que los CRs de registro creados utilicen la vía especificada en lugar de la ubicación predeterminada de Docker `data-root`.
+
+Ten en cuenta que esto solo afecta a los nodos de Linux.
+
+Si hay nodos de Windows en el clúster, el cambio no será aplicable a esos nodos.
+
+[#_adding_nodeselector_settings_and_tolerations_for_custom_taints]
+== Añadiendo configuraciones de NodeSelector y toleraciones para taints personalizados
+
+Puedes añadir tus propias configuraciones de `nodeSelector` y añadir `tolerations` para taints adicionales editando los valores del chart Helm de registro. Para más detalles, consulta {xref-logging-taints-and-tolerations}[esta página.]
+
+[#_enabling_the_logging_application_to_work_with_selinux]
+== Habilitando la aplicación de registro para trabajar con SELinux
+
+[NOTE]
+.Requisitos:
+====
+
+Se probó Logging v2 con SELinux en RHEL/CentOS 7 y 8.
+====
+
+
+https://en.wikipedia.org/wiki/Security-Enhanced_Linux[Security-Enhanced Linux (SELinux)] es una mejora de seguridad para Linux. Después de haber sido utilizado históricamente por agencias gubernamentales, SELinux es ahora un estándar de la industria y está habilitado por defecto en CentOS 7 y 8.
+
+Para utilizar Logging v2 con SELinux, recomendamos instalar el `rancher-selinux` RPM de acuerdo con estas {xref-selinux-rpm}[instrucciones].
+
+Luego, al instalar la aplicación de registro, configura el chart para que sea consciente de SELinux cambiando `global.seLinux.enabled` a `true` en el `values.yaml`.
+
+[#_additional_logging_sources]
+== Fuentes de registro adicionales
+
+Por defecto, Rancher recoge registros para https://kubernetes.io/docs/concepts/overview/components/#control-plane-components[componentes del plano de control] y https://kubernetes.io/docs/concepts/overview/components/#node-components[componentes de nodo] para todos los tipos de clúster.
+
+En algunos casos, Rancher puede ser capaz de recoger registros adicionales.
+
+La siguiente tabla resume las fuentes donde se pueden recoger registros adicionales para cada tipo de nodo:
+
+|===
+| Fuente de Registro | Nodos de Linux (incluyendo en clústeres de Windows) | Nodos de Windows
+
+| RKE2
+| ✓
+|
+
+| K3s
+| ✓
+|
+
+ifeval::["{build-type}" != "srfa"]
+| AKS
+| ✓
+|
+
+| EKS
+| ✓
+|
+
+| GKE
+| ✓
+|
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+| EKS
+| ✓
+|
+endif::[]
+|===
+
+Para habilitar proveedores de Kubernetes alojados como fuentes de registro adicionales, habilita la opción *Habilitar registro mejorado del proveedor de nube* al instalar o actualizar el chart Helm de Logging.
+
+Cuando está habilitado, Rancher recoge todos los registros adicionales de nodos y del plano de control que el proveedor ha puesto a disposición, lo cual puede variar entre proveedores.
+
+Si ya estás utilizando la solución de registro propia de un proveedor de nube como AWS CloudWatch o la suite de operaciones de Google Cloud (anteriormente Stackdriver), no es necesario habilitar esta opción ya que la solución nativa tendrá acceso sin restricciones a todos los registros.
+
+[#_systemd_configuration]
+== Configuración de Systemd
+
+En el registro de Rancher, `SystemdLogPath` debe ser configurado para distribuciones de Kubernetes K3s y RKE2.
+
+Las distribuciones de Kubernetes K3s y RKE2 registran en journald, que es el subsistema de systemd que se utiliza para el registro. Para recoger estos registros, es necesario definir el `systemdLogPath`. Mientras que el directorio `run/log/journal` se utiliza por defecto, algunas distribuciones de Linux no utilizan esta vía por defecto. Por ejemplo, Ubuntu utiliza por defecto `var/log/journal`. Para determinar tu configuración de `systemdLogPath`, consulta los pasos a continuación.
+
+*Pasos para la Configuración de Systemd:*
+
+* Ejecuta `cat /etc/systemd/journald.conf | grep -E ^\#?Storage | cut -d"=" -f2` en uno de tus nodos.
+* Si se devuelve `persistent`, tu `systemdLogPath` debería ser `/var/log/journal`.
+* Si se devuelve `volatile`, tu `systemdLogPath` debería ser `/run/log/journal`.
+* Si se devuelve `auto`, verifica si `/var/log/journal` existe.
+ ** Si `/var/log/journal` existe, entonces utiliza `/var/log/journal`.
+ ** Si `/var/log/journal` no existe, entonces utiliza `/run/log/journal`.
+
+[NOTE]
+====
+
+Si se devuelve cualquier valor no descrito anteriormente, Rancher Logging no podrá recopilar los registros del plano de control. Para abordar este problema, necesitarás realizar las siguientes acciones en cada nodo del plano de control:
+
+* Establece `Storage=volatile` en journald.conf.
+* Rearranque el equipo.
+* Establece `systemdLogPath` a `/run/log/journal`.
+====
+

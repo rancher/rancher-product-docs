@@ -1,0 +1,151 @@
+= {rancher-product-name}ウェブフックのハードニング
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-security/rancher-webhook-hardening.adoc 
+:product-path: security/rancher-webhook/hardening.adoc
+
+Rancher Webhook は、Rancher 内の重要なコンポーネントであり、Rancher とそのワークロードのセキュリティ要件を強化する役割を果たします。攻撃対象面を減らすために、アクセスは唯一の有効な呼び出し元である Kubernetes API サーバーに制限する必要があります。これは、ネットワークポリシーと認証を独立して、または相互に組み合わせて使用することで、ウェブフックをハードニングすることができます。
+
+[#_block_external_traffic_using_network_policies]
+== ネットワークポリシーを使用して外部トラフィックをブロックする
+
+ウェブフックは、Kubernetes API サーバーからのリクエストのみを受け入れることが期待されています。ただし、デフォルトでは、ウェブフックは任意のソースからのトラフィックを受け入れることができます。ネットワークポリシーをサポートする CNI を使用している場合、API サーバーから発信されないトラフィックをブロックするポリシーを作成できます。
+
+Kubernetes のビルトイン NetworkPolicy リソースは、クラスターのホストからのトラフィックをブロックまたは許可することができず、`kube-apiserver` プロセスは常にホストネットワーク上で実行されています。したがって、使用中の CNI からの高度なネットワークポリシーリソースを使用する必要があります。Calico と Cilium の例が続きます。CNI の詳細については、ドキュメントを参照してください。
+
+[#_calico]
+=== Calico
+
+`crd.projectcalico.org/v1` API グループの NetworkPolicy リソースを使用してください。セレクター `app == 'rancher-webhook'` を使用してウェブフックのルールを作成し、コントロールプレーンホストの CIDR をインバウンドソースとして設定します：
+
+[,yaml]
+----
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-k8s
+  namespace: cattle-system
+spec:
+  selector: app == 'rancher-webhook'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        nets:
+        - 192.168.42.0/24 # CIDR of the control plane host. May list more than 1 if the hosts are in different subnets.
+      destination:
+        selector:
+          app == 'rancher-webhook'
+----
+
+[#_cilium]
+=== Cilium
+
+`cilium.io/v2` API グループの CiliumNetworkPolicy リソースを使用してください。`fromEntities`インバウンドルールに`host` および `remote-node` キーを追加します。これにより、クラスター内および外部トラフィックがブロックされ、ホストからのトラフィックが許可されます。
+
+[,yaml]
+----
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-k8s
+  namespace: cattle-system
+spec:
+  endpointSelector:
+    matchLabels:
+      app: rancher-webhook
+  ingress:
+    - fromEntities:
+      - host
+      - remote-node
+----
+
+[#_require_the_kubernetes_api_server_to_authenticate_to_the_webhook]
+== Kubernetes API サーバーがウェブフックに対して認証を行うことを要求します。
+
+ウェブフックは、Kubernetes API サーバーからのリクエストのみを受け入れるべきです。デフォルトでは、ウェブフックはクライアントに対して認証を要求しません。任意のリクエストを受け入れます。ウェブフックの設定を行い、API サーバーのみがアクセスできるように認証情報を要求するようにできます。詳細情報は https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#authenticate-apiservers[Kubernetes のドキュメント]にあります。
+
+. API サーバーを設定して、ウェブフックにクライアント証明書を提示し、ValidatingAdmissionWebhook および MutatingAdmissionWebhook プラグインを構成するための AdmissionConfiguration ファイルを指すようにします：
++
+[,yaml]
+----
+ # /etc/rancher/admission/admission.yaml
+ apiVersion: apiserver.config.k8s.io/v1
+ kind: AdmissionConfiguration
+ plugins:
+ - name: ValidatingAdmissionWebhook
+   configuration:
+     apiVersion: apiserver.config.k8s.io/v1
+     kind: WebhookAdmissionConfiguration
+     kubeConfigFile: "/etc/rancher/admission/kubeconfig"
+ - name: MutatingAdmissionWebhook
+   configuration:
+     apiVersion: apiserver.config.k8s.io/v1
+     kind: WebhookAdmissionConfiguration
+     kubeConfigFile: "/etc/rancher/admission/kubeconfig"
+----
++
+これは、PodSecurity などの他の Admission プラグインが構成される同じ設定ファイルです。ディストリビューションやセットアップが追加の Admission プラグインを使用している場合は、それらも構成してください。例えば、 https://documentation.suse.com/cloudnative/rke2/latest/en/security/pod_security_standards.html[RKE2 の PodSecurity 設定]をこのファイルに追加します。
+
+. Admissionプラグインが参照するkubeconfigファイルを作成します。Rancher ウェブフックはクライアント証明書認証のみをサポートしているため、TLSキーのペアを生成し、kubeconfigを`client-certificate`と`client-key`または`client-certificate-data`と`client-key-data`のいずれかを使用するように設定します。次に例を示します。
++
+[,yaml]
+----
+ # /etc/rancher/admission/kubeconfig
+ apiVersion: v1
+ kind: Config
+ users:
+ - name: 'rancher-webhook.cattle-system.svc'
+   user:
+     client-certificate: /path/to/client/cert
+     client-key: /path/to/client/key
+----
+
+. フラグ`--admission-control-config-file`を指定してkube-apiserverバイナリを起動し、AdmissionConfigurationファイルを指します。これを行う方法はディストリビューションによって異なり、ホスティングされたKubernetesプロバイダーのように普遍的にはサポートされていません。あなたのKubernetesディストリビューションのドキュメントを参照してください。
++
+RKE2の場合、`rke2-server`は次のような設定ファイルで起動できます。
++
+[,yaml]
+----
+ # /etc/rancher/rke2/config.yaml
+ kube-apiserver-arg:
+ - admission-control-config-file=/etc/rancher/admission/admission.yaml
+ kube-apiserver-extra-mount:
+ - /etc/rancher/admission:/etc/rancher/admission:ro
+----
++
+
+[WARNING]
+====
+ 一部のディストリビューションは、このフラグをデフォルトで設定します。ディストリビューションが独自のAdmissionConfigurationを提供する場合は、それをカスタムAdmission制御設定ファイルに含める必要があります。例えば、RKE2は`/etc/rancher/rke2/rke2-pss.yaml`にAdmissionConfigurationファイルをインストールし、PodSecurity Admissionプラグインを構成します。config.yamlで`admission-control-config-file`を設定すると、この重要なセキュリティ設定が上書きされます。両方のプラグインを含めるには、 https://documentation.suse.com/cloudnative/rke2/latest/en/security/pod_security_standards.html[デフォルトのPodセキュリティ基準のドキュメント]を参照し、適切なプラグイン設定をadmission.yamlにコピーします。
+====
+
+
+. 既存のノードを使用してクラスターをプロビジョニングするためにRancherを使用している場合は、プロビジョニングする前にノード上にこれらのファイルを作成します。
++
+新しいノードでクラスターをプロビジョニングするためにRancherを使用している場合は、プロビジョニングが完了するまで待ち、その後提供されたSSHキーとIPアドレスを使用してノードに接続し、RKE2設定ファイルを`/etc/rancher/rke2/config.yaml.d/`ディレクトリに配置します。
+
+. クラスターがこれらの認証情報で構成された後、Rancherクラスターエージェントを構成して、ウェブフックでの認証を有効にします。これらのチャート値を含むファイルを作成してください。
++
+[,yaml]
+----
+ # values.yaml
+ auth:
+   clientCA: <base64-encoded certificate authority that signed the kube-apiserver's client certificates>
+   allowedCNs:
+   - <list of Common Names identifying the kube-apiserver's client certificates.>
+   - <if not provided, any cert signed by the given CA will be accepted.>
+----
+
+. これらの値を持つ構成マップをプロビジョニングされたクラスターの`cattle-system`ネームスペースに作成してください。
++
+----
+ kubectl --namespace cattle-system create configmap rancher-config --from-file=rancher-webhook=values.yaml
+----
++
+ウェブフックはこれらの値で再起動します。

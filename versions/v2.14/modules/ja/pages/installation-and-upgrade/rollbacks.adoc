@@ -1,0 +1,142 @@
+= ロールバック
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-06
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc 
+:product-path: installation-and-upgrade/rollbacks.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+:xref-rancher-restore: xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rollback-docker-installed: xref:getting-started/installation-and-upgrade/other-installation-methods/rancher-on-a-single-node-with-docker/roll-back-docker-installed-rancher.adoc
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-back-restore-example-configs: xref:reference-guides/backup-restore-configuration/examples.adoc
+:xref-rancher-restore: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc
+endif::[]
+
+このページでは、アップグレード後にRancherを以前のバージョンにロールバックする方法を説明します。
+
+include::shared:ROOT:partial$en/rollback-warning.adoc[]
+
+次の場合は、このページの指示に従ってください：
+
+* 実行中のRancherインスタンスは、バックアップが作成された後に新しいバージョンにアップグレードされました。
+* アップストリーム（ローカルクラスタ）は、バックアップが作成された場所と同じである。
+
+[TIP]
+====
+* これらの手順に従って{xref-migrate-cluster}[Rancherを移行]してください。
+* 同じRancherバージョンの以前の状態にRancherを復元する必要がある場合は、{xref-rancher-restore}[復元ドキュメント]を参照してください。
+====
+
+Rancherを低い/以前のバージョンにロールバックするには、*Rancherバックアップ*アプリケーションを使用して、バックアップからRancherを復元します。
+
+ロールバック後は、Rancherを低い/以前のバージョンで起動する必要があります。
+
+復元は、復元カスタムリソースを作成することで実行されます。
+
+[#_alternative_steps_for_special_scenarios]
+== 特別なシナリオのための代替手順
+
+以下のシナリオでは、ロールバックのために代替手順を実行する必要があります：
+
+* v2.14.0以降からv2.13.xの以前のバージョンにロールバックする。
+
+Rancher v2.13.0では、Rancher TurtlesがCAPIリソースのデフォルトマネージャーとなり、以前の埋め込みクラスターAPIコントローラーを置き換えました。そして、Rancher v2.14.0では、埋め込みクラスターAPIが完全に削除されました。その結果、Rancher v2.14.0以降からRancher v2.13.xの以前のバージョンにロールバックし、CAPIリソースを管理するためにRancher Turtlesを引き続き使用するつもりがない場合、埋め込みクラスターAPIコントローラーを使用するために追加の手動手順が必要になる場合があります。Rancher v2.14.0以降、Rancher TurtlesはCAPIリソースの唯一のサポートされているマネージャーです。
+
+Rancher v2.14.0では、クラスターAPIモジュールがv1.10.6からv1.12.2にアップグレードされます。クラスターAPI v1.12.2は、カスタムリソース定義（CRD）のapiVersionsを`cluster.x-k8s.io/v1beta1`から`cluster.x-k8s.io/v1beta2`にアップグレードします。Rancherのバックアップには、Cluster APIのCRDが含まれています。Rancher v2.13.xからv2.14.0にアップグレードした後、ローカルクラスタにバックアップデータを復元する際、Rancherバックアップアプリケーションは最初にv1beta1 CRDを復元します。これは、クラスター内にv1beta2カスタムリソースが存在するため、v1beta2バージョンをCRDから削除できないため失敗します。
+
+[NOTE]
+.重要:
+====
+
+* バックアップ元の同じクラスターでRancherを復元するための手順は、このページの指示に従ってください。Rancherを新しいクラスターに移行するには、{xref-migrate-cluster}[Rancherを移行する]手順に従ってください。
+* 同じセットアップでRancherを復元する際、復元が始まる前にRancherのデプロイメントを手動でスケールダウンし、復元が完了したらオペレーターが再度スケールアップします。その結果、RancherとそのUIは復元が完了するまで利用できなくなります。UIが利用できない間は、復元YAMLファイルと共に元のクラスターのkubeconfigを使用してください：`kubectl create -f restore.yaml`。
+====
+
+[#_step_1_create_the_restore_custom_resource]
+== 手順1:復元カスタムリソースを作成する
+
+. *☰ > クラスター管理*をクリックします。
+. ローカルクラスタに移動し、*探索*をクリックします。
+. 左側のナビゲーションバーで、menu:Rancherバックアップ[復元]をクリックします。
+
+[NOTE]
+====
+Rancherバックアップアプリが表示されない場合は、*アプリ*のChartsページからインストールする必要があります。詳細については、{xref-helm-charts-in-rancher}#_access_charts[こちら]を参照してください。
+====
+
+
+. ［*作成*］をクリックします。
+. フォームまたはYAMLを使用して復元を作成します。オンラインフォームを使用して復元リソースを作成する際のヘルプについては、{xref-rancher-restore-config}[設定リファレンス]および{xref-back-restore-example-configs}[例]を参照してください。
+. YAMLエディタを使用するには、menu:作成[YAMLから作成]をクリックできます。復元YAMLを入力してください。以下は、例としての復元カスタムリソースです：
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Restore
+ metadata:
+   name: restore-migration
+ spec:
+   backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+   encryptionConfigSecretName: encryptionconfig
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+----
++
+復元の設定に関するヘルプについては、{xref-rancher-restore-config}[設定リファレンス]および{xref-back-restore-example-configs}[例]を参照してください。
+
+. ［*作成*］をクリックします。
+
+*結果:*バックアップファイルが作成され、ターゲットストレージの場所に更新されます。リソースは以下の順序で復元されます：
+
+. カスタムリソース定義（CRD）
+. クラスター範囲のリソース
+. ネームスペースリソース
+
+復元の進行状況を確認するには、オペレーターのログを確認できます。ログを取得するための手順は次のとおりです：
+
+[,yaml]
+----
+kubectl get pods -n cattle-resources-system
+kubectl logs -n cattle-resources-system -f
+----
+
+[#_step_2_roll_back_to_a_previous_rancher_version]
+== ステップ2:以前のRancherバージョンにロールバックする
+
+RancherはHelm CLIを使用してロールバックできます。以前のバージョンにロールバックするには：
+
+[,yaml]
+----
+helm rollback rancher -n cattle-system
+----
+
+以前のリビジョンが意図したターゲットでない場合、ロールバックするリビジョンを指定できます。デプロイメントの履歴を表示するには：
+
+[,yaml]
+----
+helm history rancher -n cattle-system
+----
+
+ターゲットリビジョンが決定されたら、ロールバックを実行します。この例では、リビジョン`3`にロールバックします。
+
+[,yaml]
+----
+helm rollback rancher 3 -n cattle-system
+----

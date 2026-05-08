@@ -1,0 +1,240 @@
+= Fournisseurs d'interface réseau de conteneur (CNI)
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-26
+:page-revdate: {revdate}
+:community-path: faq/container-network-interface-providers.adoc 
+:product-path: faq/container-network-interface-providers.adoc
+:description: Découvrez l'interface réseau de conteneur (CNI), les fournisseurs de CNI proposés par Rancher, les fonctionnalités qu'ils offrent et comment choisir un fournisseur adapté à vos besoins
+ifeval::["{build-type}" != "community"]
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc
+:xref-rke2-config: xref:guides-de-référence/configuration-de-cluster/configuration-du-serveur-rancher/configuration-du-cluster-rke2.adoc
+endif::[]
+
+[#_what_is_cni]
+== Qu'est-ce que le CNI{nbsp}?
+
+Le CNI (Interface Réseau de Conteneurs), un https://cncf.io/[projet de la Cloud Native Computing Foundation], consiste en une spécification et des bibliothèques pour écrire des plugins afin de configurer des interfaces réseau dans des conteneurs Linux, ainsi qu'un certain nombre de plugins. Le CNI ne s'occupe que de la connectivité réseau des conteneurs et de la suppression des ressources allouées lorsque le conteneur est supprimé.
+
+Kubernetes utilise le CNI comme interface entre les fournisseurs de réseau et le réseau des pods Kubernetes.
+
+image::cni-logo.png[Logo CNI]
+
+Pour plus d'informations, visitez https://github.com/containernetworking/cni[le projet CNI sur GitHub].
+
+[#_what_network_models_are_used_in_cni]
+== Quels modèles de réseau sont utilisés dans le CNI{nbsp}?
+
+Les fournisseurs de réseau CNI mettent en œuvre leur tissu réseau en utilisant soit un modèle de réseau encapsulé tel que le Virtual Extensible Lan (https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#vxlan[VXLAN]), soit un modèle de réseau non encapsulé tel que le Border Gateway Protocol (https://en.wikipedia.org/wiki/Border_Gateway_Protocol[BGP]).
+
+[#_what_is_an_encapsulated_network]
+=== Qu'est-ce qu'un réseau encapsulé{nbsp}?
+
+Ce modèle de réseau fournit un réseau logique de couche 2 (L2) encapsulé sur la topologie de réseau de couche 3 (L3) existante qui s'étend sur les nœuds du cluster Kubernetes. Avec ce modèle, vous disposez d'un réseau L2 isolé pour les conteneurs sans avoir besoin de distribution de routage, le tout au coût d'une surcharge minimale en termes de traitement et d'augmentation de la taille des paquets IP, qui provient d'un en-tête IP généré par l'encapsulation de superposition. Les informations d'encapsulation sont distribuées par des ports UDP entre les nœuds de travail Kubernetes, échangeant des informations sur le plan de contrôle réseau concernant la manière dont les adresses MAC peuvent être atteintes. L'encapsulation courante utilisée dans ce type de modèle de réseau est le VXLAN, la sécurité du protocole Internet (IPSec) et l'IP dans l'IP.
+
+En termes simples, ce modèle de réseau génère une sorte de pont réseau étendu entre les nœuds de travail Kubernetes, où les pods sont connectés.
+
+Ce modèle de réseau est utilisé lorsqu'un pont L2 étendu est préféré. Ce modèle de réseau est sensible aux latences du réseau L3 des nœuds de travail Kubernetes. Si les centres de données sont situés dans des géolocalisations distinctes, assurez-vous d'avoir de faibles latences entre eux pour éviter une éventuelle segmentation du réseau.
+
+Les fournisseurs de réseau CNI utilisant ce modèle de réseau incluent Flannel, Canal, Weave et Cilium. Par défaut, Calico n'utilise pas ce modèle, mais il peut être configuré pour le faire.
+
+image::encapsulated-network.png[Réseau encapsulé]
+
+[#_what_is_an_unencapsulated_network]
+=== Qu'est-ce qu'un réseau non encapsulé{nbsp}?
+
+Ce modèle de réseau fournit un réseau L3 pour acheminer les paquets entre les conteneurs. Ce modèle ne génère pas de réseau L2 isolé, ni de surcharge. Ces avantages ont un coût, car les nœuds de travail Kubernetes doivent gérer toute distribution de routes nécessaire. Au lieu d'utiliser des en-têtes IP pour l'encapsulation, ce modèle de réseau utilise un protocole réseau entre les nœuds de travail Kubernetes pour distribuer les informations de routage afin d'atteindre les pods, tel que https://en.wikipedia.org/wiki/Border_Gateway_Protocol[BGP].
+
+En termes simples, ce modèle de réseau génère une sorte de routeur réseau étendu entre les nœuds de travail Kubernetes, qui fournit des informations sur la façon d'atteindre les pods.
+
+Ce modèle de réseau est utilisé lorsque un réseau L3 routé est préféré. Ce mode met à jour dynamiquement les routes au niveau du système d'exploitation pour les nœuds de travail Kubernetes. Il est moins sensible à la latence.
+
+Les fournisseurs de réseau CNI utilisant ce modèle de réseau incluent Calico et Cilium. Cilium peut être configuré avec ce modèle bien qu'il ne soit pas le mode par défaut.
+
+image::unencapsulated-network.png[Réseau non encapsulé]
+
+[#_what_cni_providers_are_provided_by_rancher]
+== Quels fournisseurs CNI sont fournis par Rancher{nbsp}?
+
+[#__rke2_product_name_kubernetes_clusters]
+=== {rke2-product-name} clusters Kubernetes
+
+Prêt à l'emploi, Rancher fournit les fournisseurs de réseau CNI suivants pour les clusters Kubernetes RKE2{nbsp}: Calico, Canal, Cilium et Flannel.
+
+Vous pouvez choisir votre fournisseur de réseau CNI lorsque vous créez de nouveaux clusters Kubernetes à partir de Rancher.
+
+[#_calico]
+==== Calico
+
+image::calico-logo.png[Logo Calico]
+
+Calico permet la mise en réseau et la politique de réseau dans les clusters Kubernetes dans le cloud. Par défaut, Calico utilise un tissu réseau IP pur et non encapsulé et un moteur de politique pour fournir la mise en réseau pour vos charges de travail Kubernetes. Les charges de travail peuvent communiquer à la fois sur l'infrastructure cloud et sur site en utilisant BGP.
+
+Calico propose également un mode d'encapsulation IP-in-IP ou VXLAN sans état qui peut être utilisé, si nécessaire. Calico offre également une isolation des politiques, vous permettant de sécuriser et de gouverner vos charges de travail Kubernetes à l'aide de politiques d'entrée et de sortie avancées.
+
+Les nœuds de travail Kubernetes doivent ouvrir le port TCP `179` s'ils utilisent BGP ou le port UDP `4789` s'ils utilisent l'encapsulation VXLAN. De plus, le port TCP `5473` est nécessaire lors de l'utilisation de Typha. Voir {xref-node-reqs}#_networking_requirements[les exigences de port pour les clusters utilisateurs] pour plus de détails.
+
+[NOTE]
+.Important :
+====
+
+Dans Rancher v2.6.3, les sondes Calico échouent sur les nœuds Windows lors de l'installation de RKE2. *Notez que ce problème est résolu dans v2.6.4.*
+
+* Pour contourner ce problème, naviguez d'abord vers `\https://<rancherserverurl>/v3/settings/windows-rke2-install-script`.
+* Là, changez le paramètre actuel{nbsp}: `https://raw.githubusercontent.com/rancher/wins/v0.1.3/install.ps1` en ce nouveau paramètre{nbsp}: `https://raw.githubusercontent.com/rancher/rke2/master/windows/rke2-install.ps1`.
+====
+
+
+image::calico-diagram.svg[Diagramme Calico]
+
+Pour plus d'informations, consultez les pages suivantes{nbsp}:
+
+* https://www.projectcalico.org/[Site officiel de Project Calico]
+* https://github.com/projectcalico/calico[Page GitHub de Project Calico]
+
+[#_canal]
+==== Canal
+
+image::canal-logo.png[Logo Canal]
+
+Canal est un fournisseur de réseau CNI qui vous offre le meilleur de Flannel et Calico. Il permet aux utilisateurs de déployer facilement Calico et Flannel ensemble en tant que solution de mise en réseau unifiée, combinant l'application des politiques réseau de Calico avec le riche ensemble de connectivité réseau de Calico (non encapsulé) et/ou de Flannel (encapsulé).
+
+Dans Rancher, Canal est le fournisseur de réseau CNI par défaut combiné avec Flannel et l'encapsulation VXLAN.
+
+Les nœuds de travail Kubernetes doivent ouvrir le port UDP `8472` (VXLAN) et le port TCP `9099` (vérifications de santé). Si vous utilisez Wireguard, vous devez ouvrir les ports UDP `51820` et `51821`. Pour plus de détails, référez-vous à {xref-node-reqs}[les exigences de port pour les clusters utilisateurs].
+
+image::canal-diagram.png[]
+
+Pour plus d'informations, référez-vous à https://github.com/rancher/rke2-charts/tree/main-source/packages/rke2-canal[la source Canal maintenue par Rancher] et à la https://github.com/projectcalico/canal[Page GitHub de Canal].
+
+[#_cilium]
+==== Cilium
+
+image::cilium-logo.png[Logo de Cilium]
+
+Cilium permet la mise en réseau et les politiques réseau (L3, L4 et L7) dans Kubernetes. Par défaut, Cilium utilise les technologies eBPF pour router les paquets à l'intérieur du nœud et VXLAN pour envoyer des paquets à d'autres nœuds. Des techniques non encapsulées peuvent également être configurées.
+
+Cilium recommande des versions du noyau Linux supérieures à 5.2 pour pouvoir tirer pleinement parti du potentiel d'eBPF. Les nœuds de travail Kubernetes doivent ouvrir le port TCP `8472` pour VXLAN et le port TCP `4240` pour les vérifications de santé. De plus, ICMP 8/0 doit être activé pour les vérifications de santé. Pour plus d'informations, consultez https://docs.cilium.io/en/latest/operations/system_requirements/#firewall-requirements[les exigences système de Cilium].
+
+[#_flannel]
+==== Flannel
+
+image::flannel-logo.png[Flannel Logo]
+
+Flannel est un moyen simple et facile de configurer un tissu réseau L3 conçu pour Kubernetes. Flannel exécute un agent binaire unique nommé flanneld sur chaque hôte, qui est responsable de l'allocation d'un bail de sous-réseau à chaque hôte à partir d'un espace d'adresses plus large et préconfiguré. Flannel utilise soit l'API Kubernetes, soit etcd directement pour stocker la configuration réseau, les sous-réseaux alloués et toute donnée auxiliaire (telle que l'adresse IP publique de l'hôte). Les paquets sont transférés en utilisant l'un des plusieurs mécanismes de backend, l'encapsulation par défaut étant https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#vxlan[VXLAN].
+
+Le trafic encapsulé n'est pas chiffré par défaut. Flannel propose deux solutions pour le chiffrement{nbsp}:
+
+* https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#ipsec[IPSec], qui utilise https://www.strongswan.org/[strongSwan] pour établir des tunnels IPSec chiffrés entre les nœuds de travail Kubernetes. C'est un backend expérimental pour le chiffrement.
+* https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#wireguard[WireGuard], qui est une alternative plus performante à strongSwan.
+
+Les nœuds de travail Kubernetes doivent ouvrir le port UDP `8472` (VXLAN). Voir {xref-node-reqs}#_networking_requirements[les exigences de port pour les clusters utilisateurs] pour plus de détails.
+
+image::flannel-diagram.png[Diagramme de Flannel]
+
+Pour plus d'informations, consultez la https://github.com/flannel-io/flannel[Page GitHub de Flannel].
+
+[#_ingress_routing_across_nodes_in_cilium]
+===== Routage Ingress à travers les nœuds dans Cilium
+
+{blank} +
+Par défaut, Cilium n'autorise pas les pods à contacter des pods sur d'autres nœuds. Pour contourner cela, activez le contrôleur d'ingress pour acheminer les demandes entre les nœuds avec un `CiliumNetworkPolicy`.
+
+Après avoir sélectionné le CNI Cilium et activé l'Isolation de Réseau de Projet pour votre nouveau cluster, configurez comme suit{nbsp}:
+
+----
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: hn-nodes
+  namespace: default
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+      - remote-node
+----
+
+[#_cni_features_by_provider]
+== Fonctionnalités CNI par Fournisseur
+
+Le tableau suivant résume les différentes fonctionnalités disponibles pour chaque fournisseur de réseau CNI proposé par Rancher.
+
+|===
+| Provider | Modèle de Réseau | Distribution des Routes | Politiques Réseau | Maille | Datastore externe | Chiffrement | Politiques d'entrée/sortie
+
+| Canal
+| Encapsulé (VXLAN)
+| Non
+| Oui
+| Non
+| API K8s
+| Oui
+| Oui
+
+| Flannel
+| Encapsulé (VXLAN)
+| Non
+| Non
+| Non
+| API K8s
+| Oui
+| Non
+
+| Calico
+| Encapsulé (VXLAN,IPIP) OU Non encapsulé
+| Oui
+| Oui
+| Oui
+| Etcd et API K8s
+| Oui
+| Oui
+
+| Weave
+| Encapsulé
+| Oui
+| Oui
+| Oui
+| Non
+| Oui
+| Oui
+
+| Cilium
+| Encapsulé (VXLAN)
+| Oui
+| Oui
+| Oui
+| Etcd et API K8s
+| Oui
+| Oui
+|===
+
+* Modèle de réseau{nbsp}: Encapsulé ou non encapsulé. Pour plus d'informations, voir <<_what_network_models_are_used_in_cni,Quels modèles de réseau sont utilisés dans CNI ?>>
+* Distribution des routes{nbsp}: Un protocole de passerelle externe conçu pour échanger des informations de routage et de connectivité sur Internet. BGP peut aider à la mise en réseau pod-à-pod entre les clusters. Cette fonctionnalité est indispensable sur les fournisseurs de réseau CNI non encapsulés, et elle est généralement réalisée par BGP. Si vous prévoyez de construire des clusters répartis sur des segments de réseau, la distribution des routes est une fonctionnalité appréciable.
+* Politiques réseau{nbsp}: Kubernetes offre des fonctionnalités pour appliquer des règles concernant les services qui peuvent communiquer entre eux à l'aide de politiques réseau. Cette fonctionnalité est stable depuis Kubernetes v1.7 et est prête à être utilisée avec certains plugins de mise en réseau.
+* Maillage{nbsp}: Cette fonctionnalité permet la communication réseau service-à-service entre des clusters Kubernetes distincts.
+* Datastore externe{nbsp}: Les fournisseurs de réseau CNI avec cette fonctionnalité ont besoin d'un datastore externe pour ses données.
+* Chiffrement : Cette fonctionnalité permet un contrôle et des plans de données réseau chiffrés et sécurisés.
+* Politiques d'entrée/sortie{nbsp}: Cette fonctionnalité vous permet de gérer le contrôle de routage pour les communications Kubernetes et non-Kubernetes.
+
+[#_cni_community_popularity]
+== Popularité de la communauté CNI
+
+include::shared:ROOT:partial$en/cni-popularity.adoc[]
+
+[#_which_cni_provider_should_i_use]
+== Quel fournisseur CNI devrais-je utiliser{nbsp}?
+
+Cela dépend des besoins de votre projet. Il existe de nombreux fournisseurs différents, chacun ayant diverses fonctionnalités et options. Il n'existe pas de fournisseur qui réponde aux besoins de tout le monde.
+
+Canal est le fournisseur de réseau CNI par défaut. Nous le recommandons pour la plupart des cas d'utilisation. Il fournit un réseau encapsulé pour les conteneurs avec Flannel, tout en ajoutant des politiques de réseau Calico qui peuvent offrir une isolation de projet/espace de noms en termes de réseau.
+
+[#_how_can_i_configure_a_cni_network_provider]
+== Comment puis-je configurer un fournisseur de réseau CNI{nbsp}?
+
+Veuillez consulter {xref-rke2-config}[Options de Cluster] pour savoir comment configurer un fournisseur de réseau pour votre cluster. Pour des options de configuration plus avancées, veuillez voir comment configurer votre cluster en utilisant un {xref-rke2-config}#_cluster_config_file_reference[Fichier de Configuration].

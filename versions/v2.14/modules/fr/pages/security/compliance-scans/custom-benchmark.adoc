@@ -1,0 +1,95 @@
+= Créer une version de benchmark personnalisée pour exécuter une analyse de cluster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/compliance-scans/custom-benchmark.adoc 
+:product-path: security/compliance-scans/custom-benchmark.adoc
+:experimental:
+
+Chaque version de benchmark définit un ensemble de fichiers de configuration de test qui définissent les tests de conformité à exécuter par l'outil https://github.com/aquasecurity/kube-bench[kube-bench].
+L'application `rancher-compliance` installe quelques versions de benchmark par défaut qui sont listées sous le menu de l'application de benchmark de conformité.
+
+Cependant, il pourrait y avoir certaines configurations de clusters Kubernetes qui nécessitent des configurations personnalisées des tests de benchmark. Par exemple, le chemin vers les fichiers de configuration Kubernetes ou les certificats pourrait être différent de l'emplacement standard où les benchmarks CIS en amont les recherchent.
+
+Mais dans les cas suivants, une configuration ou une remédiation personnalisée peut être requise{nbsp}:
+
+* Emplacements de fichiers non standards{nbsp}: Lorsque les chemins des binaires Kubernetes, de configuration ou de certificats s'écartent des valeurs par défaut des benchmarks en amont.
++
+Exemple : Contrairement à Kubernetes traditionnel, K3s regroupe les composants du plan de contrôle dans un seul binaire. Par conséquent, la présence et la configuration du drapeau `--anonymous-auth` doivent être vérifiées dans les journaux de K3s (`journalctl`), et non via les vérifications de processus `kube-apiserver` (`ps`).
+
+* Atténuations des risques alternatives{nbsp}: Si une configuration ne répond pas à un contrôle mais dispose d'un contrôle compensatoire tout aussi efficace avec justification. Ou n'est tout simplement pas concernée par l'exigence de contrôle en raison de sa conception.
++
+Exemple : Par défaut, K3s intègre le serveur API dans le processus k3s. Il n'y a pas de fichier de spécification de pod de serveur API, donc la vérification des permissions de fichier de ce dernier n'est pas requise.
+
+[#_1_prepare_the_custom_benchmark_version_configmap]
+== 1. Préparer le ConfigMap de la version de benchmark personnalisée
+
+Pour créer une version de benchmark personnalisée, vous devez d'abord créer un ConfigMap contenant les fichiers de configuration de la version de benchmark et le télécharger sur votre cluster Kubernetes où vous souhaitez exécuter le scan.
+
+Pour préparer un ConfigMap de version de benchmark personnalisée, supposons que nous souhaitons ajouter une version de benchmark personnalisée nommée `foo`.
+
+. Créez un répertoire nommé `foo` et à l'intérieur de ce répertoire, placez tous les fichiers YAML de configuration que l'outil https://github.com/aquasecurity/kube-bench[kube-bench] recherche. Par exemple, voici les fichiers YAML de configuration pour une version de benchmark CIS 1.5 Générique https://github.com/aquasecurity/kube-bench/tree/master/cfg/cis-1.5
+. Placez le fichier complet `config.yaml`, qui comprend tous les composants qui doivent être testés.
+. Ajoutez le nom de la version de benchmark à la section `target_mapping` du `config.yaml`{nbsp}:
++
+[,yaml]
+----
+ target_mapping:
+   "foo":
+     - "master"
+     - "node"
+     - "controlplane"
+     - "etcd"
+     - "policies"
+----
+
+. Téléchargez ce répertoire sur votre cluster Kubernetes en créant un ConfigMap{nbsp}:
++
+[,yaml]
+----
+ kubectl create configmap -n <namespace> foo --from-file=<path to directory foo>
+----
+
+[#_2_add_a_custom_benchmark_version_to_a_cluster]
+== 2. Ajoutez une version de benchmark personnalisée à un cluster
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster où vous souhaitez ajouter une version de benchmark personnalisée et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur *Conformité > Version de benchmark*.
+. Cliquez sur *Create*.
+. Entrez le *Nom* et une description pour votre version de benchmark personnalisée.
+. Choisissez le fournisseur de cluster auquel votre version de benchmark s'applique.
+. Choisissez le ConfigMap que vous avez téléchargé dans le menu déroulant.
+. Ajoutez les limites de version Kubernetes minimales et maximales applicables, le cas échéant.
+. Cliquez sur *Create*.
+
+[#_3_create_a_new_profile_for_the_custom_benchmark_version]
+== 3. Créez un nouveau profil pour la version de benchmark personnalisée
+
+Pour exécuter une analyse en utilisant votre version de benchmark personnalisée, vous devez ajouter un nouveau profil pointant vers cette version de benchmark.
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster où vous souhaitez ajouter une version de benchmark personnalisée et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur *Conformité > Analyse*.
+. Cliquez sur *Create*.
+. Fournissez un *Nom* et une description. Dans cet exemple, nous l'appelons `foo-profile`.
+. Choisissez la version de benchmark dans le menu déroulant.
+. Cliquez sur *Create*.
+
+[#_4_run_a_scan_using_the_custom_benchmark_version]
+== 4. Exécutez une analyse en utilisant la version de benchmark personnalisée
+
+Une fois que le profil pointant vers votre version de benchmark personnalisée `foo` a été créé, vous pouvez créer une nouvelle analyse pour exécuter les configurations de test personnalisées dans la version de benchmark.
+
+Pour exécuter une analyse,
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster où vous souhaitez ajouter une version de benchmark personnalisée et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur menu:Benchmark CIS[Analyse].
+. Cliquez sur *Create*.
+. Choisissez le nouveau profil de cluster pour l'analyse.
+. Cliquez sur *Create*.
+
+*Résultat :* Un rapport est généré avec les résultats de l'analyse. Pour voir les résultats, cliquez sur le nom de l'analyse qui apparaît.

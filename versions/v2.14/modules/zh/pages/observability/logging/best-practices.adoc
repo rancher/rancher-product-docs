@@ -1,51 +1,60 @@
-= Logging 最佳实践
+= 日志最佳实践
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
+endif::[]
 :revdate: 2025-08-22
 :page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/logging-best-practices.adoc 
+:product-path: observability/logging/best-practices.adoc
 
-本指南介绍了集群级别日志和应用日志的最佳实践。
+在本指南中，我们推荐集群级日志和应用程序日志记录的最佳实践。
 
-* <<_集群级别日志,集群级别日志>>
-* <<_应用日志,应用日志>>
-* <<_通用最佳实践,通用最佳实践>>
+* <<_cluster_level_logging,集群级日志>>
+* <<_application_logging,应用程序日志记录>>
+* <<_general_best_practices,一般最佳实践>>
 
-在 Rancher 2.5 之前，Rancher 的 Logging 是一个静态集成。可供选择的聚合器是固定的（包括 ElasticSearch、Splunk、Kafka、Fluentd 和 Syslog），而且只有两个配置级别可供选择（集群级别和项目级别）。
+在Rancher v2.5之前，Rancher中的日志记录历史上是一个相对静态的集成。可供选择的聚合器有固定列表（ElasticSearch、Splunk、Kafka、Fluentd和Syslog），并且只有两个配置点可供选择（集群级和项目级）。
 
-现在，Rancher 的日志聚合更加灵活。通过新的 Logging 的功能，管理员和用户都可以部署符合细粒度收集标准的日志记录，同时提供更多的目标和配置选项。
+Rancher提供了灵活的日志聚合体验。通过日志记录功能，管理员和用户都可以部署满足细粒度收集标准的日志记录，同时提供更广泛的目标和配置选项。
 
-Rancher Logging 使用的是 https://github.com/kube-logging/logging-operator[Logging Operator]。我们让你可以管理这个 operator 及其资源，并将它的管理功能和 Rancher 集群管理联系起来。
+在后台，Rancher日志使用 https://github.com/kube-logging/logging-operator[日志 Operator].我们提供该 Operator（及其资源）的可管理性，并将该体验与管理您的 Rancher 集群结合起来。
 
-== 集群级别日志
+[#_cluster_level_logging]
+== 集群级日志
 
-=== 抓取集群内日志
+[#_cluster_wide_scraping]
+=== 集群范围内抓取
 
-某些用户可能想从集群中运行的每个容器中抓取日志。但是你的安全团队可能要求你从所有执行点收集所有日志。
+对于某些用户，抓取集群中每个容器的日志是可取的。这通常与您的安全团队要求（或需求）从所有执行点收集所有日志的请求相吻合。
 
-在这种情况下，我们建议你至少创建两个 _ClusterOutput_ 对象 - 一个用于安全团队（如果需要），另一个用于你自己，即集群管理员。创建这些对象时，请选择一个可以处理整个集群的大量日志的输出端点。此外，你还需要选择合适的索引来接收这些日志。
+在这种情况下，建议创建至少两个_ClusterOutput_对象 - 一个供您的安全团队使用（如果您有该需求），另一个供您自己，集群管理员使用。创建这些对象时，请注意选择一个能够处理来自整个集群的显著日志流量的输出端点。还要确保选择一个合适的索引来接收所有这些日志。
 
-创建这些 _ClusterOutput_ 对象后，创建一个 _ClusterFlow_ 来收集所有日志。不要在此 flow 上定义任何 _Include_ 或 _Exclude_ 规则。这可以确保你能收集整个集群的所有日志。如果你有两个 _ClusterOutputs_，请确保它们都能收到日志。
+一旦您创建了这些_ClusterOutput_对象，创建一个_ClusterFlow_来收集所有日志。不要在此流上定义任何_包含_或_排除_规则。这将确保从整个集群收集所有日志。如果您有两个 _ClusterOutputs_，请确保将日志发送到它们两个。
 
+[#_kubernetes_components]
 === Kubernetes 组件
 
-_ClusterFlows_ have the ability to collect logs from all containers on all hosts in the Kubernetes cluster. This works well in cases where those containers are part of a Kubernetes pod.
+_ClusterFlows_ 能够从 Kubernetes 集群中的所有主机上的所有容器收集日志。在这些容器是 Kubernetes pod 的一部分的情况下，这种方法效果很好。
 
-Rancher 的未来版本将包含源容器名称，来支持过滤这些组件的日志。该功能实现之后，你将能够自定义 _ClusterFlow_ 来**仅**检索 Kubernetes 组件日志，并将日志发送到适当的输出位置。
+未来的 Rancher 版本将包括源容器名称，这将使得过滤这些组件日志成为可能。一旦进行该更改，您将能够自定义一个 _ClusterFlow_ 来检索 *仅* Kubernetes 组件日志，并将其定向到适当的输出。
 
-== 应用日志
+[#_application_logging]
+== 应用程序日志记录
 
-对于 Kubernetes 和所有基于容器的应用而言，最佳实践是将应用日志引导到 `stdout`/`stderr`。容器运行时将捕获这些日志并用它们进行**某些操作** - 通常是将它们写入文件。根据容器运行时（及其配置），这些日志可以放置在任意数量的位置。
+在 Kubernetes 以及所有基于容器的应用程序中，最佳实践是将应用程序日志定向到 `stdout`/`stderr`。容器运行时将捕获这些日志并对其进行 *某种操作* - 通常是将其写入文件。根据容器运行时（及其配置），这些日志可以最终存储在多个位置。
 
-在将日志写入文件的情况下，Kubernetes 通过在每个主机上创建一个 `/var/log/containers` 目录来提供帮助。这个目录将日志文件符号链接到它们的实际目的地（可能因为配置或容器运行时而有所不同）。
+在将日志写入文件的情况下，Kubernetes 通过在每个主机上创建一个 `/var/log/containers` 目录来提供帮助。该目录将日志文件的符号链接指向其实际目的地（这可能根据配置或容器运行时而有所不同）。
 
-Rancher 的 Logging 将读取 `/var/log/containers` 中的所有日志条目，确保所有容器的所有日志条目（假设使用默认配置）均能被收集和处理。
+Rancher 日志记录将读取 `/var/log/containers` 中的所有日志条目，确保所有容器的所有日志条目（假设使用默认配置）都有机会被收集和处理。
 
+[#_specific_log_files]
 === 特定日志文件
 
-日志收集仅从 Kubernetes 中的 Pod 中检索 `stdout`/`stderr` 日志。但是，我们也可能想从应用生成的其他文件中收集日志。在这种情况下，你可以使用一个（或两个）日志流 Sidecar。
+日志收集仅从 Kubernetes 中的 pod 检索 `stdout`/`stderr` 日志。但是如果我们想收集由应用程序生成的其他文件的日志呢？在这里，日志流侧车（或两个）可能会派上用场。
 
-设置日志流 Sidecar 的目的是获取写入磁盘的日志文件，并将其内容传输到 `stdout`。这样一来，Logging Operator 就可以接收这些日志，并把日志发送到目标输出位置。
+设置流侧车的目标是将写入磁盘的日志文件的内容流式传输到 `stdout`。这样，日志 Operator 可以获取这些日志并将其发送到您所需的输出。
 
-要进行设置，编辑你的工作负载资源（例如 Deployment）并添加以下 Sidecar 定义：
+要设置此功能，请编辑您的工作负载资源（例如，Deployment）并添加以下侧车定义：
 
 [,yaml]
 ----
@@ -64,9 +73,9 @@ containers:
 ...
 ----
 
-这将添加一个容器到你的工作负载定义中，用于将 `/path/to/your/log/file.log` 的内容（在本示例中）传输到 `stdout`。
+这将向您的工作负载定义添加一个容器，该容器现在将流式传输（在本示例中）`/path/to/your/log/file.log` 的内容到 `stdout`。
 
-然后将根据你设置的 _Flows_ 或 _ClusterFlows_ 自动收集该日志流。你还可以通过使用容器的名称，专门为该日志文件创建一个 _Flow_。示例如下：
+然后根据您设置的任何 _Flows_ 或 _ClusterFlows_ 自动收集此日志流。您可能还希望考虑通过定位容器的名称来专门为此日志文件创建一个 _Flow_。请参见示例：
 
 [,yaml]
 ----
@@ -79,10 +88,11 @@ spec:
 ...
 ----
 
-== 通用最佳实践
+[#_general_best_practices]
+== 一般最佳实践
 
-* 尽量输出结构化日志条目（例如 `syslog`、JSON）。这些格式已经有了解析器，因此你可以更轻松地处理日志条目。
-* 尽量在日志条目内提供创建该日志条目的应用的名称。这可以使故障排除更容易。这是因为 Kubernetes 并不总是将应用的名称作为对象名称。例如，某个 Pod ID 可能是 `myapp-098kjhsdf098sdf98`，从这个 ID 中我们不能获取运行在容器内的应用的太多信息。
-* 除了在集群范围内收集所有日志的情况外，尽量严格限定 _Flow_ 和 _ClusterFlow_ 对象的范围。这使得在出现问题时更容易进行故障排除，并且还有助于确保不相关的日志条目不会出现在你的聚合器中。严格限定范围的一个例子是将 _Flow_ 限制在命名空间中的单个 _Deployment_，甚至是 _Pod_ 中的单个容器。
-* 除非要进行故障排除，否则不要让日志太详细。太详细的日志会带来许多问题，其中最主要的是**带来干扰**，即重要事件可能会淹没在海量 `DEBUG` 信息中。你可以通过使用自动告警和脚本来缓解这种问题，但太详细的日志仍然给日志管理基础设施带来过大的压力。
-* 如果可能，尽量在日志条目中提供事务或请求 ID。这可以使跨日志源追踪应用活动变得更容易，尤其是在处理分布式应用时。
+* 在可能的情况下，输出结构化日志条目（例如 `syslog`，JSON）。这使得处理日志条目变得更容易，因为这些格式已经有解析器编写。
+* 尽量在日志条目中提供创建该日志条目的应用程序的名称。这可以使故障排除变得更容易，因为 Kubernetes 对象并不总是将应用程序的名称作为对象名称。例如，pod ID 可能类似 `myapp-098kjhsdf098sdf98`，这并没有提供关于容器内运行的应用程序的太多信息。
+* 除非收集所有集群范围内的日志，否则尽量将您的 _Flow_ 和 _ClusterFlow_ 对象的范围限制得更紧。这使得在出现问题时更容易进行故障排除，并且还有助于确保无关的日志条目不会出现在您的聚合器中。紧密范围的一个例子是将一个 _Flow_ 限制在一个名称空间中的单个 _Deployment_，或者甚至是一个 _Pod_ 中的单个容器。
+* 除非在故障排除时，否则保持日志的详细程度较低。高日志详细程度会带来许多问题，其中最主要的是 *噪声*：重要事件可能会在大量 `DEBUG` 消息中被淹没。这在一定程度上通过自动警报和脚本得到了缓解，但高度冗长的日志记录仍然对日志基础设施施加了过大的压力。
+* 在可能的情况下，尽量在日志条目中提供事务或请求 ID。这可以使跨多个日志源跟踪应用程序活动变得更容易，特别是在处理分布式应用程序时。

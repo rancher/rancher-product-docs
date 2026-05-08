@@ -1,38 +1,95 @@
-= {rancher-product-name} 运行技巧
+= 运行 {rancher-product-name} 的提示
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
+endif::[]
 :revdate: 2025-08-22
 :page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/tips-for-running-rancher.adoc 
+:product-path: installation-and-upgrade/best-practices/tips-for-running-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-rancher-on-vsphere: xref:installation-and-upgrade/best-practices/rancher-on-vsphere.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-rancher-on-vsphere: xref:reference-guides/best-practices/rancher-server/on-premises-rancher-in-vsphere.adoc
+endif::[]
 
-本指南适用于使用 Rancher 管理下游 Kubernetes 集群的用例。高可用设置可以防止 Rancher Server 不可用时无法访问下游集群。
+本指南针对使用 Rancher 管理下游 Kubernetes 集群的用例。高可用性设置旨在防止在 Rancher 服务器不可用时失去对下游集群的访问。
 
-高可用 Rancher 安装指将 Rancher 安装到至少有三个节点的 Kubernetes 集群上，适用于所有生产环境以及重要的安装场景。在多个节点上运行多个 Rancher 实例能够实现单节点安装无法提供的高可用性。
+高可用性 Kubernetes 安装被定义为在至少三个节点的 Kubernetes 集群上安装 Rancher，应在任何生产环境的 Rancher 安装中使用，以及任何被认为是 "重要" 的安装。在多个节点上运行多个 Rancher 实例确保了高可用性，这是单节点环境无法实现的。
 
-如果你在 vSphere 环境中安装 Rancher，请参见xref:installation-and-upgrade/best-practices/rancher-on-vsphere.adoc[最佳实践文档]。
+如果您在 vSphere 环境中安装 Rancher，请参考 {xref-rancher-on-vsphere}[此处] 记录的最佳实践。
 
-在设置高可用 Rancher 安装时，请考虑以下事项。
+当您设置高可用性 Rancher 安装时，请考虑以下事项：
 
-== 在单独的集群上运行 Rancher
+[#_minimize_third_party_software_on_the_upstream_cluster]
+== 减少上游集群中的第三方软件
 
-不要在安装了 Rancher 的 Kubernetes 集群上运行其他工作负载或微服务。
+我们通常建议在专用集群上运行 Rancher，避免其他工作负载，以避免潜在的性能和兼容性问题。
 
-== 确保 Kubernetes 节点配置正确
+Rancher，特别是在管理越来越多的集群、节点和工作负载时，会对上游集群中的核心 Kubernetes 组件如 `etcd` 和 `kube-apiserver` 施加显著负载。第三方软件可能会干扰这些组件和 Rancher 的性能，可能导致不稳定。
 
-在部署节点时，请遵循 K8s 和 etcd 的最佳实践，其中包括禁用 swap，检查集群中的所有主机之间是否有良好的网络连接，为每个节点使用唯一的主机名、MAC 地址和 `product_uuids`，检查所需端口是否已经打开，并使用配置 SSD 的 etcd 进行部署。详情请参见 https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#before-you-begin[kubernetes 官方文档]和 https://etcd.io/docs/v3.5/op-guide/performance/[etcd 性能操作指南]。
+此外，第三方软件可能在功能上干扰 Rancher。为了最小化兼容性风险，仅在上游集群中部署必要的 Kubernetes 系统组件和 Rancher。
 
-== 在同一个数据中心运行集群中的所有节点
+以下应用程序和组件通常不会干扰 Rancher 或 Kubernetes 系统，支持在上游集群中安装：
 
-为达到最佳性能，请在同一地理数据中心运行所有三个节点。如果你在云（如 AWS）上运行节点，请在不同的可用区（AZ）中运行这三个节点。例如，在 us-west-2a 中运行节点 1，在 us-west-2b 中运行节点 2，在 us-west-2c 中运行节点 3。
+* Rancher 内部组件，如 Fleet
+* Rancher 扩展
+* 集群 API 组件
+* CNI、CPI、CSI
+* 云控制器管理器
+* 可观测性和监控工具（除了 prometheus-rancher-exporter）
 
-== 保证开发和生产环境的相似性
+请注意，这些组件各自都有最低资源要求，必须满足这些要求，此外还要满足 Rancher 的要求。对于大规模部署，还应考虑为非 Rancher 软件专门分配独立节点，使用 https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/[污点和容忍] 来最小化干扰。
 
-强烈建议为运行 Rancher 的 Kubernetes 集群配备 "`staging`" 或 "`pre-production`" 环境。这个环境的软件和硬件配置应该尽可能接近你的生产环境。
+其他软件可能会干扰 Rancher，因此在上游集群中不受支持。
 
-== 监控集群以规划容量
+特别注意以下软件已知会干扰 Rancher 性能：
 
-Rancher Server 的 Kubernetes 集群应该尽可能满足xref:installation-and-upgrade/requirements/requirements.adoc[系统和硬件要求]。越偏离系统和硬件要求，你可能面临的风险就越大。
+* https://www.crossplane.io/[CrossPlane]
+* https://argoproj.github.io/cd/[Argo CD]
+* https://fluxcd.io/[Flux]
+* https://github.com/David-VTUK/prometheus-rancher-exporter[prometheus-rancher-exporter]（见 https://github.com/David-VTUK/prometheus-rancher-exporter/issues/33[问题 33]）
+* 像 SUSE 私有注册表这样的容器注册表，可能需要大量带宽来提供镜像。
 
-但是，已发布的要求已经考虑了各种工作负载类型，因此，基于指标来规划容量应该是扩展 Rancher 的最佳实践。
+[#_guidance_for_container_registries]
+=== 容器注册表指南
 
-你可以将 Rancher 集成业界领先的开源监控解决方案 Prometheus 以及能可视化 Prometheus 指标的 Grafana，来监控集群节点、Kubernetes 组件和软件部署的状态和过程。
+容器注册表，如 SUSE 私有注册表，在提供镜像时可能会消耗大量网络带宽。这种需求随着镜像数量、镜像拉取频率以及它们服务的集群和容器运行时的数量而增加。由于可能会干扰 Rancher UI 和 API 流量，我们建议不要在与 Rancher 管理服务器相同的集群上运行容器注册表。
 
-在集群中xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc[启用监控]后，你可以通过设置告警通知，来了解集群容量的使用情况。你还可以使用 Prometheus 和 Grafana 监控框架，在你扩容时建立关键指标的基线。
+无论您对容器注册表的部署策略如何，请确保有足够的带宽可用，理想情况下使用服务质量（QoS）机制进行保留。
+
+根据您的需求考虑以下建议：
+
+* *简单设置（高可用性不是主要关注点）：*作为单个虚拟机（VM）部署的容器注册表可以是一个可行的解决方案。
+* *高可用性（HA）要求：*我们建议在专用的 Kubernetes 集群中运行注册表。所有其他集群应配置为从这个集中式的高可用性注册表中拉取镜像。
+* *非常大规模或复杂的网络拓扑：*可能需要多个注册表集群。这些可以以层次或联合模型部署，以有效分发镜像和管理流量。
+
+[#_make_sure_nodes_are_configured_correctly_for_kubernetes]
+== 确保节点正确配置以支持Kubernetes。
+
+在部署节点时，遵循K8s和etcd的最佳实践非常重要，包括禁用交换、仔细检查集群中所有机器之间的网络连接是否完整、为每个节点使用唯一的主机名、MAC地址和product_uuids、检查所有正确的端口是否已打开，以及使用SSD支持的etcd进行部署。更多详细信息可以在 https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#before-you-begin[Kubernetes 文档]和 https://etcd.io/docs/v3.5/op-guide/performance/[etcd性能操作指南]中找到。
+
+[#_run_all_nodes_in_the_cluster_in_the_same_datacenter]
+== 在同一数据中心运行集群中的所有节点。
+
+为了获得最佳性能，建议在同一地理数据中心运行所有三个节点。如果您在云中运行节点，例如AWS，请在不同的可用区中运行每个节点。例如，在us-west-2a启动节点1，在us-west-2b启动节点2，在us-west-2c启动节点3。
+
+[#_development_and_production_environments_should_be_similar]
+== 开发和生产环境应尽可能相似。
+
+强烈建议在 Rancher 运行的 Kubernetes 集群中拥有一个"暂存"或"预生产"环境。该环境应尽可能在软件和硬件配置上与您的生产环境相似。
+
+[#_monitor_your_clusters_to_plan_capacity]
+== 监控您的集群以规划容量。
+
+Rancher 服务器的 Kubernetes 集群应尽可能接近 {xref-install-reqs}[系统和硬件要求]。您越偏离系统和硬件要求，风险就越大。
+
+然而，以指标驱动的容量规划分析应成为扩展Rancher的最终指导，因为发布的要求考虑了多种工作负载类型。
+
+使用Rancher，您可以通过与Prometheus（一个领先的开源监控解决方案）和Grafana（让您可视化Prometheus的指标）的集成，监控集群节点、Kubernetes组件和软件部署的状态和进程。
+
+在集群中{xref-monitoring-and-dashboards}[启用监控]后，您可以设置警报，以便在集群接近其容量时通知您。您还可以使用 Prometheus 和 Grafana 监控框架，在扩展时为关键指标建立基线。

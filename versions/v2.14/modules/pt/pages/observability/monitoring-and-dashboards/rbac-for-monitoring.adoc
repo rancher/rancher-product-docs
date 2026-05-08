@@ -1,0 +1,375 @@
+= Controle de acesso com base em função
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc 
+:product-path: observability/monitoring-and-dashboards/rbac-for-monitoring.adoc
+
+Esta seção descreve as expectativas para o RBAC do Rancher Monitoring.
+
+[#_cluster_admins]
+== Administradores de Cluster
+
+Por padrão, apenas aqueles com o cluster-admin `ClusterRole` devem ser capazes de:
+
+* Instalar o app `rancher-monitoring` em um cluster e realizar toda a configuração relevante na implantação do chart
+ ** por exemplo, se os dashboards padrão são criados, quais exporters são implantados no cluster para coletar métricas, etc.
+* Criar / modificar / excluir implantações do Prometheus no cluster via CRs do Prometheus
+* Criar / modificar / excluir implantações do Alertmanager no cluster via CRs do Alertmanager
+* Persistir novos dashboards ou fontes de dados do Grafana criando ConfigMaps no namespace apropriado
+* Expor certas métricas do Prometheus para a API de Métricas Personalizadas do k8s para HPA via um Secret no `cattle-monitoring-system` namespace
+
+[#_users_with_kubernetes_clusterrole_based_permissions]
+== Usuários com Permissões Baseadas em ClusterRole do Kubernetes
+
+O chart `rancher-monitoring` instala os seguintes três `ClusterRoles`. Por padrão, eles se agregam ao correspondente `ClusterRoles` do k8s:
+
+|===
+| ClusterRole | Agrega Para o ClusterRole Padrão do K8s
+
+| `monitoring-admin`
+| `admin`
+
+| `monitoring-edit`
+| `edit`
+
+| `monitoring-view`
+| `ver `
+|===
+
+Esses `ClusterRoles` fornecem diferentes níveis de acesso aos CRDs de Monitoramento com base nas ações que podem ser realizadas:
+
+|===
+| CRDs (monitoring.coreos.com) | Admin. | Editar | Ver
+
+| <ul><li>``prometheuses``</li><li>``alertmanagers``</li></ul>
+| Obter, Listar, Assistir
+| Obter, Listar, Assistir
+| Obter, Listar, Assistir
+
+| <ul><li>``servicemonitors``</li><li>``podmonitors``</li><li>``prometheusrules``</li></ul>
+| *
+| *
+| Obter, Listar, Assistir
+|===
+
+Em alto nível, as seguintes permissões são atribuídas por padrão.
+
+[#_users_with_kubernetes_admin_edit_permissions]
+=== Usuários com Permissões de Admin/Edição do Kubernetes
+
+Apenas aqueles com o cluster-admin, admin ou edit `ClusterRole` devem ser capazes de:
+
+* Modificar a configuração de coleta das implantações do Prometheus via CRs ServiceMonitor e PodMonitor
+* Modificar as regras de alerta/registro de uma implantação do Prometheus via CRs PrometheusRules
+
+[#_users_with_kubernetes_view_permissions]
+=== Usuários com Permissões de Visualização do Kubernetes
+
+Apenas aqueles que possuem alguma `ClusterRole` do Kubernetes devem ser capazes de:
+
+* Visualizar a configuração dos Prometheuses que estão implantados dentro do cluster
+* Visualizar a configuração dos Alertmanagers que estão implantados dentro do cluster
+* Visualizar a configuração de coleta das implantações do Prometheus via CRs ServiceMonitor e PodMonitor
+* Visualizar as regras de alerta/registro de uma implantação do Prometheus via CRs PrometheusRules
+
+[#_additional_monitoring_roles]
+=== Funções Adicionais de Monitoramento
+
+O monitoramento também cria `Roles` adicionais que não são atribuídos a usuários por padrão, mas são criados dentro do cluster. Eles podem ser vinculados a um namespace implantando um `RoleBinding` que o referencia. Para definir um `RoleBinding` com `kubectl` em vez de através do Rancher, clique <<_assigning_roles_and_clusterroles_with_kubectl,aqui>>.
+
+Os administradores devem usar essas funções para fornecer um acesso mais granular aos usuários:
+
+|===
+| Função | de finalidade
+
+| monitoring-config-admin
+| Permitir que os administradores atribuam funções aos usuários para que possam visualizar / modificar Secrets e ConfigMaps dentro do namespace cattle-monitoring-system. Modificar Secrets / ConfigMaps neste namespace pode permitir que os usuários alterem a configuração do Alertmanager do cluster, a configuração do Prometheus Adapter, fontes de dados adicionais do Grafana, segredos TLS, etc.
+
+| monitoring-config-edit
+| Permitir que os administradores atribuam funções aos usuários para que possam visualizar / modificar Secrets e ConfigMaps dentro do namespace cattle-monitoring-system. Modificar Secrets / ConfigMaps neste namespace pode permitir que os usuários alterem a configuração do Alertmanager do cluster, a configuração do Prometheus Adapter, fontes de dados adicionais do Grafana, segredos TLS, etc.
+
+| monitoring-config-view
+| Permitir que os administradores atribuam funções aos usuários para que possam visualizar Secrets e ConfigMaps dentro do namespace cattle-monitoring-system. Visualizar Secrets/ConfigMaps neste namespace pode permitir que os usuários observem a configuração do Alertmanager do cluster, a configuração do Prometheus Adapter, fontes de dados adicionais do Grafana, segredos TLS, etc.
+
+| monitoring-dashboard-admin
+| Permitir que administradores atribuam funções a usuários para que possam editar / visualizar ConfigMaps dentro do namespace cattle-dashboards. ConfigMaps neste namespace corresponderão aos Grafana Dashboards que são persistidos no cluster.
+
+| monitoring-dashboard-edit
+| Permitir que administradores atribuam funções a usuários para que possam editar / visualizar ConfigMaps dentro do namespace cattle-dashboards. ConfigMaps neste namespace corresponderão aos Grafana Dashboards que são persistidos no cluster.
+
+| monitoring-dashboard-view
+| Permitir que administradores atribuam funções a usuários para que possam visualizar ConfigMaps dentro do namespace cattle-dashboards. ConfigMaps neste namespace corresponderão aos Grafana Dashboards que são persistidos no cluster.
+|===
+
+[#_assigning_monitoring_roles_through_custom_roles]
+=== Atribuindo Funções de Monitoramento através de Funções Personalizadas
+
+Administradores podem atribuir funções personalizadas na interface do Rancher para administração, edição e visualização de monitoramento. Essas "funções" são criadas por padrão quando o aplicativo de monitoramento é instalado. Além disso, essas funções também são implantadas nas funções correspondentes do Kubernetes: admin, edit e view `ClusterRoles`.
+
+[NOTE]
+.Importante
+====
+
+A interface não oferecerá as opções `monitoring-admin`, `monitoring-edit` e `monitoring-view` quando usuários estiverem sendo adicionados a um cluster. Essas funções de monitoramento só podem ser atribuídas criando manualmente uma função personalizada que herda das funções de Proprietário de Projeto e Visualização de Monitoramento de Projeto.
+====
+
+
+. Crie a função personalizada:
+
+....
+1.1 Click **☰ > Users & Authentication > Roles**.
+
+1.2 Select the appropriate tab, e.g., **Cluster** role. Then click **Create Cluster Role**.
+
+1.3 In the **Name** field, create a custom role such as `View Monitoring`, `Edit Monitoring`, or `Admin Monitoring`.
+
+1.4 Click **Inherit From > Add Resource**, then select the Kubernetes role, as applicable, from the dropdown.
+
+1.5 Click **Create**.
+....
+
+. Atribua a função personalizada a um novo usuário:
+
+....
+2.1 Click **☰ > Cluster Management > Cluster Explore > Cluster > Cluster Members > Add**.
+
+2.2 Search for your new user name from **Select Member** options displayed.
+
+2.3 Assign the new custom role from **Cluster Permissions** to the new user.
+
+2.4 Click **Create**.
+....
+
+*Resultado:* O novo usuário agora deve ser capaz de ver as ferramentas de monitoramento.
+
+[#_additional_monitoring_clusterroles]
+=== Funções de ClusterRoles de Monitoramento Adicionais
+
+O monitoramento também cria `ClusterRoles` adicionais que não são atribuídos a usuários por padrão, mas são criados dentro do cluster. Eles não são agregados por padrão, mas podem ser vinculados a um namespace implantando um `RoleBinding` ou `ClusterRoleBinding` que o referencia. Para definir um `RoleBinding` com `kubectl` em vez de através do Rancher, clique <<_assigning_roles_and_clusterroles_with_kubectl,aqui>>.
+
+|===
+| Função | de finalidade
+
+| monitoring-ui-view
+| Este ClusterRole permite que usuários com acesso de escrita ao projeto visualizem gráficos de métricas para o cluster especificado na interface do Rancher. Isso é feito concedendo acesso somente leitura a UIs de monitoramento externas. Usuários com esse papel têm permissão para listar os endpoints do Prometheus, Alertmanager e Grafana e fazer requisições GET para as UIs do Prometheus, Alertmanager e Grafana através do proxy do Rancher. +
+ +
+Esse papel não concede acesso aos endpoints de monitoramento. Como resultado, usuários com esse papel não poderão visualizar gráficos e painéis de monitoramento do cluster na UI do Rancher; no entanto, eles podem acessar as UIs de monitoramento do Grafana, Prometheus e Alertmanager se receberem esses links.
+|===
+
+[NOTE]
+====
+
+Um usuário vinculado ao papel *Visualizar Monitoramento* do Rancher e com permissões de projeto somente leitura não pode visualizar links na UI de Monitoramento. Eles ainda podem acessar UIs de monitoramento externas se receberem links para essas UIs. Se você deseja conceder acesso a usuários com o papel *Visualizar Monitoramento* e permissões de projeto somente leitura, mova o namespace `cattle-monitoring-system` para o projeto.
+====
+
+
+[#_assigning_roles_and_clusterroles_with_kubectl]
+=== Atribuindo Funções e ClusterRoles com kubectl
+
+[#_using_kubectl_create]
+==== Usando `kubectl create`
+
+Um método é usar `kubectl create clusterrolebinding` ou `kubectl create rolebinding` para atribuir um `Role` ou `ClusterRole`. Isso é mostrado nos seguintes exemplos:
+
+* Atribuir a um usuário específico:
+
+[tabs,sync-group-id=role-type]
+======
+clusterrolebinding::
++
+--
+[,plain]
+----
+kubectl create clusterrolebinding my-binding --clusterrole=monitoring-ui-view --user=u-l4npx
+----
+--
+
+rolebinding::
++
+--
+[,plain]
+----
+kubectl create rolebinding my-binding --clusterrole=monitoring-ui-view --user=u-l4npx --namespace=my-namespace
+----
+--
+======
+
+* Atribuir a todos os usuários autenticados:
+
+[tabs,sync-group-id=role-type]
+======
+clusterrolebinding::
++
+--
+[,plain]
+----
+kubectl create clusterrolebinding my-binding --clusterrole=monitoring-ui-view --group=system:authenticated
+----
+--
+
+rolebinding::
++
+--
+[,plain]
+----
+kubectl create rolebinding my-binding --clusterrole=monitoring-ui-view --group=system:authenticated --namespace=my-namespace
+----
+--
+======
+
+[#_using_yaml_files]
+==== Usando Arquivos YAML
+
+Outro método é definir vinculações em arquivos YAML que você cria. Você deve primeiro configurar o `RoleBinding` ou `ClusterRoleBinding` com um arquivo YAML. Em seguida, aplique as alterações de configuração executando o comando `kubectl apply`.
+
+* *Funções*: Abaixo está um exemplo de arquivo YAML para ajudá-lo a configurar `RoleBindings` no Kubernetes. Você precisará preencher o nome abaixo.
+
+[NOTE]
+====
+
+Nomes são sensíveis a maiúsculas e minúsculas.
+====
+
+
+[,yaml]
+----
+# monitoring-config-view-role-binding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: monitoring-config-view
+  namespace: cattle-monitoring-system
+roleRef:
+  kind: Role
+  name: monitoring-config-view
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: User
+  name: u-b4qkhsnliz # this can be found via `kubectl get users -A`
+  apiGroup: rbac.authorization.k8s.io
+----
+
+* *kubectl*: Abaixo está um exemplo de um comando `kubectl` usado para aplicar a vinculação que você criou no arquivo YAML. Lembre-se de preencher o nome do seu arquivo YAML de acordo.
++
+[,plain]
+----
+kubectl apply -f monitoring-config-view-role-binding.yaml
+----
+
+[#_users_with_rancher_based_permissions]
+== Usuários com Permissões Baseadas no Rancher
+
+A relação entre os papéis padrão implantados pelo Rancher (ou seja, proprietário do cluster, membro do cluster, proprietário do projeto, membro do projeto), os papéis padrão do Kubernetes e os papéis implantados pelo gráfico rancher-monitoring estão detalhados na tabela abaixo:
+
+.Permissões Padrão do Rancher e Correspondentes ClusterRoles do Kubernetes
+|===
+| Papel do Rancher | Kubernetes Role | ClusterRole de Monitoramento / Papel | ClusterRoleBinding ou RoleBinding?
+
+| cluster-owner
+| cluster-admin
+| N/A
+| ClusterRoleBinding
+
+| cluster-member
+| admin
+| monitoring-admin
+| ClusterRoleBinding
+
+| proprietário do projeto
+| admin
+| monitoring-admin
+| RoleBinding dentro do namespace do Projeto
+
+| membro do projeto
+| editar
+| monitoring-edit
+| RoleBinding dentro do namespace do Projeto
+|===
+
+Além desses papéis padrão, os seguintes papéis de projeto do Rancher podem ser aplicados aos membros do seu cluster para fornecer acesso ao monitoramento. Esses papéis do Rancher estão vinculados aos ClusterRoles implantados pelo gráfico de monitoramento:
+
+.Permissões Não Padrão do Rancher e Correspondentes ClusterRoles do Kubernetes
+|===
+| Papel do Rancher | Kubernetes ClusterRole | Disponível no Rancher a partir de | Disponível no Monitoramento v2 a partir de
+
+| Ver Monitoramento*
+| <<_additional_monitoring_clusterroles,monitoring-ui-view>>
+| 2.4.8+
+| 9.4.204+
+|===
+
+[NOTE]
+====
+
+Um usuário vinculado ao papel *Visualizar Monitoramento* do Rancher e com permissões de projeto somente leitura não pode visualizar links na interface de Monitoramento. Eles ainda podem acessar interfaces de monitoramento externas se receberem links para essas interfaces. Se você deseja conceder acesso a usuários com o papel *Visualizar Monitoramento* e permissões de projeto somente leitura, mova o namespace `cattle-monitoring-system` para o projeto.
+====
+
+
+[#_differences_in_2_5_x]
+=== Diferenças em 2.5.x
+
+Usuários com os papéis de membro do projeto ou proprietários do projeto atribuídos não terão acesso ao Prometheus ou Grafana no Rancher 2.5.x, pois criamos o Grafana ou Prometheus apenas em nível de cluster.
+
+Além disso, enquanto os proprietários do projeto ainda poderão adicionar ServiceMonitors / PodMonitors que coletam recursos dentro do namespace do seu projeto por padrão, as PrometheusRules não estão restritas a um único namespace / projeto. Portanto, quaisquer regras de alerta ou regras de gravação criadas por proprietários de projeto dentro do namespace do seu projeto serão aplicadas em todo o cluster, embora eles não possam visualizar / editar / excluir quaisquer regras que foram criadas fora do namespace do projeto.
+
+[#_assigning_additional_access]
+=== Designando acesso adicional
+
+Se os administradores de cluster desejarem fornecer acesso adicional de admin/edição a usuários fora dos papéis oferecidos pelo gráfico rancher-monitoring, a tabela a seguir identifica o impacto potencial:
+
+|===
+| CRDs (monitoring.coreos.com) | Isso pode causar impacto fora de um namespace / projeto? | Impacto
+
+| `prometheuses`
+| Sim, este recurso pode coletar métricas de quaisquer alvos em todo o cluster (a menos que o Operador esteja configurado de outra forma).
+| O usuário poderá definir a configuração de novas implantações de Prometheus em nível de cluster que devem ser criadas no cluster.
+
+| `alertmanagers`
+| Não
+| O usuário poderá definir a configuração de novas implantações de Alertmanager em nível de cluster que devem ser criadas no cluster. Nota: se você apenas deseja permitir que os usuários configurem configurações como Rotas e Receptores, deve fornecer acesso ao Secret de Configuração do Alertmanager em vez disso.
+
+| <ul><li>``servicemonitors``</li><li>``podmonitors``</li></ul>
+| Não, não por padrão; isso é configurável via `ignoreNamespaceSelectors` no CR do Prometheus.
+| O usuário poderá configurar coletas pelo Prometheus em endpoints expostos por Serviços / Pods dentro do namespace em que lhe foi concedida essa permissão.
+
+| `prometheusrules`
+| Sim, as PrometheusRules têm escopo de cluster.
+| O usuário poderá definir regras de alerta ou gravação no Prometheus com base em qualquer série coletada em todo o cluster.
+|===
+
+|===
+| Recursos do K8s | Namespace | Isso pode causar impacto fora de um namespace / projeto? | Impacto
+
+| <ul><li>``secrets``</li><li>``configmaps``</li></ul>
+| `cattle-monitoring-system`
+| Sim, as Configurações e Segredos neste namespace podem impactar todo o pipeline de monitoramento / alerta.
+| O usuário poderá criar ou editar Segredos / ConfigMaps, como a Configuração do Alertmanager, Configuração do Adaptador Prometheus, segredos TLS, fontes de dados adicionais do Grafana, etc. Isso pode ter um impacto amplo em todo o monitoramento / alerta do cluster.
+
+| <ul><li>``secrets``</li><li>``configmaps``</li></ul>
+| `cattle-dashboards`
+| Sim, as Configurações e Segredos neste namespace podem criar painéis que fazem consultas em todas as métricas coletadas em nível de cluster.
+| O usuário poderá criar Segredos / ConfigMaps que persistem apenas novos Painéis do Grafana.
+|===
+
+[#_role_based_access_control_for_grafana]
+== Controle de acesso com base em função para o Grafana
+
+O Rancher permite que qualquer usuário autenticado pelo Kubernetes e que tenha acesso ao serviço Grafana implantado pelo gráfico de Monitoramento do Rancher acesse o Grafana através da interface do usuário do Dashboard do Rancher. Por padrão, todos os usuários que conseguem acessar o Grafana recebem o papel https://grafana.com/docs/grafana/latest/permissions/organization_roles/#viewer-role[Visualizador], que permite visualizar qualquer um dos painéis padrão implantados pelo Rancher.
+
+No entanto, os usuários podem optar por fazer login no Grafana como um https://grafana.com/docs/grafana/latest/permissions/organization_roles/#admin-role[Admin] se necessário. O nome de usuário e a senha padrão do Admin para a instância do Grafana serão `admin`/`prom-operator`, mas credenciais alternativas também podem ser fornecidas ao implantar ou atualizar o gráfico.
+
+Para ver a interface do Grafana, instale `rancher-monitoring`. Then:
+
+. No canto superior esquerdo, clique em *☰ > Gerenciamento de Cluster*.
+. Na página *Clusters*, vá para o cluster onde você deseja ver as visualizações e clique em *Explorar*.
+. Na barra de navegação à esquerda, clique em *Monitoramento*.
+. Clique em *Grafana*.
+
+.Painel de Recursos de Computação do Cluster no Grafana
+image::cluster-compute-resources-dashboard.png[Painel de Recursos de Computação do Cluster no Grafana]
+
+.Painéis Padrão no Grafana
+image::grafana-default-dashboard.png[Painéis Padrão no Grafana]

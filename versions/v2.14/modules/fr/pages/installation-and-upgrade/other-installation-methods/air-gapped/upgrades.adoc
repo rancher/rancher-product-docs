@@ -1,0 +1,126 @@
+= Mise à niveau dans un environnement isolé physiquement
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-22
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/air-gapped-upgrades.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/upgrades.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-upgrades: xref:installation-and-upgrade/upgrades.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-upgrades: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/upgrades.adoc
+endif::[]
+
+[NOTE]
+====
+
+Ces instructions supposent que vous avez déjà suivi les instructions pour une mise à niveau de Kubernetes sur {xref-rancher-upgrades}[cette page,] y compris les prérequis, jusqu'à l'étape 3. Mettez à niveau Rancher.
+====
+
+
+[#_rancher_helm_upgrade_options]
+== Options de mise à niveau de Rancher Helm
+
+Pour mettre à niveau avec Helm, appliquez les mêmes options que celles que vous avez utilisées lors de l'installation de Rancher. Reportez-vous au tableau de référence ci-dessous pour remplacer chaque espace réservé. Rancher doit être configuré pour utiliser le registre privé afin de provisionner tout cluster Kubernetes lancé par Rancher ou tout outil Rancher.
+
+En fonction du choix que vous avez fait lors de l'installation, complétez l'une des procédures ci-dessous.
+
+|===
+| Espace réservé | Description
+
+| `<VERSION>`
+| Le numéro de version de l'archive tar de sortie.
+
+| `<RANCHER.YOURDOMAIN.COM>`
+| Le nom DNS que vous avez pointé vers votre équilibreur de charge.
+
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| Le nom DNS de votre registre privé.
+
+| `<CERTMANAGER_VERSION>`
+| Version de cert-manager en cours d'exécution sur le cluster k8s.
+|===
+
+[#_option_a_default_self_signed_certificate]
+=== Option A: Certificat auto-signé par défaut
+
+----
+helm upgrade rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set certmanager.version=<CERTMANAGER_VERSION> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Définir un registre privé par défaut à utiliser dans Rancher
+    --set useBundledSystemChart=true # Utiliser les graphiques système Rancher empaquetés
+----
+
+[#_resolving_upgrade_failed_error]
+==== Résolution de l'erreur UPGRADE FAILED
+
+Si vous rencontrez le message d'erreur, `Error: UPGRADE FAILED: "rancher" has no deployed releases`, Rancher a peut-être été installé via la commande `helm template`. Pour mettre à niveau Rancher avec succès, utilisez plutôt la commande suivante{nbsp}:
+
+----
+helm template rancher ./rancher-<VERSION>.tgz --output-dir . \
+    --no-hooks \ # prevent files for Helm hooks from being generated
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set certmanager.version=<CERTMANAGER_VERSION> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+Après avoir exécuté la commande Helm, appliquez le modèle rendu{nbsp}:
+
+----
+kubectl -n cattle-system apply -R -f ./rancher
+----
+
+[#_option_b_certificates_from_files_using_kubernetes_secrets]
+=== Option B: Certificats à partir de fichiers utilisant des secrets Kubernetes
+
+[,plain]
+----
+helm upgrade rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+Si vous utilisez un certificat signé par une CA privée, ajoutez `--set privateCA=true` après `--set ingress.tls.source=secret`{nbsp}:
+
+[,plain]
+----
+helm upgrade rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set privateCA=true \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+[#_verify_the_upgrade]
+== Vérifiez la mise à niveau
+
+Connectez-vous à Rancher pour confirmer que la mise à niveau a réussi.
+
+[TIP]
+====
+
+Avez-vous des problèmes de réseau après la mise à niveau{nbsp}?
+
+Voir xref:[Restaurer le réseau du cluster].
+====
+
+
+[#_known_upgrade_issues]
+== Problèmes de mise à niveau connus
+
+Une liste des problèmes connus pour chaque version de Rancher peut être trouvée dans les notes de version sur https://github.com/rancher/rancher/releases[GitHub] et sur les https://forums.rancher.com/c/announcements/12[forums Rancher.]

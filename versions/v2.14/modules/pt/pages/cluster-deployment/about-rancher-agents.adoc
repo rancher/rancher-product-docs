@@ -1,0 +1,109 @@
+= {rancher-product-name} Agentes
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/launch-kubernetes-with-rancher/about-rancher-agents.adoc 
+:product-path: cluster-deployment/about-rancher-agents.adoc
+ifeval::["{build-type}" != "community"]
+:xref-hosted-k8s-clusters: xref:cluster-deployment/hosted-kubernetes/hosted-kubernetes.adoc
+:xref-rancher-architecture: xref:sobre-rancher/arquitetura/arquitetura.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-hosted-k8s-clusters: xref:guias-de-procedimentos/guias-para-novos-usuários/clusters-kubernetes-no-rancher/configuração-clusters-a-partir-de-provedores-de-kubernetes-hospedados/index.adoc
+:xref-rancher-architecture: xref:reference-guides/rancher-manager-architecture/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+Existem dois recursos de agente diferentes implantados em clusters gerenciados pelo Rancher:
+
+* <<_cattle_cluster_agent,cattle-cluster-agent>>
+* <<_rancher_system_agent,rancher-system-agent>>
+
+Para uma visão geral conceitual de como o servidor Rancher provisiona clusters e se comunica com eles, consulte a {xref-rancher-architecture}[arquitetura].
+
+[#_cattle_cluster_agent]
+== cattle-cluster-agent
+
+O `cattle-cluster-agent` é usado para se conectar à API do Kubernetes de clusters \link:[Kubernetes Lançado pelo Rancher]. O `cattle-cluster-agent` é implantado usando um recurso de implantação.
+
+[#_rancher_system_agent]
+== rancher-system-agent
+
+O `rancher-system-agent` é um daemon usado para gerenciar nós em um cluster Kubernetes RKE2/K3s provisionado pelo Rancher ao realizar operações de ciclo de vida do cluster. Exemplos de operações no cluster incluem atualizar a versão do Kubernetes e criar/restaurar instantâneos do etcd. O `rancher-system-agent` é projetado para aplicar planos ao sistema Rancher e pode suportar planos locais e remotos.
+
+[#_requests]
+== Solicitações
+
+O `cattle-cluster-agent` pod não define os valores padrão de solicitação de CPU e memória. Como base, recomendamos definir a solicitação de CPU em `50m` e a solicitação de memória em `100Mi`. No entanto, é importante que você avalie seu caso de uso adequadamente e que aloque os recursos corretos para seu cluster de acordo com suas necessidades.
+
+Para configurar os valores de solicitação através da interface do usuário para clusters RKE2/K3s:
+
+. Quando você {xref-launch-k8s-with-rancher}[criar] ou editar um cluster existente, vá para a *Configuração do Cluster*.
+. Selecione a subseção *Agente do Cluster*.
+. Configure seus valores de solicitação usando os campos *Reserva de CPU* e *Reserva de Memória* conforme necessário.
+
+Se você preferir configurar via YAML, adicione o seguinte trecho ao seu arquivo de configuração RKE2/K3s:
+
+[source,yaml]
+----
+spec:
+  clusterAgentDeploymentCustomization:
+    overrideResourceRequirements:
+      requests:
+        cpu: 50m
+        memory: 100Mi
+----
+
+[#_scheduling_rules]
+== Regras de Agendamento
+
+O `cattle-cluster-agent` usa um conjunto fixo de tolerâncias ou tolerâncias adicionadas dinamicamente com base nos taints aplicados aos nós do plano de controle. Essa estrutura permite que https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions[Evacuações baseadas em taints] funcionem corretamente para `cattle-cluster-agent`.
+
+Se os nós do plano de controle estiverem presentes no cluster, as tolerâncias padrão serão substituídas por tolerâncias que correspondem aos taints nos nós do plano de controle. O conjunto padrão de tolerâncias é descrito abaixo.
+
+|===
+| Componente | nodeAffinity nodeSelectorTerms | nodeSelector | Tolerâncias
+
+| `cattle-cluster-agent`
+| `beta.kubernetes.io/os:NotIn:windows`
+| none
+| *Nota:* Estas são as tolerâncias padrão e serão substituídas por tolerâncias que correspondem aos taints aplicados aos nós do plano de controle. +
+ +
+`effect:NoSchedule` +
+`key:node-role.kubernetes.io/controlplane` +
+`value:true` +
+ +
+`effect:NoSchedule` +
+`key:node-role.kubernetes.io/control-plane` +
+`operator:Exists` +
+ +
+`effect:NoSchedule` +
+`key:node-role.kubernetes.io/master` +
+`operator:Exists`
+
+|===
+
+O `cattle-cluster-agent` Deployment possui regras de agendamento preferenciais usando `preferredDuringSchedulingIgnoredDuringExecution`, favorecendo o agendamento em nós com o nó `controlplane`. Quando não há nós do plano de controle visíveis no cluster (geralmente este é o caso ao usar {xref-hosted-k8s-clusters}[Clusters de Provedores de Kubernetes Hospedados]), você pode adicionar o rótulo `cattle.io/cluster-agent=true` em um nó para preferir o agendamento do `cattle-cluster-agent` pod para esse nó.
+
+Veja https://kubernetes.io/docs/concepts/configuration/assign-pod-node/[Kubernetes: Atribuindo Pods a Nós] para encontrar mais informações sobre as regras de agendamento.
+
+A `preferredDuringSchedulingIgnoredDuringExecution` configuração é mostrada na tabela abaixo:
+
+|===
+| Peso | Expressão
+
+| 100
+| `node-role.kubernetes.io/controlplane:In:"true"`
+
+| 100
+| `node-role.kubernetes.io/control-plane:In:"true"`
+
+| 100
+| `node-role.kubernetes.io/master:In:"true"`
+
+| 1
+| `cattle.io/cluster-agent:In:"true"`
+|===

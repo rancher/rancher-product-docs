@@ -1,0 +1,780 @@
+= アマゾンクラウドプロバイダーの設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-15
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/amazon.adoc 
+:product-path: cluster-deployment/set-up-cloud-providers/amazon.adoc
+:weight: 1
+ifeval::["{build-type}" != "community"]
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-infra-aws: xref:cluster-deployment/infra-providers/aws/aws.adoc
+:xref-migrate-out-of-tree-amazon: xref:cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/amazon.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-custom-clusters: xref:reference-guides/cluster-configuration/rancher-server-configuration/use-existing-nodes/index.adoc
+:xref-infra-aws: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/create-an-amazon-ec2-cluster.adoc
+:xref-migrate-out-of-tree-amazon: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-amazon.adoc
+endif::[]
+
+[NOTE]
+.重要:
+====
+
+Kubernetes 1.27以降では、アウトオブツリーのAWSクラウドプロバイダーを使用する必要があります。インツリーのクラウドプロバイダーは廃止されました。アマゾンクラウドプロバイダーは完全に削除され、Kubernetes 1.27にアップグレードすると機能しません。以下に示す手順は、アマゾンクラウドプロバイダーを設定するために依然として必要です。IAMロールを作成し、ClusterIDを設定した後に<<_using_the_out_of_tree_aws_cloud_provider,アウトオブツリーのクラウドプロバイダーを設定する>>ことができます。
+
+Kubernetes 1.26以前では、{xref-migrate-out-of-tree-amazon}[インツリーからアウトオブツリーのAWSクラウドプロバイダーに移行する]こともできます。すべての既存のクラスターは、機能を維持するためにv1.27にアップグレードする前に移行する必要があります。
+
+Kubernetes 1.23以降では、インツリーのAWSクラウドプロバイダーを使用するために`CSIMigrationAWS`フィーチャーゲートを無効にする必要があります。これは、クラスターのKubelet、Controller Manager、API Server、およびSchedulerの高度なクラスター設定で`feature-gates=CSIMigrationAWS=false`を追加の引数として設定することで行えます。
+====
+
+
+Amazonをクラウドプロバイダーとして使用する場合、以下の機能を活用できます：
+
+* *ロードバランサー:*`Layer-4 Load Balancer`を*ポートマッピング*で選択したとき、または`Service`を`type: LoadBalancer`で起動したときにAWS Elastic Load Balancer (ELB)を起動します。
+* *永続ボリューム*：永続ボリュームにはAWS Elastic Block Store (EBS)を使用します。
+
+アマゾンクラウドプロバイダーに関する詳細は、 https://kubernetes.github.io/cloud-provider-aws/[cloud-provider-aws README]を参照してください。
+
+アマゾンクラウドプロバイダーを設定するには、
+
+. <<_1_create_an_iam_role_and_attach_to_the_instances,IAMロールを作成し、インスタンスにアタッチする>>
+. <<_2_configure_the_clusterid,ClusterIDを設定する>>
+
+[#_1_create_an_iam_role_and_attach_to_the_instances]
+== 1.IAMロールを作成し、インスタンスにアタッチします。
+
+クラスターに追加されたすべてのノードは、リソースを作成および削除できるようにEC2と相互作用できる必要があります。インスタンスにアタッチされたIAMロールを使用することで、この相互作用を有効にできます。IAMロールの作成方法については、 https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html#create-iam-role[Amazonのドキュメント：IAMロールの作成]を参照してください。例となるポリシーは2つあります：
+
+* 最初のポリシーは、`controlplane`ロールを持つノード用です。これらのノードは、EC2リソースを作成/削除できる必要があります。以下のIAMポリシーは一例です。使用ケースに応じて不要な権限は削除するようにしてください。
+* 2つ目のポリシーは、`etcd`または`worker`ロールを持つノード用です。これらのノードは、EC2から情報を取得できる必要があります。
+
+{xref-infra-aws}[Amazon EC2クラスター]を作成する際には、作成したIAMロールの*IAMインスタンスプロファイル*（ARNではなく）の名前を、*ノードテンプレート*作成時に入力する必要があります。
+
+{xref-custom-clusters}[カスタムクラスター]を作成する際には、IAMロールをインスタンスに手動でアタッチする必要があります。
+
+`controlplane`ロールを持つノードのIAMポリシー：
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeTags",
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVolumes",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:CreateVolume",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:ModifyVolume",
+        "ec2:AttachVolume",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteVolume",
+        "ec2:DetachVolume",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:DescribeVpcs",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:AttachLoadBalancerToSubnets",
+        "elasticloadbalancing:ApplySecurityGroupsToLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancerPolicy",
+        "elasticloadbalancing:CreateLoadBalancerListeners",
+        "elasticloadbalancing:ConfigureHealthCheck",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteLoadBalancerListeners",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DetachLoadBalancerFromSubnets",
+        "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+        "elasticloadbalancing:SetLoadBalancerPoliciesForBackendServer",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:CreateListener",
+        "elasticloadbalancing:CreateTargetGroup",
+        "elasticloadbalancing:DeleteListener",
+        "elasticloadbalancing:DeleteTargetGroup",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeLoadBalancerPolicies",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:ModifyListener",
+        "elasticloadbalancing:ModifyTargetGroup",
+        "elasticloadbalancing:RegisterTargets",
+        "elasticloadbalancing:SetLoadBalancerPoliciesOfListener",
+        "iam:CreateServiceLinkedRole",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "*"
+      ]
+    }
+  ]
+}
+----
+
+`etcd`または`worker`ロールを持つノードのIAMポリシー：
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones",
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DescribeRepositories",
+        "ecr:ListImages",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+----
+
+[#_2_configure_the_clusterid]
+== 2.ClusterIDを設定します。
+
+次のリソースには`ClusterID`でタグを付ける必要があります：
+
+* *ノード*：Rancherに追加されたすべてのホスト。
+* *サブネット*：クラスターに使用されるサブネット。
+* *セキュリティグループ*：クラスターに使用されるセキュリティグループ。
+
+[NOTE]
+====
+
+複数のセキュリティグループにタグを付けないでください。複数のグループにタグを付けると、Elastic Load Balancer（ELB）を作成する際にエラーが発生します。
+====
+
+
+{xref-infra-aws}[Amazon EC2クラスター]を作成すると、作成されたノードのために`ClusterID`が自動的に設定されます。他のリソースはまだ手動でタグを付ける必要があります。
+
+以下のタグを使用してください：
+
+*キー* = `kubernetes.io/cluster/<cluster-id>` *値* = `owned`
+
+タグの値を `owned` に設定すると、このタグを持つすべてのリソースがこのクラスターによって所有および管理されていることをクラスターに伝えます。
+
+クラスター間でリソースを共有する場合、タグを次のように変更できます：
+
+*キー* = `kubernetes.io/cluster/<cluster-id>` *値* = `shared`。
+
+文字列値 `<cluster-id>` は、Kubernetes クラスターの ID です。
+
+[NOTE]
+====
+
+リソースに複数の所有または共有タグを付けないでください。
+====
+
+
+[#_using_amazon_elastic_container_registry_ecr]
+== Amazon Elastic Container Registry (ECR) を使用する
+
+kubelet コンポーネントは、<<_1_create_an_iam_role_and_attach_to_the_instances,IAM ロールを作成し、インスタンスにアタッチする>> で言及された IAM プロファイルがインスタンスにアタッチされている場合、ECR 認証情報を自動的に取得する能力があります。Kubernetes バージョンが v1.15.0 より古い場合、Amazon クラウドプロバイダーをクラスターで構成する必要があります。Kubernetes バージョン v1.15.0 以降では、kubelet はクラスターで Amazon クラウドプロバイダーを構成しなくても ECR 認証情報を取得できます。
+
+[#_using_the_out_of_tree_aws_cloud_provider]
+== Out-of-Tree AWS クラウドプロバイダーを使用する
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. https://cloud-provider-aws.sigs.k8s.io/prerequisites/[ノード名の規則とその他の前提条件] は、クラウドプロバイダーがインスタンスを正しく見つけるために従う必要があります。
+. Rancher が管理する RKE2/K3s クラスターは、`providerID` の構成をサポートしていません。ただし、次の設定がプロビジョニング クラスターオブジェクトに設定されている場合、エンジンはノード名を正しく設定します：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: aws
+----
++
+このオプションは、ノード上で実行されるさまざまな Kubernetes コンポーネントの設定に渡され、インツリーのプロバイダーが意図せずに実行されないように、コンポーネントごとにオーバーライドする必要があります：
++
+*Etcd でのオーバーライド:*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/etcd-role
+              operator: In
+              values:
+                - 'true'
+----
++
+*コントロールプレーンでのオーバーライド:*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+        disable-cloud-controller: true
+        kube-apiserver-arg:
+          - cloud-provider=external
+        kube-controller-manager-arg:
+          - cloud-provider=external
+        kubelet-arg:
+          - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+*ワーカーでのオーバーライド:*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/worker-role
+              operator: In
+              values:
+                - 'true'
+----
+
+. プロバイダー ID を設定するために上記のメカニズムに依存する場合は `Amazon` を選択してください。そうでない場合は、Kubernetes コンポーネントのために `--cloud-provider=external` を設定する *外部 (アウトオブツリー)* クラウドプロバイダーを選択してください。
+. `aws-cloud-controller-manager` Helmチャートを追加のマニフェストとして指定します。
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    additionalManifest: |-
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: aws-cloud-controller-manager
+        namespace: kube-system
+      spec:
+        chart: aws-cloud-controller-manager
+        repo: https://kubernetes.github.io/cloud-provider-aws
+        targetNamespace: kube-system
+        bootstrap: true
+        valuesContent: |-
+          hostNetworking: true
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          args:
+            - --configure-cloud-routes=false
+            - --v=5
+            - --cloud-provider=aws
+----
+--
+
+RKE::
++
+--
+. クラウドプロバイダーがインスタンスを正しく見つけられるように、 https://cloud-provider-aws.sigs.k8s.io/prerequisites/[ノード名の規則とその他の前提条件]を遵守する必要があります。Rancherが提供するクラスターでは、`providerID`の設定はサポートされていません。
++
+[NOTE]
+====
+IPベースの命名を使用する場合、ノードはインスタンスの名前の後に地域のドメイン名（`ip-xxx-xxx-xxx-xxx.ec2.<region>.internal`）を付けて名付ける必要があります。DHCPオプションにカスタムドメイン名が設定されている場合は、この命名規則に従って`--hostname-override`を`kube-proxy`と`kubelet`に設定する必要があります。
+====
++
+ノード名の規則を満たすために、Rancherは`External Amazon`クラウドプロバイダーが選択されているときに`useInstanceMetadataHostname`を設定することを許可します。`useInstanceMetadataHostname`を有効にすると、ec2メタデータサービスにクエリを実行し、`kubelet`および`kube-proxy`のために`/hostname`を`hostname-override`として設定します。
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true
+----
++
+カスタムクラスターの`hostname-override`に対してカスタム値を設定する際には、`useInstanceMetadataHostname`を有効にしてはいけません。{xref-custom-clusters}[カスタムクラスター]を作成する際には、`--node-name`を`docker run`ノード登録コマンドに追加して、`hostname-override` --を設定します。例えば、`"$(hostname -f)"`のように。これは手動で行うこともできますし、Rancher UIの*詳細オプションを表示*を使用して*ノード名*を追加することでもできます。
+
+. クラウドプロバイダーを選択します。
++
+*外部Amazon（アウトオブツリー）*を選択すると、`--cloud-provider=external`が設定され、`useInstanceMetadataHostname`が有効になります。ステップ1で述べたように、`useInstanceMetadataHostname`を有効にすると、EC2メタデータサービスがクエリされ、`http://169.254.169.254/latest/meta-data/hostname`が`hostname-override`として`kubelet`と`kube-proxy`に設定されます。
++
+[NOTE]
+====
+カスタムクラスターのために`node-name`を介してカスタムノード名を設定する際には、`useInstanceMetadataHostname`を無効にする必要があります。
+====
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true/false
+----
++
+*外部*クラウドプロバイダーを使用している既存のクラスターは、Kubernetesコンポーネントのために`--cloud-provider=external`を設定しますが、ノード名は設定しません。
+
+. クラスターのプロビジョニングが完了した後にAWSクラウドコントローラーマネージャーをインストールします。クラウドコントローラーマネージャーをデプロイするまで、クラスターは正常にプロビジョニングされておらず、ノードはまだ`uninitialized`状態にあることに注意してください。これは手動で行うこともできますし、<<_helm_chart_installation_from_ui,UIのHelmチャート>>を介して行うこともできます。
++
+https://kubernetes.github.io/cloud-provider-aws[クラウドコントローラーマネージャー]の公式AWSアップストリームドキュメントを参照してください。
+--
+======
+
+[#_helm_chart_installation_from_cli]
+=== CLIからのHelmチャートのインストール 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+https://github.com/kubernetes/cloud-provider-aws/tree/master/charts/aws-cloud-controller-manager[Helmチャートのインストール]に関する公式アップストリームドキュメントはGitHubで見つけることができます。
+
+. Helmリポジトリを追加します：
++
+[,shell]
+----
+helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
+helm repo update
+----
+
+. デフォルトの`values.yaml`を上書きするために、次の内容を持つ`values.yaml`ファイルを作成します：
++
+[,yaml]
+----
+# values.yaml
+hostNetworking: true
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/control-plane
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+args:
+  - --configure-cloud-routes=false
+  - --use-service-account-credentials=true
+  - --v=2
+  - --cloud-provider=aws
+clusterRoleRules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - '*'
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/status
+    verbs:
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services/status
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+     - ''
+    resources:
+      - serviceaccounts
+    verbs:
+    - create
+    - get
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts/token
+    verbs:
+      - create
+----
+
+. Helmチャートをインストールします：
++
+[,shell]
+----
+helm upgrade --install aws-cloud-controller-manager aws-cloud-controller-manager/aws-cloud-controller-manager --values values.yaml
+----
++
+Helmチャートが正常にインストールされたことを確認します：
++
+[,shell]
+----
+helm status -n kube-system aws-cloud-controller-manager
+----
+
+. （オプション）クラウドコントローラーマネージャーの更新が成功したことを確認します：
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
+--
+
+RKE::
++
+--
+https://github.com/kubernetes/cloud-provider-aws/tree/master/charts/aws-cloud-controller-manager[Helmチャートのインストール]に関する公式アップストリームドキュメントはGitHubで見つけることができます。
+
+. Helmリポジトリを追加します：
++
+[,shell]
+----
+helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
+helm repo update
+----
+
+. デフォルトの`values.yaml`を上書きするために、次の内容を持つ`values.yaml`ファイルを作成します：
++
+[,yaml]
+----
+# values.yaml
+hostNetworking: true
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+args:
+  - --configure-cloud-routes=false
+  - --use-service-account-credentials=true
+  - --v=2
+  - --cloud-provider=aws
+clusterRoleRules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - '*'
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/status
+    verbs:
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services/status
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+     - ''
+    resources:
+      - serviceaccounts
+    verbs:
+    - create
+    - get
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts/token
+    verbs:
+      - create
+----
+
+. Helmチャートをインストールします：
++
+[,shell]
+----
+helm upgrade --install aws-cloud-controller-manager -n kube-system aws-cloud-controller-manager/aws-cloud-controller-manager --values values.yaml
+----
++
+Helmチャートが正常にインストールされたことを確認します：
++
+[,shell]
+----
+helm status -n kube-system aws-cloud-controller-manager
+----
+
+. 存在する場合、デーモンセットを編集してデフォルトのノードセレクター`node-role.kubernetes.io/control-plane: ""`を削除します：
++
+[,shell]
+----
+kubectl edit daemonset aws-cloud-controller-manager -n kube-system
+----
+
+. （オプション）クラウドコントローラーマネージャーの更新が成功したことを確認します：
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
+--
+======
+
+[#_helm_chart_installation_from_ui]
+=== UIからのHelmチャートのインストール 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. *☰*をクリックし、左側のナビゲーションからクラスターの名前を選択します。
+. *アプリ* > *リポジトリ*を選択します。
+. ［*Create*］ボタンをクリックします。
+. `https://kubernetes.github.io/cloud-provider-aws`*インデックスURL*フィールドにを入力します。
+. 左側のナビゲーションから*アプリ* > *チャート*を選択し、*aws-cloud-controller-manager*をインストールします。
+. ネームスペース`kube-system`を選択し、*インストール前にHelmオプションをカスタマイズする*を有効にします。
+. 次のコンテナ引数を追加します：
++
+[,yaml]
+----
+  - '--use-service-account-credentials=true'
+  - '--configure-cloud-routes=false'
+----
+
+. `get`内の`verbs`リソースに対して、`serviceaccounts`に`clusterRoleRules`を追加します。これにより、クラウドコントローラーマネージャーは起動時にサービスアカウントを取得できるようになります。
++
+[,yaml]
+----
+  - apiGroups:
+      - ''
+    resources:
+      - serviceaccounts
+    verbs:
+      - create
+      - get
+----
+
+. Rancherによって提供されたRKE2ノードは`node-role.kubernetes.io/control-plane`で汚染されています。トレランスとノードセレクターを更新します：
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/control-plane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
++
+[NOTE]
+====
+現在、ノードセレクターはRancher UIから更新できない https://github.com/rancher/dashboard/issues/9249[既知の問題]があります。 チャートのインストールを続行し、デーモンセットを手動で編集して`nodeSelector`を設定します：
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
+====
+
+. チャートをインストールし、デーモンセット`aws-cloud-controller-manager`が実行中であることを確認します。対象のネームスペース（ステップ6で変更されていない場合は`kube-system`）で`aws-cloud-controller-manager`ポッドが実行されていることを確認します。
+--
+
+RKE::
++
+--
+. *☰*をクリックし、左側のナビゲーションからクラスターの名前を選択します。
+. *アプリ* > *リポジトリ*を選択します。
+. ［*Create*］ボタンをクリックします。
+. `https://kubernetes.github.io/cloud-provider-aws`*インデックスURL*フィールドにを入力します。
+. 左側のナビゲーションから*アプリ* > *チャート*を選択し、*aws-cloud-controller-manager*をインストールします。
+. ネームスペース`kube-system`を選択し、*インストール前にHelmオプションをカスタマイズする*を有効にします。
+. 次のコンテナ引数を追加します：
++
+[,yaml]
+----
+  - '--use-service-account-credentials=true'
+  - '--configure-cloud-routes=false'
+----
+
+. `get`内の`verbs`リソースに対して、`serviceaccounts`に`clusterRoleRules`を追加します。これにより、クラウドコントローラーマネージャーは起動時にサービスアカウントを取得できるようになります：
++
+[,yaml]
+----
+  - apiGroups:
+      - ''
+    resources:
+      - serviceaccounts
+    verbs:
+      - create
+      - get
+----
+
+. RancherによってプロビジョニングされたRKEノードは`node-role.kubernetes.io/controlplane`で汚染されています。トレランスとノードセレクターを更新します：
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
++
+[NOTE]
+====
+現在、 https://github.com/rancher/dashboard/issues/9249[既知の問題]があり、`nodeSelector`はRancher UIから更新できません。 チャートのインストールを続け、その後手動でデーモンセットを編集して`nodeSelector`を設定します：
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
+====
+
+. チャートをインストールし、デーモンセット `aws-cloud-controller-manager`が正常にデプロイされることを確認します：
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system aws-cloud-controller-manager
+----
+--
+======

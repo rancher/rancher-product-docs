@@ -1,0 +1,165 @@
+= Configuration d'un cluster Kubernetes à haute disponibilité {k3s-product-name} pour {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-cluster-setup/k3s-for-rancher.adoc 
+:product-path: installation-and-upgrade/install-kubernetes/k3s-for-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-arch-rec: xref:about-rancher/architecture/recommendations.adoc
+:xref-ha-k3s: xref:installation-and-upgrade/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-arch-rec: xref:reference-guides/rancher-manager-architecture/architecture-recommendations.adoc
+:xref-ha-k3s: xref:how-to-guides/new-user-guides/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+endif::[]
+
+Cette section décrit comment installer un cluster Kubernetes selon les {xref-arch-rec}#_environnement_pour_installations_kubernetes[meilleures pratiques pour l'environnement du serveur Rancher.]
+
+Pour les systèmes sans accès direct à Internet, veuillez vous référer aux instructions d'installation en isolation physique.
+
+[TIP]
+.Conseil d'installation pour un nœud unique{nbsp}:
+====
+
+Dans un cluster Kubernetes à nœud unique, le serveur Rancher n'a pas de haute disponibilité, ce qui est important pour exécuter Rancher en production. Cependant, installer Rancher sur un cluster à nœud unique peut être utile si vous souhaitez économiser des ressources en utilisant un seul nœud à court terme, tout en préservant un chemin de migration vers la haute disponibilité.
+
+Pour configurer un cluster K3s à nœud unique, exécutez la commande d'installation du serveur Rancher sur un seul nœud au lieu de deux nœuds.
+
+Dans les deux configurations à nœud unique, Rancher peut être installé avec Helm sur le cluster Kubernetes de la même manière qu'il serait installé sur tout autre cluster.
+====
+
+
+[#_prerequisites]
+== Conditions préalables
+
+Ces instructions supposent que vous avez configuré deux nœuds, un équilibreur de charge, un enregistrement DNS et une base de données MySQL externe comme décrit dans {xref-ha-k3s}[cette section.]
+
+Rancher doit être installé sur une version Kubernetes prise en charge. Pour savoir quelles versions de Kubernetes sont prises en charge pour votre version de Rancher, veuillez vous référer à la https://rancher.com/support-maintenance-terms/[Matrice de support Rancher].
+
+Pour spécifier la version K3s (Kubernetes), utilisez la variable d'environnement INSTALL_K3S_VERSION (par exemple, `INSTALL_K3S_VERSION="v1.24.10+k3s1"`) lors de l'exécution du script d'installation K3s.
+
+[#_installing_kubernetes]
+== Installation de Kubernetes
+
+[#_1_install_kubernetes_and_set_up_the_k3s_product_name_server]
+=== 1. Installer Kubernetes et configurer le serveur {k3s-product-name}
+
+Lors de l'exécution de la commande pour démarrer le serveur API K3s Kubernetes, vous passerez une option pour utiliser le magasin de données externe que vous avez configuré précédemment.
+
+. Connectez-vous à l'un des nœuds Linux que vous avez préparés pour exécuter le serveur Rancher.
+. Sur le nœud Linux, exécutez cette commande pour démarrer le serveur K3s et le connecter au magasin de données externe{nbsp}:
++
+----
+ curl -sfL https://get.k3s.io |  INSTALL_K3S_VERSION=<VERSION> sh -s - server \
+   --datastore-endpoint="<DATASTORE_ENDPOINT>"
+----
++
+Où `<DATASTORE_ENDPOINT>` est l'URI de connexion pour votre datastore. Par exemple, `mysql://username:password@tcp(hostname:3306)/database-name` si vous utilisez MySQL. Les datastores valides incluent etcd, MySQL, PostgreSQL ou SQLite (par défaut).
++
+
+[NOTE]
+====
+Le point de terminaison du datastore peut également être passé en utilisant la variable d'environnement `$K3S_DATASTORE_ENDPOINT`.
+====
+
+
+. Obtenez le token du nœud principal du serveur{nbsp}:
++
+----
+ cat /var/lib/rancher/k3s/server/token
+----
+
+. Exécutez la commande sur votre deuxième nœud de serveur K3s{nbsp}:
++
+----
+   curl -sfL https://get.k3s.io |  INSTALL_K3S_VERSION=<VERSION> sh -s - server \
+     --datastore-endpoint="<DATASTORE_ENDPOINT>" \
+     --token "<MAIN_SERVER_NODE_TOKEN>"
+----
+
+[#_2_confirm_that_k3s_product_name_is_running]
+=== 2. Confirmez que {k3s-product-name} est en cours d'exécution
+
+Pour confirmer que K3s a été configuré avec succès, exécutez la commande suivante sur l'un des nœuds de serveur K3s{nbsp}:
+
+----
+sudo k3s kubectl get nodes
+----
+
+Vous devriez alors voir deux nœuds avec le rôle de maître{nbsp}:
+
+----
+ubuntu@ip-172-31-60-194:~$ sudo k3s kubectl get nodes
+NAME               STATUS   ROLES    AGE    VERSION
+ip-172-31-60-194   Ready    master   44m    v1.17.2+k3s1
+ip-172-31-63-88    Ready    master   6m8s   v1.17.2+k3s1
+----
+
+Testez ensuite la santé des pods du cluster{nbsp}:
+
+----
+sudo k3s kubectl get pods --all-namespaces
+----
+
+*Résultat :* Vous avez configuré avec succès un cluster Kubernetes K3s.
+
+[#_3_save_and_start_using_the_kubeconfig_file]
+=== 3. Enregistrez et commencez à utiliser le fichier kubeconfig
+
+Lorsque vous avez installé K3s sur chaque nœud de serveur Rancher, un fichier `kubeconfig` a été créé sur le nœud à `/etc/rancher/k3s/k3s.yaml`. Ce fichier contient des informations d'identification pour un accès complet au cluster, et vous devez enregistrer ce fichier dans un endroit sûr.
+
+Pour utiliser ce fichier `kubeconfig`,
+
+. Installez https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl,], un outil de ligne de commande Kubernetes.
+. Copiez le fichier à `/etc/rancher/k3s/k3s.yaml` et enregistrez-le dans le répertoire `~/.kube/config` sur votre machine locale.
+. Dans le fichier kubeconfig, la directive `server` est définie comme hôte local. Configurez le serveur comme le DNS de votre équilibreur de charge, en vous référant au port 6443. (Le serveur API Kubernetes sera accessible au port 6443, tandis que le serveur Rancher sera accessible aux ports 80 et 443.) Voici un exemple `k3s.yaml`{nbsp}:
+
+[,yml]
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*Résultat :* Vous pouvez maintenant utiliser `kubectl` pour gérer votre cluster K3s. Si vous avez plus d'un fichier kubeconfig, vous pouvez spécifier lequel vous souhaitez utiliser en passant le chemin du fichier lors de l'utilisation de `kubectl`{nbsp}:
+
+----
+kubectl --kubeconfig ~/.kube/config/k3s.yaml get pods --all-namespaces
+----
+
+Pour plus d'informations sur le fichier `kubeconfig`, consultez la https://rancher.com/docs/k3s/latest/en/cluster-access/[K3s documentation] ou la https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[documentation officielle de Kubernetes] sur l'organisation de l'accès au cluster à l'aide de fichiers `kubeconfig`.
+
+[#_4_check_the_health_of_your_cluster_pods]
+=== 4. Vérifiez la santé de vos pods de cluster
+
+Maintenant que vous avez configuré le fichier `kubeconfig`, vous pouvez utiliser `kubectl` pour accéder au cluster depuis votre machine locale.
+
+Vérifiez que tous les pods et conteneurs requis sont sains et prêts à continuer{nbsp}:
+
+----
+ubuntu@ip-172-31-60-194:~$ sudo kubectl get pods --all-namespaces
+NAMESPACE       NAME                                      READY   STATUS    RESTARTS   AGE
+kube-system     metrics-server-6d684c7b5-bw59k            1/1     Running   0          8d
+kube-system     local-path-provisioner-58fb86bdfd-fmkvd   1/1     Running   0          8d
+kube-system     coredns-d798c9dd-ljjnf                    1/1     Running   0          8d
+----
+
+*Résultat :* Vous avez confirmé que vous pouvez accéder au cluster avec `kubectl` et que le cluster K3s fonctionne avec succès. Maintenant, le serveur de gestion Rancher peut être installé sur le cluster.

@@ -1,0 +1,130 @@
+= Bereitstellung von Kubernetes-Clustern in VMware vSphere
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-19
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/vsphere/provision-kubernetes-clusters-in-vsphere.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/provision-kubernetes-clusters-in-vsphere.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:url-rke2-landing-page: https://documentation.suse.com/cloudnative/rke2/
+:url-k3s-landing-page: https://documentation.suse.com/cloudnative/k3s/
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc
+:xref-cloud-provider-vsphere: xref:cluster-deployment/set-up-cloud-providers/configure-in-tree-vsphere.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+:xref-vsphere-node-template-config: xref:cluster-deployment/infra-providers/vsphere/node-template-configuration.adoc
+:xref-vsphere-create-credentials: xref:cluster-deployment/infra-providers/vsphere/create-credentials.adoc
+:xref-persistent-storage-examples: xref:cluster-admin/manage-clusters/persistent-storage/examples/examples.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-landing-page: https://docs.rke2.io/
+:url-k3s-landing-page: https://docs.k3s.io/
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc
+:xref-rke2-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/rke2-cluster-configuration.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/index.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc
+:xref-cloud-provider-vsphere: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/configure-in-tree-vsphere.adoc
+:xref-k3s-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/k3s-cluster-configuration.adoc
+:xref-vsphere-node-template-config: xref:reference-guides/cluster-configuration/downstream-cluster-configuration/node-template-configuration/vsphere.adoc
+:xref-vsphere-create-credentials: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/vsphere/create-credentials.adoc
+:xref-persistent-storage-examples: xref:how-to-guides/new-user-guides/manage-clusters/provisioning-storage-examples/index.adoc
+endif::[]
+
+In diesem Abschnitt lernen Sie, wie Sie Rancher verwenden, um ein {url-rke2-landing-page}[RKE2] oder {url-k3s-landing-page}[K3s] Kubernetes-Cluster in VMware vSphere bereitzustellen.
+
+Zuerst richten Sie Ihre vSphere-Cloud-Anmeldeinformationen in Rancher ein.
+
+Dann erstellen Sie ein vSphere-Cluster in Rancher, und beim Konfigurieren des neuen Clusters definieren Sie Maschinenpools dafür. Jeder Maschinenpool hat eine Kubernetes-Rolle von etcd, controlplane oder worker. Rancher installiert Kubernetes auf den neuen Knoten und richtet jeden Knoten mit der durch den Maschinenpool definierten Kubernetes-Rolle ein.
+
+* <<_preparation_in_vmware_vsphere,Vorbereitung in vSphere>>
+* <<_creating_a_vmware_vsphere_cluster,Erstellen eines vSphere-Clusters>>
+
+[#_preparation_in_vmware_vsphere]
+== Vorbereitung in VMware vSphere
+
+Dieser Abschnitt beschreibt die Anforderungen für die Einrichtung von vSphere, damit Rancher VMs und Cluster bereitstellen kann.
+
+[#_create_credentials_in_vmware_vsphere]
+=== Anmeldeinformationen in VMware vSphere erstellen
+
+Bevor Sie mit der Erstellung eines Clusters fortfahren, müssen Sie sicherstellen, dass Sie einen vSphere-Benutzer mit ausreichenden Berechtigungen haben.
+
+Bitte beachten Sie diese {xref-vsphere-create-credentials}[Anleitung], um Anweisungen zur Erstellung eines Benutzers in vSphere mit den erforderlichen Berechtigungen zu erhalten. Diese Schritte führen zu einem Benutzernamen und einem Passwort, die Sie Rancher zur Verfügung stellen müssen, damit Rancher Ressourcen in vSphere bereitstellen kann.
+
+[#_network_permissions]
+=== Netzwerkberechtigungen
+
+Es muss sichergestellt werden, dass die Hosts, auf denen der Rancher-Server läuft, die folgenden Netzwerkverbindungen herstellen können:
+
+* Zur vSphere-API auf dem vCenter-Server (normalerweise Port 443/TCP).
+* Zur Host-API (Port 443/TCP) auf allen ESXi-Hosts, die verwendet werden, um virtuelle Maschinen für die Cluster zu erstellen (_nur erforderlich, wenn die ISO-Erstellungsmethode verwendet wird_).
+* Zu Port 22/TCP und 2376/TCP auf den erstellten VMs
+
+Siehe {xref-node-reqs}#_networking_requirements[Netzwerkanforderungen für Knoten] für eine detaillierte Liste der Portanforderungen, die für die Erstellung von Knoten auf einem Infrastrukturprovider gelten.
+
+[#_valid_esxi_license_for_vmware_vsphere_api_access]
+=== Gültige ESXi-Lizenz für den Zugriff auf die VMware vSphere API
+
+Die kostenlose ESXi-Lizenz unterstützt keinen API-Zugriff. Die vSphere-Server müssen über eine gültige oder Evaluierungs-ESXi-Lizenz verfügen.
+
+[#_vm_vm_affinity_rules_for_clusters_with_drs]
+=== VM-VM-Affinitätsregeln für Cluster mit DRS
+
+Wenn Sie einen Cluster mit aktiviertem DRS haben, wird empfohlen, https://docs.vmware.com/en/VMware-vSphere/6.5/com.vmware.vsphere.resmgmt.doc/GUID-7297C302-378F-4AF2-9BD6-6EDB1E0A850A.html[VM-VM-Affinitätsregeln] einzurichten. Diese Regeln ermöglichen es VMs, die den etcd- und controlplane-Rollen zugewiesen sind, auf separaten ESXi-Hosts zu arbeiten, wenn sie verschiedenen Knotenpools zugewiesen sind. Diese Praxis stellt sicher, dass der Ausfall einer einzelnen physischen Maschine die Verfügbarkeit dieser Ebenen nicht beeinträchtigt.
+
+[#_creating_a_vmware_vsphere_cluster]
+== Erstellen eines VMware vSphere-Clusters
+
+[#_1_create_your_cloud_credentials]
+=== 1. Erstellen Sie Ihre Cloud-Anmeldeinformationen
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Klicken Sie auf *Cloud-Anmeldeinformationen*.
+. Klicken Sie auf *Erstellen*.
+. Klicken Sie auf *VMware vSphere*.
+. Geben Sie Ihre vSphere-Anmeldeinformationen ein. Für Hilfe, siehe *Kontozugriff* in der {xref-vsphere-node-template-config}[Knotenvorlagen-Konfigurationsreferenz.]
+. Klicken Sie auf *Erstellen*.
+
+**Ergebnis:** Sie haben die Cloud-Anmeldeinformationen erstellt, die zur Bereitstellung von Knoten in Ihrem Cluster verwendet werden.
+
+[#_2_create_your_cluster]
+=== 2. Erstellen Sie Ihren Cluster
+
+Verwenden Sie Rancher, um einen Kubernetes-Cluster in vSphere zu erstellen.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Klicken Sie auf der *Cluster*-Seite auf *Erstellen*.
+. Klicken Sie auf *VMware vSphere*.
+. Geben Sie einen *Cluster-Namen* ein und verwenden Sie Ihre vSphere-Cloud-Anmeldeinformationen.
+. Erstellen Sie einen Maschinenpool für jede Kubernetes-Rolle. Siehe die {xref-infra-providers}#_node_roles[Best Practices] für Empfehlungen zu Rollenzuweisungen und -anzahlen.
+.. Definieren Sie die Maschinenkonfiguration für jeden Maschinenpool.
+. Verwenden Sie die *Cluster-Konfiguration*, um die Version von Kubernetes auszuwählen, die installiert werden soll, welchen Netzwerkprovider Sie verwenden möchten und ob Sie die Projekt-Netzwerkisolierung aktivieren möchten.  Für Hilfe bei der Konfiguration des Clusters verweisen Sie auf die {xref-rke2-config}[RKE2] und {xref-k3s-config}[K3s] Cluster-Konfigurationsreferenzen.
+. Verwenden Sie *Mitgliederrollen*, um die Benutzerautorisierung für den Cluster zu konfigurieren. Klicken Sie auf *Mitglied hinzufügen*, um Benutzer hinzuzufügen, die auf den Cluster zugreifen können. Verwenden Sie das *Rolle* Dropdown-Menü, um die Berechtigungen für jeden Benutzer festzulegen.
+. Wenn Sie später persistenten Speicher oder andere Infrastruktur dynamisch bereitstellen möchten, müssen Sie den vSphere-Cloud-Provider aktivieren, indem Sie die Cluster-YAML-Datei ändern. Für Details verweisen Sie auf {xref-cloud-provider-vsphere}[Dokumentation des in-tree vSphere-Cloud-Providers] und {xref-cloud-provider-vsphere-out-of-tree}[Dokumentation des out-of-tree vSphere-Cloud-Providers].
+. Überprüfen Sie Ihre Optionen, um sicherzustellen, dass sie korrekt sind. Klicken Sie dann auf *Erstellen*.
+
+*Ergebnis:*
+
+Ihr Cluster wurde erstellt und hat den Status *Bereitstellung* erhalten. Rancher richtet Ihren Cluster ein.
+
+Sie können auf Ihren Cluster zugreifen, nachdem sein Status auf *Aktiv* aktualisiert wurde.
+
+*Aktive* Cluster sind zwei Projekte zugewiesen:
+
+* `Default`, der den `default` Namespace enthält
+* `System`, der die `cattle-system`, `traefik`, `kube-public` und `kube-system` Namespaces enthält
+
+[#_optional_next_steps]
+== Optionale nächste Schritte
+
+Nach der Erstellung Ihres Clusters können Sie über die Rancher-Benutzeroberfläche darauf zugreifen. Als bewährte Praxis empfehlen wir, diese alternativen Möglichkeiten zum Zugriff auf Ihren Cluster einzurichten:
+
+* *Zugriff auf Ihren Cluster mit der kubectl Kommandozeilenschnittstelle:* Befolgen Sie {xref-access-cluster-kubectl}#_accessing_clusters_with_kubectl_from_your_workstation[diese Schritte], um mit kubectl von Ihrer Workstation aus auf Cluster zuzugreifen. In diesem Fall werden Sie über den Authentifizierungsproxy des Rancher-Servers authentifiziert, dann wird Rancher Sie mit dem Downstream-Cluster verbinden. Diese Methode ermöglicht es Ihnen, den Cluster ohne die Rancher-Benutzeroberfläche zu verwalten.
+* *Greifen Sie mit der kubectl-Kommandozeilenschnittstelle auf Ihren Cluster zu, indem Sie den autorisierten Cluster-Endpunkt verwenden:* Befolgen Sie {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[diese Schritte], um direkt mit kubectl auf Ihren Cluster zuzugreifen, ohne sich über Rancher zu authentifizieren. Wir empfehlen, diese alternative Methode einzurichten, um auf Ihren Cluster zuzugreifen, damit Sie auch dann auf den Cluster zugreifen können, wenn Sie sich nicht mit Rancher verbinden können.
+* *Bereitstellen von Speicher:* Als Beispiel dafür, wie man Speicher in vSphere mit Rancher bereitstellt, siehe {xref-persistent-storage-examples}[diesen Abschnitt]. Um Speicher in vSphere dynamisch bereitzustellen, muss der vSphere-Anbieter aktiviert sein. Für Details, siehe {xref-cloud-provider-vsphere}[Dokumentation des in-tree vSphere-Cloud-Anbieters] und {xref-cloud-provider-vsphere-out-of-tree}[Dokumentation des out-of-tree vSphere-Cloud-Anbieters].

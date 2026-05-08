@@ -1,0 +1,143 @@
+= Tokens
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-11-28
+:page-revdate: {revdate}
+:community-path: api/workflows/tokens.adoc 
+:product-path: api/workflows/tokens.adoc
+
+include::shared:ROOT:partial$en/v3-api-tokens-deprecation-warning.adoc[]
+
+[#_token_resource]
+== Recurso de token
+
+O Rancher possui um recurso de API imperativo `tokens.ext.cattle.io` que permite gerar tokens para autenticação com o Rancher.
+
+[,shell]
+----
+kubectl api-resources --api-group=ext.cattle.io
+----
+
+Para obter uma descrição dos campos e da estrutura do recurso token, execute:
+
+[,shell]
+----
+kubectl explain tokens.ext.cattle.io
+----
+
+[#_creating_a_token]
+== Criando um token
+
+[CAUTION]
+====
+O valor do token é retornado apenas uma vez no campo `status.value`.
+====
+
+Apenas um **usuário válido e ativo** do Rancher pode criar um token. Caso contrário, você receberá um erro exibido (`Error from server (Forbidden)...`) ao tentar criar um token.
+
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+EOF
+Error from server (Forbidden): error when creating "STDIN": tokens.ext.cattle.io is forbidden: user system:admin is not a Rancher user
+----
+
+Um token é sempre criado para o usuário que faz a solicitação. Tentar criar um token para um usuário diferente, especificando um `spec.userID` diferente, é proibido e falhará.
+
+* O campo `spec.description` pode ser definido como uma descrição legível por humanos do propósito do token. O valor padrão é vazio.
+* O campo `spec.kind` pode ser definido como o tipo de token. O valor `session` indica um token de login. Todos os outros valores, incluindo a string vazia padrão, indicam um tipo de token derivado.
+* Os campos `metadata.name` e `metadata.generateName` são ignorados, e o nome do novo token é gerado automaticamente usando o prefixo `token-`.
++
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+spec:
+  description: My Token
+EOF
+----
+
+* Se o `spec.ttl` não for especificado, o token é criado com o tempo de expiração definido na configuração `auth-token-max-ttl-minutes`. O tempo de expiração padrão é de 90 dias. Se `spec.ttl` for especificado, deve ser maior que 0 e menor ou igual ao valor da configuração `auth-token-max-ttl-minutes` expresso em milissegundos.
++
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+spec:
+  ttl: 7200000 # 2 hours
+EOF
+----
+
+[#_listing_tokens]
+== Listando tokens
+
+Listar tokens gerados anteriormente pode ajudar a limpar tokens que não são mais necessários (por exemplo, que foram emitidos temporariamente). Administradores podem listar todos os tokens, enquanto usuários regulares podem ver apenas seus próprios tokens.
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io
+NAME          KIND   TTL   AGE
+token-chjc9          90d   18s
+token-6fzgj          90d   16s
+token-8nbrm          90d   14s
+----
+
+Use `-o wide` para obter mais detalhes:
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io -o wide
+NAME          USER         KIND   TTL   AGE   DESCRIPTION
+token-chjc9   user-jtghh          90d   24s   example
+token-6fzgj   user-jtghh          90d   22s   box
+token-8nbrm   user-jtghh          90d   20s   jinx
+----
+
+[#_viewing_a_token]
+== Visualizando um token
+
+Administradores podem obter qualquer token, enquanto usuários regulares podem obter apenas seus próprios tokens.
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io token-chjc9
+NAME          KIND   TTL   AGE
+token-chjc9          90d   18s
+----
+
+Use `-o wide` para obter mais detalhes:
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io token-chjc9 -o wide
+NAME          USER         KIND   TTL   AGE   DESCRIPTION
+token-chjc9   user-jtghh          90d   24s   example
+----
+
+[#_deleting_a_token]
+== Deletando um token
+
+Administradores podem deletar qualquer token, enquanto usuários regulares podem deletar apenas seus próprios tokens.
+
+[,shell]
+----
+kubectl delete tokens.ext.cattle.io token-chjc9
+token.ext.cattle.io "token-chjc9" deleted
+----
+
+[#_updating_a_token]
+== Atualizando um token
+
+Apenas os campos de metadados `spec.description`, `spec.ttl` e `spec.enabled` podem ser atualizados. Todos os outros campos `spec` são imutáveis. Administradores podem estender o campo `spec.ttl`, enquanto usuários regulares podem apenas reduzir o valor.
+
+Um exemplo de comando `kubectl` para editar um token:
+
+[,shell]
+----
+kubectl edit tokens.ext.cattle.io token-zp786
+----

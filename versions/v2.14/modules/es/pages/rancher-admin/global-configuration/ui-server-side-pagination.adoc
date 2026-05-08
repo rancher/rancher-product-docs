@@ -1,0 +1,88 @@
+= Paginación del lado del servidor de la interfaz de usuario
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/ui-server-side-pagination.adoc 
+:product-path: rancher-admin/global-configuration/ui-server-side-pagination.adoc
+
+La Paginación del Lado del Servidor (SSP) es una característica de Rancher que proporciona mejoras significativas en el rendimiento de la interfaz de usuario para recursos con altos conteos, restringiendo la cantidad de recursos que el navegador obtiene y almacena en memoria.
+
+Ten en cuenta que la SSP es opcional, **habilitada por defecto**, y se puede desactivar a través de la bandera de características `ui-sql-cache`.
+
+[#_disk_space]
+== Espacio de disco
+
+[IMPORTANT]
+====
+Es crucial que revises el espacio en disco disponible en tus nodos y planifiques en consecuencia antes de actualizar a Rancher v2.12.0 y versiones posteriores para evitar problemas potenciales de presión en el disco y desalojo de pods.
+====
+
+La SSP se basa en un mecanismo de caché que introduce un nuevo requisito de espacio en disco efímero en los nodos de tu clúster. Esta caché, una base de datos SQLite interna, se almacena dentro del sistema de archivos del contenedor. Esto afecta a los nodos que ejecutan los **pods del servidor Rancher** (`rancher` en el espacio de nombres `cattle-system` en el clúster local) y a los nodos que ejecutan los **pods del agente Rancher** (`cattle-cluster-agent` en el espacio de nombres `cattle-system` en todos los clústeres de sentido descendente).
+
+La cantidad de espacio en disco requerido es dinámica y depende de la cantidad y el tamaño de los recursos de Kubernetes visualizados en la interfaz de usuario. Como guía, la caché puede consumir aproximadamente **el doble del tamaño de los objetos de Kubernetes en bruto** que almacena.
+
+Por ejemplo, las pruebas internas mostraron que almacenar en caché 5000 ConfigMaps, con un total de 50 MB, consumió 81 MB de espacio en disco. Para una estimación conservadora y de alto nivel, puedes planificar que el espacio en disco disponible en cada nodo relevante sea al menos **el doble del tamaño de tu instantánea de etcd**. Para la mayoría de los entornos de producción, asegurar que haya unos pocos gigabytes adicionales de almacenamiento disponibles en los nodos relevantes es un buen punto de partida.
+
+Ten en cuenta que este espacio cuenta contra las solicitudes y límites de https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#setting-requests-and-limits-for-local-ephemeral-storage[almacenamiento efímero] que podrías haber establecido para tu contenedor de Rancher a través del valor `resource` en el gráfico de Helm. Asegúrate de que esos ajustes proporcionen un espacio disponible abundante.
+
+Si ves el error `database or disk is full (13)` en los registros del pod, esto es un síntoma de que se necesita asignar más espacio.
+
+La caché respaldada por SQLite persiste copias de cualquier objeto de Kubernetes en caché en el disco. Consulta <<_encrypting_sqlite_backed_caches,Cifrado de la caché respaldada por SQLite>> si esto es una preocupación de seguridad.
+
+[#_enabling_server_side_pagination]
+== Habilitando la Paginación del Lado del Servidor
+
+. En la esquina superior izquierda, haz clic en **☰ > Configuración Global > Banderas de Características**.
+. Encuentra **`ui-sql-cache`** y selecciona **⋮ > Activar > Activar**.
+. Espera a que Rancher se reinicie. Esto también reinicia los agentes en todos los clústeres de sentido descendente.
+. Recarga la página con el botón del navegador (o la combinación de teclas equivalente, típicamente `CTRL + R` en Windows y Linux, y `⌘ + R` en macOS).
+
+[#_disabling_server_side_pagination]
+== Deshabilitando la paginación del lado del servidor.
+
+. En la esquina superior izquierda, haz clic en **☰ > Configuración Global > Banderas de Características**.
+. Encuentra **`ui-sql-cache`** y selecciona **⋮ > Desactivar > Desactivar**.
+. Espera a que Rancher se reinicie. Esto también reinicia los agentes en todos los clústeres de sentido descendente.
+. Recarga la página con el botón del navegador (o la combinación de teclas equivalente, típicamente `CTRL + R` en Windows y Linux, y `⌘ + R` en macOS).
+
+[#_encrypting_sqlite_backed_caches]
+== Cifrando cachés respaldados por SQLite.
+
+La paginación del lado del servidor de la interfaz de usuario persiste copias de cualquier objeto de Kubernetes en caché en el disco. Si te preocupa la seguridad de estos datos, puedes cifrar todos los objetos antes de que se persistan en el disco, configurando la variable de entorno `CATTLE_ENCRYPT_CACHE_ALL` a `true` en los pods `rancher` en el clúster de sentido ascendente y en los pods `cattle-cluster-agent` en los clústeres de sentido descendente.
+
+Los secretos y los tokens de seguridad siempre están cifrados independientemente de la configuración anterior.
+
+[#_known_limitations_of_ui_server_side_pagination]
+== Limitaciones conocidas de la paginación del lado del servidor de la interfaz de usuario.
+
+Esta versión mejora el rendimiento de la mayoría de las páginas utilizadas para ver, crear o editar recursos dentro del `local` o en los clústeres de sentido descendente, es decir, la vista del Explorador de Clústeres. Sin embargo, los recursos relacionados con RBAC y las áreas fuera del Explorador de Clústeres aún no están cubiertos por esta función.
+
+Además, las siguientes limitaciones están presentes cuando la función está habilitada. Estas giran principalmente en torno a diferentes comportamientos de ordenación o filtrado en las listas afectadas:
+
+* Los recursos en las listas se actualizan automáticamente, sin embargo, no de forma instantánea.
+* Todas las listas que utilizan la paginación del lado del servidor:
+** Las funciones de ordenación y filtrado de la columna `State` funcionan sobre el campo `metadata.state.name` de los recursos en lugar de uno deducido localmente por la interfaz de usuario.
+** Las actualizaciones se muestran cada 5 segundos, en lugar de instantáneamente.
+* Explorador de Clústeres:
+** El filtro de proyecto/espacio de nombres no admite filtrar todos los espacios de nombres que no pertenecen a ningún proyecto mediante la entrada `Not in a Project`.
+** `Cluster` grupo --> `Nodes` página
+*** Las siguientes columnas no son ordenables ni filtrables: `Roles`, `External/Internal IP`, `CPU`, `RAM` (la lógica para determinar su valor se calcula en el navegador)
+** Lista de `Workloads`:
+*** La lista de `Workloads`, que mostraba múltiples tipos de recursos diferentes, ha sido eliminada.
+**** La paginación del lado del servidor de múltiples recursos no es actualmente posible.
+** `Workloads` grupo --> Todas las listas
+*** Las columnas `Pod Restarts` y `Workload Health` han sido eliminadas.
+**** https://github.com/rancher/dashboard/issues/14211[Rehabilitar el conteo de reinicio de Pod y las columnas de salud de Pod para listas de carga de trabajo #14211]
+** `Workloads` grupo / `Job` lista
+*** `Duration` no es ordenable (ordenando por una duración).
+**** https://github.com/rancher/dashboard/issues/12815[Implementar un ordenamiento de paginación del lado del servidor más complejo #12815]
+** `Workloads` grupo / `Pod` lista
+*** `Images` no es ordenable (ordenando por un array).
+** `Service Discovery` grupo / `Ingresses`
+*** `Default` no es ordenable/filtrable (la lógica para determinar su valor se calcula en el navegador).
+** `Storage` grupo / `ConfigMaps`
+*** `Data` no es ordenable/filtrable (la lógica para determinar su valor se calcula en el navegador).
+** `Storage` grupo / `Secrets`
+*** `Data` no es ordenable/filtrable (la lógica para determinar su valor se calcula en el navegador).

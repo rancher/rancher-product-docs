@@ -1,0 +1,88 @@
+= UI serverseitige Paginierung
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/ui-server-side-pagination.adoc 
+:product-path: rancher-admin/global-configuration/ui-server-side-pagination.adoc
+
+Die serverseitige Paginierung (SSP) ist eine Funktion von Rancher, die erhebliche Leistungsverbesserungen in der Benutzeroberfläche für Ressourcen mit hohen Zählungen bietet, indem die Menge an Ressourcen, die der Browser abruft und im Speicher speichert, eingeschränkt wird.
+
+Bitte beachten Sie, dass die SSP optional ist, **standardmäßig aktiviert**, und sie kann über das Feature-Flag `ui-sql-cache` deaktiviert werden.
+
+[#_disk_space]
+== Festplattenspeicher
+
+[IMPORTANT]
+====
+Es ist entscheidend, dass Sie den verfügbaren Speicherplatz auf Ihren Knoten überprüfen und entsprechend planen, bevor Sie auf Rancher v2.12.0 und höher aktualisieren, um möglichen Festplatten-Druck und Probleme bei der Pod-Eviction zu vermeiden.
+====
+
+Die SSP basiert auf einem Caching-Mechanismus, der eine neue Anforderung für temporären Speicherplatz auf Ihren Cluster-Knoten einführt. Dieser Cache, eine interne SQLite-Datenbank, wird im Dateisystem des Containers gespeichert. Dies betrifft die Knoten, die die **Rancher-Server-Pods** (`rancher` im `cattle-system` Namespace im lokalen Cluster) und die Knoten, die die **Rancher-Agent-Pods** (`cattle-cluster-agent` im `cattle-system` Namespace in allen Downstream-Clustern) ausführen.
+
+Der benötigte Speicherplatz ist dynamisch und hängt von der Anzahl und Größe der in der Benutzeroberfläche visualisierten Kubernetes-Ressourcen ab. Als Richtlinie kann der Cache ungefähr **das Doppelte der Größe der rohen Kubernetes-Objekte** verbrauchen, die er speichert.
+
+Beispielsweise zeigten interne Tests, dass das Caching von 5000 ConfigMaps mit insgesamt 50 MB 81 MB Speicherplatz verbrauchte. Für eine konservative, grobe Schätzung können Sie planen, dass der verfügbare Speicherplatz auf jedem relevanten Knoten mindestens **das Doppelte der Größe Ihres etcd-Snapshots** beträgt. Für die meisten Produktionsumgebungen ist es ein sicherer Ausgangspunkt, sicherzustellen, dass auf den relevanten Knoten einige zusätzliche Gigabyte Speicherplatz verfügbar sind.
+
+Bitte beachten Sie, dass dieser Speicherplatz gegen https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#setting-requests-and-limits-for-local-ephemeral-storage[temporären Speicher] Anforderungen und Limits zählt, die Sie möglicherweise für Ihren Rancher-Container über den `resource` Wert im Helm-Chart festgelegt haben. Stellen Sie sicher, dass diese Einstellungen ausreichend verfügbaren Speicherplatz bieten.
+
+Wenn Sie den Fehler `database or disk is full (13)` in den Pod-Protokollen sehen, ist dies ein Hinweis darauf, dass mehr Speicherplatz zugewiesen werden muss.
+
+Das von SQLite unterstützte Caching speichert Kopien aller zwischengespeicherten Kubernetes-Objekte auf der Festplatte. Siehe <<_encrypting_sqlite_backed_caches,Verschlüsselung des SQLite-unterstützten Cachings>>, wenn dies ein Sicherheitsproblem darstellt.
+
+[#_enabling_server_side_pagination]
+== Aktivierung der serverseitigen Paginierung
+
+. Klicken Sie in der oberen linken Ecke auf **☰ > Globale Einstellungen > Feature-Flags**.
+. Suchen Sie **`ui-sql-cache`** und wählen Sie **⋮ > Aktivieren > Aktivieren**.
+. Warten Sie, bis Rancher neu gestartet wird. Dies startet auch die Agenten in allen Downstream-Clustern neu.
+. Laden Sie die Seite mit der Schaltfläche des Browsers neu (oder der entsprechenden Tastenkombination, typischerweise `CTRL + R` unter Windows und Linux sowie `⌘ + R` unter macOS).
+
+[#_disabling_server_side_pagination]
+== Deaktivierung der serverseitigen Paginierung
+
+. Klicken Sie in der oberen linken Ecke auf **☰ > Globale Einstellungen > Feature-Flags**.
+. Suchen Sie **`ui-sql-cache`** und wählen Sie **⋮ > Deaktivieren > Deaktivieren** aus.
+. Warten Sie, bis Rancher neu gestartet wird. Dies startet auch die Agenten in allen Downstream-Clustern neu.
+. Laden Sie die Seite mit der Schaltfläche des Browsers neu (oder der entsprechenden Tastenkombination, typischerweise `CTRL + R` unter Windows und Linux sowie `⌘ + R` unter macOS).
+
+[#_encrypting_sqlite_backed_caches]
+== Verschlüsselung von SQLite-unterstützten Caches
+
+Die serverseitige Paginierung der Benutzeroberfläche speichert Kopien aller zwischengespeicherten Kubernetes-Objekte auf der Festplatte. Wenn Sie sich um die Sicherheit dieser Daten sorgen, können Sie alle Objekte verschlüsseln, bevor sie auf der Festplatte gespeichert werden, indem Sie die Umgebungsvariable `CATTLE_ENCRYPT_CACHE_ALL` auf `true` in `rancher`-Pods im Upstream-Cluster und in `cattle-cluster-agent`-Pods in den Downstream-Clustern setzen.
+
+Secrets und Sicherheitstoken werden unabhängig von der obigen Einstellung immer verschlüsselt.
+
+[#_known_limitations_of_ui_server_side_pagination]
+== Bekannte Einschränkungen der serverseitigen Paginierung der Benutzeroberfläche
+
+Diese Version verbessert die Leistung der meisten Seiten, die zum Anzeigen, Erstellen oder Bearbeiten von Ressourcen innerhalb von `local` oder Downstream-Clustern verwendet werden, d.h. der Cluster-Explorer-Ansicht. Allerdings sind RBAC-bezogene Ressourcen und Bereiche außerhalb des Cluster-Explorers von dieser Funktion noch nicht abgedeckt.
+
+Darüber hinaus sind die folgenden Einschränkungen vorhanden, wenn die Funktion aktiviert ist. Diese drehen sich hauptsächlich um unterschiedliche Sortier- oder Filterverhalten in betroffenen Listen:
+
+* Ressourcen in Listen werden automatisch aktualisiert, jedoch nicht sofort.
+* Alle Listen, die serverseitige Paginierung nutzen:
+** Die Sortier- und Filterfunktionen der `State`-Spalte arbeiten auf dem Ressourcenfeld `metadata.state.name`, anstatt auf einem von der Benutzeroberfläche lokal abgeleiteten Feld.
+** Aktualisierungen werden alle 5 Sekunden angezeigt, anstatt sofort.
+* Cluster-Explorer:
+** Der Projekt-/Namespace-Filter unterstützt nicht das Filtern von Namespaces nach allen Namespaces, die sich nicht in einem Projekt befinden, über den `Not in a Project`-Eintrag.
+** `Cluster` Gruppe --> `Nodes` Seite
+*** Die folgenden Spalten sind nicht sortierbar oder filterbar: `Roles`, `External/Internal IP`, `CPU`, `RAM` (Logik zur Bestimmung ihres Wertes wird im Browser berechnet)
+** `Workloads` Liste:
+*** Die `Workloads` Liste, die mehrere verschiedene Ressourcentypen angezeigt hat, wurde entfernt.
+**** Server-seitige Paginierung mehrerer Ressourcen ist derzeit nicht möglich.
+** `Workloads` Gruppe --> Alle Listen
+*** `Pod Restarts` und `Workload Health` Spalten wurden entfernt.
+**** https://github.com/rancher/dashboard/issues/14211[Pod-Neustartanzahl und Pod-Gesundheitsspalten für Workload-Listen wieder aktivieren #14211]
+** `Workloads` Gruppe / `Job` Liste
+*** `Duration` ist nicht sortierbar (Sortierung nach einer Dauer).
+**** https://github.com/rancher/dashboard/issues/12815[Implementierung komplexerer serverseitiger Paginierungssortierung #12815]
+** `Workloads` Gruppe / `Pod` Liste
+*** `Images` ist nicht sortierbar (Sortierung nach einem Array).
+** `Service Discovery` Gruppe / `Ingresses`
+*** `Default` ist nicht sortierbar/filterbar (Logik zur Bestimmung ihrer Werte wird im Browser berechnet).
+** `Storage` Gruppe / `ConfigMaps`
+*** `Data` ist nicht sortierbar/filterbar (Logik zur Bestimmung ihrer Werte wird im Browser berechnet).
+** `Storage` Gruppe / `Secrets`
+*** `Data` ist nicht sortierbar/filterbar (Logik zur Bestimmung ihrer Werte wird im Browser berechnet).

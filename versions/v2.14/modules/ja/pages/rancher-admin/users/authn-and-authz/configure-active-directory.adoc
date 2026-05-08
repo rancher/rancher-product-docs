@@ -1,0 +1,304 @@
+= Active Directory (AD)の設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-09-22
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-active-directory.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-active-directory.adoc
+ifeval::["{build-type}" != "community"]
+:xref-openldap: xref:rancher-admin/users/authn-and-authz/openldap/openldap.adoc
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-openldap: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/configure-openldap/index.adoc
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+endif::[]
+
+組織がMicrosoft Active Directoryを中央ユーザーリポジトリとして使用している場合、Rancherを設定してActive Directoryサーバーと通信し、ユーザーを認証することができます。これにより、Rancherの管理者はActive Directoryで外部管理されているユーザーやグループに基づいてクラスターやプロジェクトへのアクセスを制御でき、エンドユーザーはRancher UIにログインする際にAD資格情報で認証できます。
+
+RancherはLDAPを使用してActive Directoryサーバーと通信します。したがって、Active Directoryの認証フローは{xref-openldap}[OpenLDAP認証]統合と同じです。
+
+[NOTE]
+====
+
+開始する前に、{xref-authn-authz}#_external_authentication_configuration_and_principal_users[外部認証設定と主要ユーザー]の概念に慣れておいてください。
+====
+
+
+[#_prerequisites]
+== 前提条件
+
+Rancherのサービスアカウントとして使用するために、新しいADユーザーを作成するか、AD管理者から取得する必要があります。このユーザーは、LDAP検索を実行し、ADドメイン内のユーザーやグループの属性を読み取るための十分な権限を持っている必要があります。
+
+通常、この目的には（非管理者の）*ドメインユーザー*アカウントを使用するべきです。デフォルトでは、そのようなユーザーはドメインパーティション内のほとんどのオブジェクトに対して読み取り専用の権限を持っています。
+
+ただし、一部の制限されたActive Directory構成では、このデフォルトの動作が適用されない場合があります。その場合、サービスアカウントユーザーがBase OU（ユーザーとグループを含む）またはドメイン全体で少なくとも*読み取り*および*コンテンツのリスト*の権限を持っていることを確認する必要があります。
+
+[NOTE]
+.TLSを使用していますか？
+====
+
+* ADサーバーで使用される証明書が自己署名であるか、認識された証明書機関からのものでない場合、CA証明書（中間証明書と連結されたもの）をPEM形式で手元に用意してください。この証明書を設定中に貼り付ける必要があるため、Rancherが証明書チェーンを検証できるようにします。
+* v2.6.0へのアップグレード時に、TLSを用いてRancher経由でActive Directoryへ認証を試みると、ADサーバーの証明書がSAN属性をサポートしていない場合、認証が失敗する可能性があります。これは、Go v1.15でデフォルトで有効になっているチェックです。
+ ** 受け取ったエラーは「SSL接続の作成エラー：LDAP結果コード200「ネットワークエラー」：x509：証明書は従来の共通名フィールドに依存しています。SANを使用するか、一時的にGODEBUG=x509ignoreCN=0で共通名の一致を有効にしてください。」
+ ** エラーを解決するには、ADサーバーの証明書をSAN属性をサポートする新しいものに更新または置き換えてください。このエラーは、`GODEBUG=x509ignoreCN=0`をRancherサーバーコンテナの環境変数として設定することで無視できます。
+====
+
+
+[#_configuration_steps]
+== 設定手順
+
+[#_open_active_directory_configuration]
+=== Active Directory設定を開く
+
+. 初期のローカル`admin`アカウントを使用して、Rancher UIにログインしてください。
+. 左上隅で、*☰ > ユーザーと認証*をクリックします。
+. 左側のナビゲーションメニューで、*認証プロバイダー*をクリックします。
+. *ActiveDirectory*をクリックします。*認証プロバイダー:ActiveDirectory*フォームが表示されます。
+. フォームを記入します。ヘルプが必要な場合は、以下の構成オプションの詳細を参照してください。
+. ［*有効］*をクリックします。
+
+[#_configure_active_directory_server_settings]
+=== Active Directoryサーバーの設定
+
+`1. Configure an Active Directory server`というタイトルのセクションで、Active Directoryサーバーに特有の情報を使ってフィールドを完成させてください。各パラメータに必要な値の詳細については、以下の表を参照してください。
+
+[NOTE]
+====
+
+ユーザー/グループ検索ベースフィールドに入力する正しい値が不明な場合は、<<_annex_identify_search_base_and_schema_using_ldapsearch,ldapsearchを使用して検索ベースとスキーマを特定する>>を参照してください。
+====
+
+
+*表1:ADサーバーパラメータ*
+
+|===
+| パラメータ | 説明
+
+| ホスト名
+| ADサーバーのホスト名またはIPアドレスを指定してください。
+
+| ポート
+| Active Directoryサーバーが接続を待機しているポートを指定してください。暗号化されていないLDAPは通常、標準ポートの389を使用し、LDAPSはポート636を使用します。
+
+| TLS
+| このボックスにチェックを入れて、SSL/TLS上のLDAPを有効にします（一般にLDAPSとして知られています）。
+
+| サーバー接続タイムアウト
+| RancherがADサーバーに到達できないと見なすまでの待機時間（秒単位）です。
+
+| サービスアカウントのユーザー名
+| ドメインパーティションに対して読み取り専用アクセス権を持つADアカウントのユーザー名を入力してください（<<_prerequisites,前提条件>>を参照）。ユーザー名はNetBIOS形式（例:"DOMAIN\serviceaccount"）またはUPN形式（例: "serviceaccount@domain.com"）で入力できます。
+
+| サービスアカウントのパスワード
+| サービスアカウントのパスワード。
+
+| デフォルトログインドメイン
+| このフィールドをADドメインのNetBIOS名で構成すると、ドメインなしで入力されたユーザー名（例："jdoe"）は自動的にスラッシュ付きのNetBIOSログオン（例："LOGIN_DOMAIN\jdoe"）に変換されます。ADサーバーにバインドする際に。ユーザーがUPN（例："jdoe@acme.com"）をユーザー名として認証する場合、このフィールドは*空白のままにする必要があります*。
+
+| ユーザー検索ベース
+| ユーザーオブジェクトの検索を開始するディレクトリツリー内のノードの識別名（Distinguished Name）。すべてのユーザーはこのベースDNの子孫でなければなりません。例えば: "ou=people,dc=acme,dc=com"。
+
+| グループ検索ベース
+| グループが`User Search Base`で設定されたノードとは異なるノードに存在する場合は、ここに識別名（Distinguished Name）を提供する必要があります。そうでない場合は、空白のままにします。例えば: "ou=groups,dc=acme,dc=com"。
+|===
+
+'''
+
+[#_configure_user_group_schema]
+=== ユーザー/グループスキーマ設定
+
+`2. Customize Schema`というタイトルのセクションでは、Rancherにディレクトリで使用されるスキーマに対応するユーザーおよびグループ属性の正しいマッピングを提供する必要があります。
+
+RancherはLDAPクエリを使用して、Active Directory内のユーザーおよびグループに関する情報を検索し、取得します。このセクションで設定された属性マッピングは、検索フィルターを構築し、グループメンバーシップを解決するために使用されます。したがって、提供された設定がADドメインの現実を反映していることが非常に重要です。
+
+[NOTE]
+====
+
+Active Directoryドメインで使用されるスキーマに不慣れな場合は、<<_annex_identify_search_base_and_schema_using_ldapsearch,ldapsearchを使用して検索ベースとスキーマを特定する>>を参照して、正しい設定値を確認してください。
+====
+
+
+[#_user_schema]
+==== ユーザースキーマ
+
+以下の表は、ユーザースキーマセクション設定のパラメータを詳述しています。
+
+*表2:ユーザースキーマ設定パラメータ*
+
+|===
+| パラメータ | 説明
+
+| オブジェクトクラス
+| ドメイン内のユーザーオブジェクトに使用されるオブジェクトクラスの名前。定義されている場合、オブジェクトクラスの名前のみを指定し、LDAPラッパー（例: &(objectClass=xxxx)）には_含めない_ようにしてください。
+
+| ユーザー名属性
+| 表示名として適切な値を持つユーザー属性。
+
+| ログイン属性
+| ユーザーがRancherにログインする際に入力した資格情報のユーザー名部分と一致する値を持つ属性。ユーザーがUPN（例："jdoe@acme.com"）をユーザー名として認証する場合、このフィールドは通常`userPrincipalName`に設定する必要があります。そうでない場合、古いNetBIOSスタイルのログオン名（例："jdoe"）の場合は通常`sAMAccountName`です。
+
+| ユーザーメンバー属性
+| ユーザーが所属するグループを含む属性。
+
+| 検索属性
+| ユーザーがUIでユーザーやグループを追加するためにテキストを入力すると、RancherはADサーバーにクエリを送り、この設定で提供された属性に基づいてユーザーを一致させようとします。複数の属性は、パイプ（"\|"）記号で区切ることによって指定できます。UPNユーザー名（例：jdoe@acme.com）を一致させるには、通常このフィールドの値を`userPrincipalName`に設定する必要があります。
+
+| 検索フィルタ
+| このフィルターは、Rancherがサイトアクセスリストにユーザーを追加しようとしたり、クラスターやプロジェクトにメンバーを追加しようとしたときに検索されるユーザーのリストに適用されます。例えば、ユーザー検索フィルターは`(\|(memberOf=CN=group1,CN=Users,DC=testad,DC=rancher,DC=io)(memberOf=CN=group2,CN=Users,DC=testad,DC=rancher,DC=io))`のようになります。注意:検索フィルターが https://docs.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax[有効なAD検索構文,]を使用しない場合、ユーザーのリストは空になります。
+
+| ユーザー有効属性
+| ユーザーアカウントフラグのビット単位の列挙を表す整数値を含む属性です。Rancherはこれを使用して、ユーザーアカウントが無効になっているかどうかを判断します。通常は、これをAD標準の`userAccountControl`に設定しておくべきです。
+
+| 無効ステータスビットマスク
+| これは、無効なユーザーアカウントを示す`User Enabled Attribute`の値です。通常は、Microsoft Active Directoryスキーマで指定されているデフォルト値の"2"に設定しておくべきです（詳細は https://docs.microsoft.com/en-us/windows/desktop/adschema/a-useraccountcontrol#remarks[こちら]を参照）。
+|===
+
+'''
+
+[#_group_schema]
+==== グループスキーマ
+
+以下の表は、グループスキーマ設定のパラメータの詳細を示しています。
+
+*表3:グループスキーマ設定パラメータ*
+
+|===
+| パラメータ | 説明
+
+| オブジェクトクラス
+| ドメイン内のグループオブジェクトに使用されるオブジェクトクラスの名前です。定義されている場合、オブジェクトクラスの名前のみを指定し、LDAPラッパー（例: &(objectClass=xxxx)）には_含めない_ようにしてください。
+
+| 名前属性
+| 表示名に適した値を持つグループ属性です。
+
+| グループメンバーユーザー属性
+| *ユーザー属性*の名前で、その値の形式が`Group Member Mapping Attribute`のグループメンバーと一致します。
+
+| グループメンバーマッピング属性
+| グループのメンバーを含むグループ属性の名前です。
+
+| 検索属性
+| クラスターやプロジェクトにグループを追加する際に検索フィルターを構築するために使用される属性です。ユーザースキーマ`Search Attribute`の説明を参照してください。
+
+| 検索フィルタ
+| このフィルターは、Rancherがサイトアクセスリストにグループを追加しようとしたり、クラスターやプロジェクトにグループを追加しようとしたときに検索されるグループのリストに適用されます。例えば、グループ検索フィルターは`(\|(cn=group1)(cn=group2))`のようになります。注意:検索フィルターが https://docs.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax[有効なAD検索構文,]を使用しない場合、グループのリストは空になります。
+
+| グループDN属性
+| ユーザーのメンバーシップを記述するユーザー属性の値と形式が一致するグループ属性の名前です。を参照してください。`User Member Attribute`
+
+| ネストされたグループメンバーシップ
+| この設定は、Rancherがネストされたグループメンバーシップを解決するかどうかを定義します。組織がこれらのネストされたメンバーシップを利用している場合のみ使用してください（つまり、他のグループをメンバーとして含むグループがあります）。ネストされたグループは、ネストされたメンバーシップが大量にある場合のパフォーマンスの問題を避けるために、可能な限り避けることをお勧めします。
+|===
+
+'''
+
+[#_test_authentication]
+=== 認証のテスト
+
+設定が完了したら、ADサーバーへの接続をテストして進めてください*AD管理者アカウントを使用して*。テストが成功した場合、テストに使用したアカウントが管理者として設定され、構成されたActive Directoryによる認証が暗黙的に有効になります。
+
+[NOTE]
+====
+
+このステップで入力された資格情報に関連するADユーザーは、ローカルの主要アカウントにマッピングされ、Rancherで管理者権限が付与されます。したがって、このステップを実行するために使用するADアカウントについて、意識的な決定を下す必要があります。
+====
+
+
+. ローカルの主要アカウントにマッピングされるべきADアカウントの*ユーザー名*と*パスワード*を入力してください。
+. セットアップを完了するには、*Active Directoryで認証*をクリックしてください。
+
+*結果:*
+
+* Active Directory認証が有効になりました。
+* 提供されたAD資格情報を使用して、管理者としてRancherにサインインしました。
+
+[NOTE]
+====
+
+LDAPサービスが中断された場合でも、ローカルに設定された`admin`アカウントとパスワードを使用してログインすることができます。
+====
+
+
+[#_annex_identify_search_base_and_schema_using_ldapsearch]
+== 付録：ldapsearchを使用して検索ベースとスキーマを特定します。
+
+AD認証を正常に構成するためには、ADサーバーの階層とスキーマに関する正しい構成を提供することが重要です。
+
+https://manpages.ubuntu.com/manpages/noble/en/man1/ldapsearch.1.html[`ldapsearch`]ツールを使用すると、ユーザーおよびグループオブジェクトに使用されるスキーマについてADサーバーにクエリを実行できます。
+
+以下に示す例のコマンドの目的のために、次のことを仮定します：
+
+* Active Directoryサーバーのホスト名は`ad.acme.com`です。
+* サーバーはポート`389`で暗号化されていない接続を待機しています。
+* Active Directoryドメインは`acme`です。
+* ユーザー名`jdoe`とパスワード`secret`を持つ有効なADアカウントがあります。
+
+[#_identify_search_base]
+=== 検索ベースを特定します。
+
+最初に、`ldapsearch`を使用してユーザーとグループの親ノードの識別名（DN）を特定します：
+
+ $ ldapsearch -x -D "acme\jdoe" -w "secret" -p 389 \
+ -h ad.acme.com -b "dc=acme,dc=com" -s sub "sAMAccountName=jdoe"
+
+このコマンドは、検索ベースをドメインルート（`-b "dc=acme,dc=com"`）に設定し、ユーザーアカウント（`sAMAccountNam=jdoe`）をターゲットにしたフィルターでLDAP検索を実行し、該当するユーザーの属性を返します：
+
+image::ldapsearch-user.png[]
+
+この場合、ユーザーのDNが`CN=John Doe,CN=Users,DC=acme,DC=com` [5]であるため、*ユーザー検索ベース*を親ノードDN `CN=Users,DC=acme,DC=com`で構成する必要があります。
+
+同様に、*memberOf*属性[4]で参照されるグループのDNに基づいて、*グループ検索ベース*の正しい値はその値の親ノード、すなわち`OU=Groups,DC=acme,DC=com`になります。
+
+[#_identify_user_schema]
+=== ユーザースキーマを特定する
+
+上記の`ldapsearch`クエリの出力は、ユーザースキーマ設定で使用する正しい値を決定することも可能にします：
+
+* `Object Class`: *person* [1]
+* `Username Attribute`: *名前* [2]
+* `Login Attribute`: *sAMAccountName* [3]
+* `User Member Attribute`: *memberOf* [4]
+
+[NOTE]
+====
+
+もし私たちの組織のADユーザーが短いログオン名の代わりにUPN（例：jdoe@acme.com）で認証する場合、`Login Attribute`を*userPrincipalName*に設定する必要があります。
+====
+
+
+[cols=2*]
+|===
+| また、`Search Attribute`パラメータを\\**sAMAccountName name**に設定します。
+| （前文と統合済み）その方法で、ユーザーはRancher UIのクラスター/プロジェクトにユーザー名またはフルネームを入力することで追加できます。
+|===
+
+[#_identify_group_schema]
+=== グループスキーマを特定する
+
+次に、このユーザーに関連付けられたグループの1つをクエリします。この場合は`CN=examplegroup,OU=Groups,DC=acme,DC=com`：
+
+ $ ldapsearch -x -D "acme\jdoe" -w "secret" -p 389 \
+ -h ad.acme.com -b "ou=groups,dc=acme,dc=com" \
+ -s sub "CN=examplegroup"
+
+このコマンドは、グループオブジェクトに使用される属性について教えてくれます：
+
+image::ldapsearch-group.png[]
+
+再度、これによりグループスキーマ設定に入力する正しい値を決定できます：
+
+* `Object Class`: *グループ* [1]
+* `Name Attribute`: *名前* [2]
+* `Group Member Mapping Attribute`: *member* [3]
+* `Search Attribute`: *sAMAccountName* [4]
+
+*member* 属性の値を見ると、参照されたユーザーのDNが含まれていることがわかります。これは、私たちのユーザーオブジェクトの*distinguishedName*属性に対応します。したがって、`Group Member User Attribute`パラメータの値をこの属性に設定する必要があります。
+
+同様に、ユーザーオブジェクトの*memberOf*属性の値は、グループの*distinguishedName*[5]に対応していることが観察できます。したがって、`Group DN Attribute`パラメータの値をこの属性に設定する必要があります。
+
+[#_annex_troubleshooting]
+== 付録：トラブルシューティング
+
+Active Directoryサーバーへの接続をテストしている際に問題が発生した場合は、サービスアカウントの資格情報と検索ベースの設定を再確認してください。問題の原因を特定するために、Rancherのログを確認することもできます。デバッグログには、エラーに関するより詳細な情報が含まれている場合があります。このドキュメントのxref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[デバッグログを有効にする方法]を参照してください。

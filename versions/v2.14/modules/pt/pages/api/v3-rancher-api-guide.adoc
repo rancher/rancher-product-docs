@@ -1,0 +1,104 @@
+= Guia da API v3 {rancher-product-name} anterior
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-18
+:page-revdate: {revdate}
+:community-path: api/v3-rancher-api-guide.adoc 
+:product-path: api/v3-rancher-api-guide.adoc
+ifeval::["{build-type}" != "community"]
+:xref-api-reference: xref:api/reference.adoc
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+:xref-cluster-project-roles: xref:rancher-admin/usuarios/authn-e-authz/gerenciar-controle-de-acesso-com-base-em-função-rbac/funções-de-cluster-e-projeto.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-api-reference: xref:api/api-reference.adoc
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+:xref-cluster-project-roles: xref:como-fazer-guias/novos-guias-de-usuário/autenticação-permissões-e-configuração-global/gerenciar-controle-de-acesso-com-base-em-função-rbac/funções-de-cluster-e-projeto.adoc
+endif::[]
+
+include::shared:ROOT:partial$en/api-support-warning.adoc[]
+
+O Rancher v2.8.0 introduziu a API Kubernetes do Rancher (RK-API), que é a API suportada pelo Rancher. Esta página descreve a API v3. Para mais informações sobre o RK-API, consulte o xref:api/quickstart.adoc[guia rápido do RK-API] e o {xref-api-reference}[guia de referência].
+
+[#_how_to_use_the_api]
+== Como Usar a API
+
+A API v3 anterior possui sua própria interface de usuário acessível a partir de um <<_enable_view_in_api,navegador web>>. Esta é uma maneira fácil de ver recursos, realizar ações e ver a equivalente `curl` ou a solicitação e resposta HTTP. Para acessá-la:
+
+. Clique no seu avatar de usuário no canto superior direito.
+. Clique em *Conta e Chaves de API*.
+. Na seção *Chaves de API*, encontre o campo *Endpoint da API* e clique no link. O link se parece com `\https://<rancher_fqdn>/v3`, onde `<RANCHER_FQDN>` é o Nome de Domínio Completo e Qualificado da sua implantação do Rancher.
+
+[#_authentication]
+== Autenticação
+
+As solicitações de API devem incluir informações de autenticação. A autenticação é feita com autenticação básica HTTP usando {xref-user-api-keys}[chaves de API]. As chaves de API podem criar novos clusters e têm acesso a múltiplos clusters via `/v3/clusters/`. {xref-cluster-project-roles}[Funções de cluster e projeto] se aplicam a essas chaves e restringem quais clusters e projetos a conta pode ver e quais ações pode realizar.
+
+Por padrão, certos tokens de API em nível de cluster são gerados com tempo de vida infinito (`ttl=0`). Em outras palavras, tokens de API com `ttl=0` nunca expiram, a menos que você os invalide. Para detalhes sobre como invalidá-los, consulte a xref:./api-tokens.adoc[página de tokens de API].
+
+[#_making_requests]
+== Fazendo Solicitações
+
+A API é geralmente RESTful, mas possui vários recursos para tornar a definição de tudo descobrível por um cliente, de modo que clientes genéricos possam ser escritos em vez de ter que escrever código específico para cada tipo de recurso. Para informações detalhadas sobre a especificação genérica da API, https://github.com/rancher/api-spec/blob/master/specification.md[veja a documentação adicional].
+
+* Cada tipo possui um Esquema que descreve:
+ ** A URL para acessar a coleção desse tipo de recurso.
+ ** Cada campo que o recurso pode ter, junto com seu tipo, regras básicas de validação, se são obrigatórios ou opcionais, etc.
+ ** Cada ação que é possível realizar nesse tipo de recurso, com suas entradas e saídas (também como esquemas).
+ ** Cada campo que permite filtragem.
+ ** Quais métodos de verbos HTTP estão disponíveis para a coleção em si, ou para recursos individuais na coleção.
+
+O design permite que você carregue apenas a lista de esquemas e acesse tudo sobre a API. A interface do usuário da API não contém código específico do Rancher em si. A URL para obter Esquemas é enviada em cada resposta HTTP como um cabeçalho `X-Api-Schemas`. A partir daí, você pode seguir o `collection` link em cada esquema para saber onde listar recursos e seguir outros `links` dentro dos recursos retornados para obter qualquer outra informação.
+
+Na prática, você pode querer apenas construir strings de URL. Recomendamos fortemente limitar isso ao nível superior para listar uma coleção (`/v3/<type>`) ou obter um recurso específico (`/v3/<type>/<id>`). Qualquer coisa mais profunda do que isso está sujeita a mudanças em futuras versões.
+
+Os recursos têm relacionamentos entre si chamados links. Cada recurso inclui um mapa de `links` com o nome do link e a URL onde você pode recuperar essa informação. Novamente, você deve `GET` o recurso e, em seguida, seguir a URL no mapa `links`, não construir essas strings você mesmo.
+
+A maioria dos recursos tem ações, que fazem algo ou mudam o estado do recurso. Para usá-las, envie um HTTP `POST` para a URL no mapa `actions` da ação que você deseja. Certas ações requerem entrada ou produzem saída. Consulte a documentação individual para cada tipo ou os esquemas para informações específicas.
+
+Para editar um recurso, envie um HTTP `PUT` para o link `links.update` no recurso com os campos que você deseja alterar. Se o link estiver ausente, então você não tem permissão para atualizar o recurso. Campos desconhecidos e aqueles que não são editáveis são ignorados.
+
+Para deletar um recurso, envie um HTTP `DELETE` para o link `links.remove` no recurso. Se o link estiver ausente, então você não tem permissão para atualizar o recurso.
+
+Para criar um novo recurso, envie um HTTP `POST` para a URL da coleção no esquema (que é `/v3/<type>`).
+
+[#_filtering]
+== e RBAC
+
+A maioria das coleções pode ser filtrada no lado do servidor por campos comuns usando parâmetros de consulta HTTP. O mapa `filters` mostra quais campos podem ser filtrados e quais foram os valores filtrados para a solicitação que você fez. A interface da API possui controles para configurar a filtragem e mostrar a solicitação apropriada. Para correspondências simples de "igual", é apenas `field=value`. Modificadores podem ser adicionados ao nome do campo, por exemplo, `field_gt=42` para "campo é maior que 42." Consulte a https://github.com/rancher/api-spec/blob/master/specification.md#filtering[especificação da API] para detalhes completos.
+
+[#_sorting]
+== Classificação
+
+A maioria das coleções pode ser ordenada no lado do servidor por campos comuns usando parâmetros de consulta HTTP. O mapa `sortLinks` mostra quais ordenações estão disponíveis, junto com a URL para obter a coleção ordenada por isso. Ele também inclui informações sobre como a resposta atual foi ordenada, se especificado.
+
+[#_pagination]
+== Paginação
+
+As respostas da API são paginadas com um limite de 100 recursos por página por padrão. Isso pode ser alterado com o parâmetro de consulta `limit`, até um máximo de 1000, por exemplo, `/v3/pods?limit=1000`. O mapa `pagination` nas respostas da coleção informa se você possui ou não o conjunto completo de resultados e tem um link para a próxima página, se você não tiver.
+
+[#_capturing_v3_api_calls]
+== Capturando Chamadas da API v3
+
+Você pode usar as ferramentas de desenvolvedor do navegador para capturar como a API v3 é chamada. Por exemplo, você pode seguir estas etapas para usar as ferramentas de desenvolvedor do Chrome para obter a chamada da API para provisionar um cluster de distribuição Kubernetes do Rancher:
+
+. Na interface do Rancher, vá para *Gerenciamento de Cluster* e clique em *Criar.*
+. Clique em um dos tipos de clusters. Este exemplo usa o Digital Ocean.
+. Preencha o formulário com um nome de cluster e um modelo de nó, mas não clique em *Criar*.
+. Você precisa abrir as ferramentas de desenvolvedor antes da criação do cluster para ver a chamada da API sendo registrada. Para abrir as ferramentas, clique com o botão direito na interface do Rancher e clique em *Inspecionar.*
+. Nas ferramentas de desenvolvedor, clique na aba *Rede*.
+. Na aba *Rede*, certifique-se de que *Fetch/XHR* esteja selecionado.
+. Na interface do Rancher, clique em *Criar*. Nas ferramentas de desenvolvedor, você deve ver uma nova solicitação de rede com o nome `cluster?_replace=true`.
+. Clique com o botão direito em `cluster?_replace=true` e clique em menu:Copiar[Copiar como cURL.]
+. Cole o resultado em qualquer editor de texto. Você pode ver a solicitação POST, incluindo a URL para a qual foi enviada, todos os cabeçalhos e o corpo completo da solicitação. Este comando pode ser usado para criar um cluster a partir da CLI. Nota: a solicitação deve ser armazenada em um local seguro porque contém credenciais.
+
+[#_enable_view_in_api]
+=== Ativar "Ver na API".
+
+Você também pode visualizar chamadas da API v3 capturadas para seus respectivos clusters e recursos. Este recurso não está habilitado por padrão. Para habilitar isso:
+
+. Clique no seu *User Tile* no canto superior direito da interface e selecione *Preferências* no menu suspenso.
+. Na seção *Recursos Avançados*, clique em *Ativar "Ver na API"*.
+
+Uma vez marcado, o link *Ver na API* é exibido sob o sub-menu *⋮* nas páginas de recursos na interface.

@@ -1,0 +1,291 @@
+= Ressources Kubernetes
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-23
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/kubernetes-resources.adoc 
+:product-path: troubleshooting/other-troubleshooting-tips/kubernetes-resources.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-enable-istio-in-namespace: xref:observability/istio/guides/enable-istio-in-namespace.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-enable-istio-in-namespace: xref:how-to-guides/advanced-user-guides/istio-setup-guide/enable-istio-in-namespace.adoc
+endif::[]
+
+Les commandes/étapes listées sur cette page peuvent être utilisées pour vérifier les ressources Kubernetes les plus importantes et s'appliquent aux clusters {xref-launch-k8s-with-rancher}[Kubernetes lancé par Rancher].
+
+Assurez-vous d'avoir configuré le bon kubeconfig (par exemple, `export KUBECONFIG=$PWD/kube_config_cluster.yml` pour Rancher HA) ou d'utiliser le kubectl intégré via l'interface utilisateur.
+
+[#_nodes]
+== Noeuds
+
+[#_get_nodes]
+=== Obtenir les nœuds
+
+Exécutez la commande ci-dessous et vérifiez ce qui suit{nbsp}:
+
+* Tous les nœuds de votre cluster doivent être listés, assurez-vous qu'il n'en manque pas un.
+* Tous les nœuds doivent avoir le statut *Prêt* (s'ils ne sont pas dans l'état *Prêt*, vérifiez les journaux du conteneur `kubelet` sur ce nœud en utilisant `docker logs kubelet`).
+* Vérifiez si tous les nœuds rapportent la version correcte.
+* Vérifiez si les valeurs OS/noyau Linux/Docker sont affichées comme prévu (il est possible que vous puissiez relier des problèmes à une mise à niveau de l'OS/noyau Linux/Docker).
+
+----
+kubectl get nodes -o wide
+----
+
+Exemple de sortie :
+
+----
+NAME             STATUS   ROLES          AGE   VERSION   INTERNAL-IP      EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane-0   Ready    controlplane   31m   v1.13.5   138.68.188.91    <none>        Ubuntu 18.04.2 LTS   4.15.0-47-generic   docker://18.9.5
+etcd-0           Ready    etcd           31m   v1.13.5   138.68.180.33    <none>        Ubuntu 18.04.2 LTS   4.15.0-47-generic   docker://18.9.5
+worker-0         Ready    worker         30m   v1.13.5   139.59.179.88    <none>        Ubuntu 18.04.2 LTS   4.15.0-47-generic   docker://18.9.5
+----
+
+[#_get_node_conditions]
+=== Obtenir les conditions des nœuds
+
+Exécutez la commande ci-dessous pour lister les nœuds avec https://kubernetes.io/docs/concepts/architecture/nodes/#condition[Conditions des nœuds].
+
+----
+kubectl get nodes -o go-template='{{range .items}}{{$node := .}}{{range .status.conditions}}{{$node.metadata.name}}{{": "}}{{.type}}{{":"}}{{.status}}{{"\n"}}{{end}}{{end}}'
+----
+
+Exécutez la commande ci-dessous pour lister les nœuds avec https://kubernetes.io/docs/concepts/architecture/nodes/#condition[Conditions des nœuds] qui sont actifs et pourraient empêcher un fonctionnement normal.
+
+----
+kubectl get nodes -o go-template='{{range .items}}{{$node := .}}{{range .status.conditions}}{{if ne .type "Ready"}}{{if eq .status "True"}}{{$node.metadata.name}}{{": "}}{{.type}}{{":"}}{{.status}}{{"\n"}}{{end}}{{else}}{{if ne .status "True"}}{{$node.metadata.name}}{{": "}}{{.type}}{{": "}}{{.status}}{{"\n"}}{{end}}{{end}}{{end}}{{end}}'
+----
+
+Exemple de sortie :
+
+----
+worker-0: DiskPressure:True
+----
+
+[#_kubernetes_leader_election]
+== Élection du leader Kubernetes
+
+[#_kubernetes_controller_manager_leader]
+=== Leader du gestionnaire de contrôleur Kubernetes
+
+Le leader est déterminé par un processus d'élection de leader. Après que le leader a été déterminé, le leader (`holderIdentity`) est enregistré dans le point de terminaison `kube-controller-manager` (dans cet exemple, `controlplane-0`).
+
+----
+kubectl -n kube-system get endpoints kube-controller-manager -o jsonpath='{.metadata.annotations.control-plane\.alpha\.kubernetes\.io/leader}'
+{"holderIdentity":"controlplane-0_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx","leaseDurationSeconds":15,"acquireTime":"2018-12-27T08:59:45Z","renewTime":"2018-12-27T09:44:57Z","leaderTransitions":0}>
+----
+
+[#_kubernetes_scheduler_leader]
+=== Leader du planificateur Kubernetes
+
+Le leader est déterminé par un processus d'élection de leader. Après que le leader a été déterminé, le leader (`holderIdentity`) est enregistré dans le point de terminaison `kube-scheduler` (dans cet exemple, `controlplane-0`).
+
+----
+kubectl -n kube-system get endpoints kube-scheduler -o jsonpath='{.metadata.annotations.control-plane\.alpha\.kubernetes\.io/leader}'
+{"holderIdentity":"controlplane-0_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx","leaseDurationSeconds":15,"acquireTime":"2018-12-27T08:59:45Z","renewTime":"2018-12-27T09:44:57Z","leaderTransitions":0}>
+----
+
+[#_ingress_controller]
+== Contrôleur d'Ingress
+
+Le contrôleur d'Ingress par défaut est Traefik et est déployé en tant que DaemonSet dans l'espace de noms `traefik`. Les pods ne sont programmés que sur des nœuds ayant le rôle `worker`.
+
+Vérifiez si les pods fonctionnent sur tous les nœuds{nbsp}:
+
+----
+kubectl -n traefik get pods -o wide
+----
+
+Exemple de sortie :
+
+----
+kubectl -n traefik get pods -o wide
+NAME                                    READY     STATUS    RESTARTS   AGE       IP               NODE
+default-http-backend-797c5bc547-kwwlq   1/1       Running   0          17m       x.x.x.x          worker-1
+traefik-4qd64                           1/1       Running   0          14m       x.x.x.x          worker-1
+traefik-8wxhm                           1/1       Running   0          13m       x.x.x.x          worker-0
+----
+
+Si un pod ne peut pas s'exécuter (le statut n'est pas *Running*, le statut de disponibilité n'affiche pas `1/1` ou vous constatez un nombre élevé de redémarrages), vérifiez les détails du pod, les journaux et les événements de l'espace de noms.
+
+[#_pod_details]
+=== Détails du pod
+
+----
+kubectl -n traefik décrire les pods -l app=traefik
+----
+
+[#_pod_container_logs]
+=== Journaux du conteneur du pod
+
+La commande ci-dessous peut afficher les journaux de tous les pods étiquetés "app=traefik", mais elle affichera seulement 10 lignes de journal en raison des restrictions de la commande `kubectl logs`. Reportez-vous à `--tail` de `kubectl logs -h` pour plus d'informations.
+
+----
+kubectl -n traefik logs -l app=traefik
+----
+
+Si le journal complet est nécessaire, spécifiez le nom du pod dans la commande suivante{nbsp}:
+
+----
+kubectl -n traefik logs <pod name>
+----
+
+[#_namespace_events]
+=== Événements de l'espace de noms
+
+----
+kubectl -n traefik obtenir les événements
+----
+
+[#_debug_logging]
+=== Journalisation de débogage
+
+Pour activer la journalisation de débogage{nbsp}:
+
+----
+kubectl -n traefik patch ds traefik --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--v=5"}]'
+----
+
+[#_check_configuration]
+=== Vérifiez la configuration
+
+Récupérez la configuration générée dans chaque pod{nbsp}:
+
+----
+kubectl -n traefik get pods -l app=traefik --no-headers -o custom-columns=.NAME:.metadata.name | while read pod; do kubectl -n traefik exec $pod -- cat /etc/nginx/nginx.conf; done
+----
+
+[#_rancher_agents]
+== Agents Rancher
+
+La communication avec le cluster (API Kubernetes via `cattle-cluster-agent`) et la communication avec les nœuds (provisionnement du cluster via `cattle-node-agent`) se fait par l'intermédiaire des agents Rancher.
+
+[discrete]
+[#_cattle_node_agent]
+==== cattle-node-agent
+
+Vérifiez si les pods cattle-node-agent sont présents sur chaque nœud, ont le statut *Running* et n'ont pas un nombre élevé de redémarrages{nbsp}:
+
+----
+kubectl -n cattle-system get pods -l app=cattle-agent -o wide
+----
+
+Exemple de sortie :
+
+----
+NAME                      READY     STATUS    RESTARTS   AGE       IP                NODE
+cattle-node-agent-4gc2p   1/1       Running   0          2h        x.x.x.x           worker-1
+cattle-node-agent-8cxkk   1/1       Running   0          2h        x.x.x.x           etcd-1
+cattle-node-agent-kzrlg   1/1       Running   0          2h        x.x.x.x           etcd-0
+cattle-node-agent-nclz9   1/1       Running   0          2h        x.x.x.x           controlplane-0
+cattle-node-agent-pwxp7   1/1       Running   0          2h        x.x.x.x           worker-0
+cattle-node-agent-t5484   1/1       Running   0          2h        x.x.x.x           controlplane-1
+cattle-node-agent-t8mtz   1/1       Running   0          2h        x.x.x.x           etcd-2
+----
+
+Vérifiez les journaux d'un pod cattle-node-agent spécifique ou de tous les pods cattle-node-agent{nbsp}:
+
+----
+kubectl -n cattle-system logs -l app=cattle-agent
+----
+
+[discrete]
+[#_cattle_cluster_agent]
+==== cattle-cluster-agent
+
+Vérifiez si le pod cattle-cluster-agent est présent dans le cluster, a le statut *Running* et n'a pas un nombre élevé de redémarrages{nbsp}:
+
+----
+kubectl -n cattle-system get pods -l app=cattle-cluster-agent -o wide
+----
+
+Exemple de sortie :
+
+----
+NAME                                    READY     STATUS    RESTARTS   AGE       IP           NODE
+cattle-cluster-agent-54d7c6c54d-ht9h4   1/1       Running   0          2h        x.x.x.x      worker-1
+----
+
+Vérifiez les journaux du pod cattle-cluster-agent{nbsp}:
+
+----
+kubectl -n cattle-system logs -l app=cattle-cluster-agent
+----
+
+[#_jobs_and_pods]
+== Emplois et Pods
+
+[#_check_that_pods_or_jobs_have_status_running_completed]
+=== Vérifiez que les pods ou les emplois ont le statut *En cours*/*Terminé*
+
+Pour vérifier, exécutez la commande{nbsp}:
+
+----
+kubectl get pods --all-namespaces
+----
+
+Si un pod n'est pas dans l'état *En cours*, vous pouvez explorer la cause profonde en exécutant{nbsp}:
+
+[#_describe_pod]
+=== Décrire le pod
+
+----
+kubectl describe pod NOM_DU_POD -n ESPACE_DE_NOM
+----
+
+[#_pod_container_logs_1]
+=== Journaux du conteneur du pod
+
+----
+kubectl logs NOM_DU_POD -n ESPACE_DE_NOM
+----
+
+Si un emploi n'est pas dans l'état *Terminé*, vous pouvez explorer la cause profonde en exécutant{nbsp}:
+
+[#_describe_job]
+=== Décrire l'emploi
+
+----
+kubectl describe job NOM_DU_JOB -n ESPACE_DE_NOM
+----
+
+[#_logs_from_the_containers_of_pods_of_the_job]
+=== Logs des conteneurs des pods de l'emploi
+
+----
+kubectl logs -l job-name=NOM_DU_JOB -n ESPACE_DE_NOM
+----
+
+[#_evicted_pods]
+=== Pods évincés
+
+Les pods peuvent être évincés en fonction des https://kubernetes.io/docs/tasks/administer-cluster/out-of-resource/#eviction-policy[signaux d'éviction].
+
+Récupérer une liste de pods évincés (nom du pod et espace de noms){nbsp}:
+
+----
+kubectl get pods --all-namespaces -o go-template='{{range .items}}{{if eq .status.phase "Failed"}}{{if eq .status.reason "Evicted"}}{{.metadata.name}}{{" "}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}{{end}}'
+----
+
+Pour supprimer tous les pods évincés{nbsp}:
+
+----
+kubectl get pods --all-namespaces -o go-template='{{range .items}}{{if eq .status.phase "Failed"}}{{if eq .status.reason "Evicted"}}{{.metadata.name}}{{" "}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}{{end}}' | while read epod enamespace; do kubectl -n $enamespace delete pod $epod; done
+----
+
+Récupérer une liste de pods évincés, leur nœud programmé et la raison{nbsp}:
+
+----
+kubectl get pods --all-namespaces -o go-template='{{range .items}}{{if eq .status.phase "Failed"}}{{if eq .status.reason "Evicted"}}{{.metadata.name}}{{" "}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}{{end}}' | while read epod enamespace; do kubectl -n $enamespace get pod $epod -o=custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,MSG:.status.message; done
+----
+
+[#_job_does_not_complete]
+=== L'emploi ne se termine pas
+
+Si vous avez activé Istio et que vous rencontrez des problèmes avec un emploi que vous avez déployé qui ne se termine pas, vous devrez ajouter une annotation à votre pod en suivant {xref-enable-istio-in-namespace}[ces étapes.]
+
+Puisque les Sidecars Istio fonctionnent indéfiniment, un emploi ne peut pas être considéré comme terminé même après que sa tâche soit achevée. Ceci est une solution temporaire et désactivera Istio pour tout le trafic vers/depuis le Pod annoté. Gardez à l'esprit que cela peut ne pas vous permettre de continuer à utiliser un emploi pour les tests d'intégration, car l'emploi n'aura pas accès au maillage de services.

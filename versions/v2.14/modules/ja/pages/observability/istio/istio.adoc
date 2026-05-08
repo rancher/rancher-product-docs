@@ -1,0 +1,196 @@
+= Istio
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/istio/index.adoc 
+:product-path: observability/istio/istio.adoc
+ifeval::["{build-type}" != "community"]
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-selectors-and-scrape-configurations: xref:observability/istio/configuration/selectors-and-scrape-configurations.adoc
+:xref-istio-guides: xref:observability/istio/guides/guides.adoc
+:xref-istio-cpu-memory-allocations: xref:observability/istio/cpu-and-memory-allocations.adoc
+:xref-istio-on-rke2: xref:observability/istio/configuration/install-istio-on-rke2-cluster.adoc
+:xref-istio-config: xref:observability/istio/configuration/configuration.adoc
+:xref-istio-disable: xref:observability/istio/disable-istio.adoc
+:xref-istio-rbac: xref:observability/istio/rbac.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-selectors-and-scrape-configurations: xref:integrations-in-rancher/istio/configuration-options/selectors-and-scrape-configurations.adoc
+:xref-istio-guides: xref:how-to-guides/advanced-user-guides/istio-setup-guide/index.adoc
+:xref-istio-cpu-memory-allocations: xref:integrations-in-rancher/istio/cpu-and-memory-allocations.adoc
+:xref-istio-on-rke2: xref:integrations-in-rancher/istio/configuration-options/install-istio-on-rke2-cluster.adoc
+:xref-istio-config: xref:integrations-in-rancher/istio/configuration-options/index.adoc
+:xref-istio-disable: xref:integrations-in-rancher/istio/disable-istio.adoc
+:xref-istio-rbac: xref:integrations-in-rancher/istio/rbac-for-istio.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio]はRancher v2.12.0以降廃止されました。セキュリティを強化するために、 https://apps.rancher.io[SUSE Application Collection]のIstioビルドに切り替えてください（SUSE Rancher Primeサブスクリプションに含まれています）。
+詳細情報は https://forums.suse.com/t/deprecation-of-rancher-istio/45043[この発表]にあります。
+====
+
+https://istio.io/[Istio]は、DevOpsチームが複雑なマイクロサービスネットワーク内のトラフィックを観察、保護、制御、トラブルシューティングするのを容易にするオープンソースツールです。
+
+マイクロサービスのネットワークが変化し成長するにつれて、それらの間の相互作用は管理し理解するのがますます難しくなる可能性があります。そのような状況では、サービスメッシュを別のインフラストラクチャ層として持つことが有用です。Istioのサービスメッシュを使用すると、マイクロサービスを直接変更することなく、マイクロサービス間のトラフィックを操作できます。
+
+私たちのIstioの統合は、管理者やクラスターの所有者などのRancherオペレーターが、開発者チームにIstioを提供できるように設計されています。その後、開発者はIstioを使用してセキュリティポリシーを強制したり、問題をトラブルシューティングしたり、グリーン/ブルーデプロイメント、カナリアデプロイメント、またはA/Bテストのためにトラフィックを管理したりできます。
+
+このコアサービスメッシュは、以下を含むがこれに限定されない機能を提供します：
+
+* *トラフィック管理* には、インバウンドおよびアウトバウンドのルーティング、サーキットブレイキング、ミラーリングが含まれます。
+* *セキュリティ* には、トラフィックとユーザーを認証および認可するためのリソースが含まれ、mTLSも含まれます。
+* *監視* には、ログ、メトリクス、および分散トラフィックフローが含まれます。
+
+{xref-istio-guides}[Istioの設定]を行った後、Rancher UI、`kubectl`、または`istioctl`を通じてIstioのコントロールプレーン機能を活用できます。
+
+Istioは、プロジェクトで使用する前に`cluster-admin`によって設定される必要があります。
+
+[#_whats_new_in_rancher_v2_5]
+== Rancher v2.5の新機能
+
+Istioの全体的なアーキテクチャが簡素化されました。Pilot、Citadel、Galley、およびサイドカーインジェクターを統合して、単一のコンポーネントであるIstiodが作成されました。ノードエージェントの機能もistio-agentに統合されました。
+
+以前にIstioによってインストールされたアドオン（cert-manager、Grafana、Jaeger、Kiali、Prometheus、Zipkin）は、今後は別々にインストールする必要があります。Istioは、Istioプロジェクト由来の統合のインストールをサポートするとともに、そうでない統合との互換性も維持します。
+
+Prometheusの統合は、{xref-monitoring-and-dashboards}[Rancher Monitoring]のインストールを通じて、または独自のPrometheusオペレーターをインストールすることによって引き続き利用可能です。RancherのIstioチャートは、デフォルトでKialiをインストールし、すぐにマイクロサービスの全体像を把握できるようにします。
+
+Istioは、Istioをインストールする方法としてHelmから移行し、現在はistioctlバイナリまたはIstio Operatorを通じてインストールを提供しています。Istioとの最も簡単なインタラクションを確保するために、RancherのIstioは、istioctlバイナリを使用してIstioインストールを管理するHelmチャートを維持します。
+
+このHelmチャートは、UIのアプリとマーケットプレイスを通じて利用可能になります。Rancher Chartのカタログにアクセスできるユーザーは、プロジェクトで使用する前にIstioを設定する必要があります。
+
+[#_tools_bundled_with_istio]
+== Istioにバンドルされたツール
+
+私たちの https://istio.io/[Istio]インストーラーは、istioctlバイナリコマンドを便利なHelmチャートにラップし、複雑なカスタマイズを可能にするオーバーレイファイルオプションを含んでいます。
+
+それには以下のものが含まれています。
+
+[#_kiali]
+=== Kiali
+
+https://kiali.io/[Kiali]は、サービスメッシュ全体のトラフィックフローをグラフ化するために使用される包括的な視覚化ツールです。それにより、接続状況や、間のトラフィックレートやレイテンシを確認できます。
+
+サービスメッシュの健康状態を確認したり、特定のコンポーネントへの入出力リクエストを詳しく見ることができます。
+
+[NOTE]
+====
+Istioインストール`103.1.0+up1.19.6`以降では、Kialiは認証戦略のためにトークン値を使用します。RancherにおけるKialiサービスアカウントの名前は`kiali`です。Kialiサービスアカウントの名前を入力する必要があるコマンドを書く場合は、この名前を使用してください（たとえば、セッショントークンを生成または取得しようとする場合など）。詳細については、 https://kiali.io/docs/faq/authentication/[Kialiトークン認証FAQ]を参照してください。
+====
+
+
+[#_jaeger]
+=== Jaeger
+
+私たちのIstioインストーラーには、分散システムのトレースに使用されるツールである https://www.jaegertracing.io/[Jaeger,]のクイックスタート、All-in-Oneインストールが含まれています。
+
+これはJaegerの生産適格なデプロイメントではないことに注意してください。このデプロイメントはインメモリストレージコンポーネントを使用しており、生産には永続ストレージコンポーネントが推奨されます。どのデプロイメント戦略が必要かについての詳細は、 https://www.jaegertracing.io/docs/1.65/operator/#production-strategy[Jaegerドキュメント]を参照してください。
+
+[#_prerequisites]
+== 前提条件
+
+Istioを有効にする前に、RancherワーカーノードがIstioのすべてのコンポーネントを実行するのに十分な{xref-istio-cpu-memory-allocations}[CPUとメモリ]を持っていることを確認することをお勧めします。
+
+RKE2 クラスターに Istio をインストールする場合、追加の手順が必要です。詳細については、<<_additional_steps_for_installing_istio_on_an_rke2_cluster,このセクション>>を参照してください。
+
+[#_setup_guide]
+== セットアップガイド
+
+Istio をセットアップし、プロジェクトで使用する方法については、{xref-istio-guides}[セットアップガイド]を参照してください。
+
+[#_remove_istio]
+== Istio を削除する
+
+クラスター、ネームスペース、またはワークロードから Istio コンポーネントを削除するには、{xref-istio-disable}[Istio のアンインストール]に関するセクションを参照してください。
+
+[#_accessing_visualizations]
+== 視覚化へのアクセス
+
+____
+デフォルトでは、クラスター管理者のみが Kiali にアクセスできます。管理者、編集者、またはビューアの役割にアクセスを許可する方法については、{xref-istio-rbac}[このセクション]を参照してください。
+____
+
+[NOTE]
+====
+Istio インストールバージョン `103.1.0+up1.19.6` 以降では、Kiali は認証戦略のためにトークン値を使用します。RancherにおけるKialiサービスアカウントの名前は`kiali`です。Kialiサービスアカウントの名前を入力する必要があるコマンドを書く場合は、この名前を使用してください（たとえば、セッショントークンを生成または取得しようとする場合など）。詳細については、 https://kiali.io/docs/faq/authentication/[Kialiトークン認証FAQ]を参照してください。
+====
+
+
+Istio がクラスターにセットアップされると、Grafana、Prometheus、および Kiali が Rancher UI で利用可能になります。
+
+Grafana と Prometheus の視覚化にアクセスするには、
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *Clusters*ページで、視覚化を表示したいクラスターに移動し、*Explore*をクリックします。
+. 左のナビゲーションバーで*Monitoring*をクリックします。
+. *Grafana* または他のダッシュボードのいずれかをクリックします。
+
+Kiali の視覚化にアクセスするには、
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *Clusters* ページで、Kiali を表示したいクラスターに移動し、*Explore* をクリックします。
+. 左のナビゲーションバーで *Istio* をクリックします。
+. *Kiali* をクリックします。ここから、ネットワークの視覚化とメトリクスを表示するために、*トラフィックグラフ* タブまたは *トラフィックメトリクス* タブにアクセスできます。
+
+デフォルトでは、すべてのネームスペースが Prometheus によって検出され、Kiali グラフ用のデータが利用可能になります。Prometheus データのスクレイピングに異なる構成を使用したい場合は、{xref-selectors-and-scrape-configurations}[セレクター/スクレイプ構成のセットアップ]を参照してください。
+
+視覚化へのアクセスは、あなたの役割に依存します。GrafanaとPrometheusは`cluster-admin`の役割にのみ利用可能です。Kiali UIはデフォルトで`cluster-admin`のみに利用可能ですが、`cluster-admin`はIstioのvalues.yamlを編集することで他の役割にアクセスを許可できます。
+
+[#_architecture]
+== アーキテクチャ
+
+Istioは、各ワークロードへのトラフィックを傍受するために https://www.envoyproxy.io[Envoy]サイドカー・プロキシを使用するサービスメッシュをインストールします。これらのサイドカーはサービス間通信を傍受し管理し、クラスター内のトラフィックに対する詳細な観察と制御を可能にします。
+
+Istioサイドカーが注入されたワークロードのみが、Istioによって追跡および制御されることができます。
+
+ネームスペースにIstioが有効になっている場合、そのネームスペースにデプロイされた新しいワークロードには自動的にIstioサイドカーが追加されます。既存のワークロードでは、手動でIstioを有効にする必要があります。
+
+Istioサイドカーに関する詳細情報は https://istio.io/docs/setup/kubernetes/additional-setup/sidecar-injection/[Istioサイドカー注入ドキュメント]を参照し、Istioのアーキテクチャに関する詳細情報は https://istio.io/latest/docs/ops/deployment/architecture/[Istioアーキテクチャドキュメント]を参照してください。
+
+[#_multiple_ingresses]
+=== 複数のIngress
+
+デフォルトでは、各Rancherプロビジョニングクラスターには、クラスターへのトラフィックを許可する1つのNGINX Ingressコントローラーがあります。Istioはデフォルトで`istio-system`ネームスペースにIngressゲートウェイもインストールします。 その結果、クラスターには2つのIngressが存在することになります。
+
+image::istio-ingress.svg[Istioが有効なクラスターにおいて, you can have two ingresses: the default Nginx ingress, and the default Istio controller.]
+
+追加のIstio Ingressゲートウェイは{xref-istio-config}#_overlay_file[オーバーレイファイル]を介して有効にできます。
+
+[#_egress_support]
+=== Egressサポート
+
+デフォルトではEgressゲートウェイは無効ですが、インストールまたはアップグレード時にvalues.yamlを介して、または{xref-istio-config}#_overlay_file[オーバーレイファイル]を介して有効にできます。
+
+[#_additional_steps_for_installing_istio_on_an_rke2_cluster]
+== {rke2-product-name}クラスターにIstioをインストールするための追加手順
+
+RKE2クラスターにIstioをインストールするには、{xref-istio-on-rke2}[このセクション]の手順に従ってください。
+
+[#_upgrading_istio_in_an_air_gapped_environment]
+== エアギャップ(された)環境でのIstioのアップグレード
+
+Istioポッドセキュリティポリシーはデフォルトで有効になっています。新しい値、`installer.releaseMirror.enabled`、がエアギャップ(された)アップグレードをサポートするサーバーを有効または無効にするために、rancher-istioチャートに追加されました。`installer.releaseMirror.enabled`はデフォルトで`false`に設定されていますのでご注意ください。インストールまたはアップグレード時に必要に応じてこの値を設定できます。次の手順に従います。
+
+. Rancher UIでエアギャップされたRancherインスタンスとエアギャップされたカスタムクラスターをプロビジョニングします。
+. クラスターにMonitoringをインストールします：*Cluster Explorer \-> Apps & Marketplace \-> Charts \-> Monitoring*。
+. エアギャップ(された)環境で使用するプライベートレジストリにIstioに必要なすべてのイメージをプルします。
+. クラスターにIstioをインストールします：*Cluster Explorer \-> Apps & Marketplace \-> Charts \-> Istio*。
+
+[NOTE]
+====
+
+新しいIstioインストールで https://www.jaegertracing.io/[Jaeger]と https://kiali.io/[Kiali]を有効にできます。JaegerとKialiが動作することを確認するために、インストール中に`values.yaml`で`installer.releaseMirror.enabled`を`true`に設定してください。
+====
+
+
+. Istioインストールをアップグレードします。
+
+[CAUTION]
+====
+
+まだ行っていない場合は、`installer.releaseMirror.enabled=true`を設定してIstioをアップグレードしてください。
+====
+

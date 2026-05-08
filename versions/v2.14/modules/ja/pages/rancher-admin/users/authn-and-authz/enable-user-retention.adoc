@@ -1,0 +1,75 @@
+= ユーザー保持の有効化
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-user-retention.adoc 
+:product-path: rancher-admin/users/authn-and-authz/enable-user-retention.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-webhook: xref:security/rancher-webhook/rancher-webhook.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-webhook: xref:reference-guides/rancher-webhook.adoc
+endif::[]
+
+Rancher v2.8.5以降では、ユーザー保持を有効にすることで、設定した期間後に非アクティブなユーザーアカウントを自動的に無効化または削除できます。
+
+ユーザー保持機能はデフォルトでオフになっています。
+
+[#_enabling_user_retention_with_kubectl]
+== kubectlを使用したユーザー保持の有効化
+
+ユーザー保持を有効にするには、`user-retention-cron`を設定する必要があります。また、`disable-inactive-user-after` または `delete-inactive-user-after` のいずれかを少なくとも設定する必要があります。`kubectl edit setting <name-of-setting>`を使用して、お好みのエディタを開き、これらの値を設定できます。
+
+[#_configuring_rancher_to_delete_users_disable_users_or_combine_operations]
+== ユーザーを削除、無効化、または操作を組み合わせるためのRancherの設定
+
+Rancherは、特定の非アクティブ期間後にユーザーが無効化または削除されるかどうかを判断するために、2つのグローバルユーザー保持設定を使用します。無効化されたアカウントは、ユーザーが再度ログインできるようにするには再有効化する必要があります。アカウントが無効化されずに削除された場合、ユーザーは外部認証を通じてログインでき、削除されたアカウントが再作成される可能性があります。
+
+グローバル設定である`disable-inactive-user-after`と`delete-inactive-user-after`は、互いに実行を妨げることはありません。
+
+たとえば、両方の操作を実行するように設定できます。`disable-inactive-user-after`に`delete-inactive-user-after`よりも短い期間を設定した場合、ユーザー保持プロセスは非アクティブなアカウントを削除する前に無効化します。
+
+特定のユーザーの`UserAttribute`で、一部のユーザー保持設定を編集することもできます。これらの値を設定すると、グローバル設定が上書きされます。詳細については、<<_user_specific_user_retention_overrides,User-specific User Retention Overrides>>を参照してください。
+
+[#_required_user_retention_settings]
+=== 必要なユーザー保持設定
+
+以下はグローバル設定です：
+
+* `user-retention-cron`:ユーザー保持プロセスがどのくらいの頻度で実行されるかを説明します。値はcron式です（例えば、`0 * * * *`は毎時を示します）。
+* `disable-inactive-user-after`:ユーザーアカウントが非アクティブのままでいられる期間（プロセスがアカウントを無効にするまでの時間）です。アカウントを無効にすると、ユーザーはログインして使用する前に管理者にアカウントの再有効化を要求する必要があります。値は https://pkg.go.dev/time#ParseDuration[time.Duration単位]で表されます（例えば、`720h`は720時間または30日を示します）。値は`auth-user-session-ttl-minutes`より大きくなければなりません。デフォルトでは`16h`です。値が設定されていない場合、空の文字列に設定されている場合、または0に等しい場合、プロセスは非アクティブなアカウントを無効にしません。
+* `delete-inactive-user-after`:ユーザーアカウントが非アクティブのままでいられる期間（プロセスがアカウントを削除するまでの時間）です。値はtime.Duration単位で表されます（例えば、`720h`は720時間または30日を示します）。値は`auth-user-session-ttl-minutes`より大きくなければなりません（デフォルトでは`16h`です）。値は`336h`（14日）より大きい必要があります。そうでない場合、Rancher webhookによって拒否されます。値を14日未満にする必要がある場合は、{xref-rancher-webhook}#_bypassing_the_webhook[webhookをバイパスする]ことができます。値が設定されていない場合、空の文字列に設定されている場合、または0に等しい場合、プロセスは非アクティブなアカウントを削除しません。
+
+[#_optional_user_retention_settings]
+=== オプションのユーザー保持設定
+
+以下はグローバル設定です：
+
+* `user-retention-dry-run`:`true`に設定されている場合、ユーザー保持プロセスは実際にユーザーアカウントを削除または無効にすることなく実行されます。これにより、プロセスが本番環境でユーザーアカウントを無効にしたり削除したりする前に、ユーザー保持の動作をテストするのに役立ちます。
+* `user-last-login-default`:ユーザーがアカウントに`UserAttribute.LastLogin`を設定していない場合、この設定が代わりに使用されます。値は https://datatracker.ietf.org/doc/html/rfc3339#section-5.6[RFC 3339日付時刻]として表され、最後の秒に切り捨てられます。例えば、`2023-03-01T00:00:00Z`です。値が空の文字列に設定されている場合、または0に等しい場合、この設定は使用されません。
+
+[#_user_specific_user_retention_overrides]
+==== ユーザー固有のユーザー保持オーバーライド
+
+以下は、特別なケースのためのグローバル設定に対するユーザー固有のオーバーライドです。これらの設定は、特定のアカウントに関連付けられた`UserAttribute`を編集することで適用されます。
+
+----
+kubectl edit userattribute <user-name>
+----
+
+* `disableAfter`:`disable-inactive-user-after`のユーザー固有のオーバーライドです。値は https://pkg.go.dev/time#ParseDuration[time.Duration単位]で表現され、秒単位に切り捨てられます。値が`0s`に設定されている場合、そのアカウントは無効化の対象になりません。
+* `deleteAfter`:`delete-inactive-user-after`のユーザー固有のオーバーライドです。値は https://pkg.go.dev/time#ParseDuration[time.Duration単位]で表現され、秒単位に切り捨てられます。値が`0s`に設定されている場合、そのアカウントは削除の対象になりません。
+
+[#_viewing_user_retention_settings_in_the_rancher_ui]
+== Rancher UIでのユーザー保持設定の表示
+
+どのユーザー保持設定がどのユーザーに適用されているかを確認できます。
+
+. 左上隅で、*☰ > ユーザーと認証*をクリックします。
+. 左側のナビゲーションメニューで*ユーザー*を選択します。
+
+各ユーザーアカウントの*無効化後*および*削除後*の列は、アカウントが無効化またはRancherから削除されるまでの非アクティブ期間を示しています。アカウントが最後にアクティブだった時期を大まかに示す*最終ログイン*の列もあります。
+
+同じ情報は、*ユーザー*テーブルでユーザー名をクリックし、*詳細*タブを選択することで表示されます。

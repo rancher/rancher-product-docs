@@ -1,0 +1,121 @@
+= Réseautique
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/networking.adoc 
+:product-path: troubleshooting/other-troubleshooting-tips/networking.adoc
+ifeval::["{build-type}" != "community"]
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-node-reqs: xref:how-to-guides/nouveaux-guides-utilisateurs/clusters-kubernetes-dans-rancher-configuration/exigences-des-nœuds-pour-les-clusters-gérés-par-rancher.adoc
+endif::[]
+
+Les commandes/étapes listées sur cette page peuvent être utilisées pour vérifier les problèmes liés au réseau dans votre cluster.
+
+Assurez-vous d'avoir configuré le bon kubeconfig (par exemple, `export KUBECONFIG=$PWD/kube_config_cluster.yml` pour Rancher HA) ou d'utiliser le kubectl intégré via l'interface utilisateur.
+
+[#_double_check_if_all_the_required_ports_are_opened_in_your_host_firewall]
+== Vérifiez à nouveau si tous les ports requis sont ouverts dans votre passerelle de périmètre de sécurité (hôte)
+
+Vérifiez à nouveau si tous les {xref-node-reqs}#_networking_requirements[ports requis] sont ouverts dans votre passerelle de périmètre de sécurité (hôte). Le réseau superposé utilise UDP par rapport à tous les autres ports requis qui sont TCP.
+
+[#_check_if_overlay_network_is_functioning_correctly]
+== Vérifiez si le réseau superposé fonctionne correctement
+
+Le pod peut être programmé sur n'importe lequel des hôtes que vous avez utilisés pour votre cluster, mais cela signifie que le contrôleur d'entrée NGINX doit être capable de router la demande de `NODE_1` à `NODE_2`. Cela se produit via le réseau superposé. Si le réseau superposé ne fonctionne pas, vous rencontrerez des échecs de connexion TCP/HTTP intermittents en raison du fait que le contrôleur d'entrée NGINX ne peut pas router vers le pod.
+
+Pour tester le réseau superposé, vous pouvez lancer la définition suivante `DaemonSet`. Cela exécutera un conteneur `swiss-army-knife` sur chaque hôte (l'image a été développée par les ingénieurs de Rancher et peut être trouvée ici{nbsp}: https://github.com/rancherlabs/swiss-army-knife),, que nous utiliserons pour effectuer un test `ping` entre les conteneurs sur tous les hôtes).
+
+[CAUTION]
+====
+
+Le conteneur `swiss-army-knife` ne prend pas en charge les nœuds Windows. Il https://github.com/leodotcloud/swiss-army-knife/issues/18[ne prend pas en charge les nœuds ARM], comme un Raspberry Pi. Lorsque le test rencontre des nœuds incompatibles, cela est enregistré dans les journaux du pod comme un message d'erreur, tel que `exec user process caused: exec format error` pour les nœuds ARM, ou `ImagePullBackOff (Back-off pulling image "rancherlabs/swiss-army-knife)` pour les nœuds Windows.
+====
+
+
+. Enregistrez le fichier suivant sous `overlaytest.yml`
++
+----
+ apiVersion: apps/v1
+ kind: DaemonSet
+ metadata:
+   name: overlaytest
+ spec:
+   selector:
+       matchLabels:
+         name: overlaytest
+   template:
+     metadata:
+       labels:
+         name: overlaytest
+     spec:
+       tolerations:
+       - operator: Exists
+       containers:
+       - image: rancherlabs/swiss-army-knife
+         imagePullPolicy: Always
+         name: overlaytest
+         command: ["sleep", "infinity"]
+         terminationMessagePath: /dev/termination-log
+----
+
+. Lancez-le en utilisant `kubectl create -f overlaytest.yml`
+. Attendez que `kubectl rollout status ds/overlaytest -w` revienne{nbsp}: `daemon set "overlaytest" successfully rolled out`.
+. Exécutez le script suivant, depuis le même emplacement.  Chaque conteneur `overlaytest` sur chaque hôte va se pinguer mutuellement{nbsp}:
++
+----
+ #!/bin/bash
+ echo "=> Start network overlay test"
+   kubectl get pods -l name=overlaytest -o jsonpath='{range .items[*]}{@.metadata.name}{" "}{@.spec.nodeName}{"\n"}{end}' |
+   while read spod shost
+     do kubectl get pods -l name=overlaytest -o jsonpath='{range .items[*]}{@.status.podIP}{" "}{@.spec.nodeName}{"\n"}{end}' |
+     while read tip thost
+       do kubectl --request-timeout='10s' exec $spod -c overlaytest -- /bin/sh -c "ping -c2 $tip > /dev/null 2>&1"
+         RC=$?
+         if [ $RC -ne 0 ]
+           then echo FAIL: $spod on $shost cannot reach pod IP $tip on $thost
+           else echo $shost can reach $thost
+         fi
+     done
+   done
+ echo "=> End network overlay test"
+----
+
+. Lorsque cette commande a terminé son exécution, elle affichera l'état de chaque route{nbsp}:
++
+----
+ => Start network overlay test
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.7.3 on wk2
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.0.5 on cp1
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.2.12 on wk1
+ command terminated with exit code 1
+ FAIL: overlaytest-v4qkl on cp1 cannot reach pod IP 10.42.7.3 on wk2
+ cp1 can reach cp1
+ cp1 can reach wk1
+ command terminated with exit code 1
+ FAIL: overlaytest-xpxwp on wk1 cannot reach pod IP 10.42.7.3 on wk2
+ wk1 can reach cp1
+ wk1 can reach wk1
+ => End network overlay test
+----
++
+Si vous voyez une erreur dans la sortie, il y a un problème avec la route entre les pods sur les deux hôtes.  Dans la sortie ci-dessus, le nœud `wk2` n'a pas de connectivité sur le réseau superposé. Cela pourrait être dû au fait que les {xref-node-reqs}#_networking_requirements[ports requis] pour le réseau superposé ne sont pas ouverts pour `wk2`.
+
+. Vous pouvez maintenant nettoyer le DaemonSet en exécutant `kubectl delete ds/overlaytest`.
+
+[#_check_if_mtu_is_correctly_configured_on_hosts_and_on_peering_tunnel_appliances_devices]
+=== Vérifiez si le MTU est correctement configuré sur les hôtes et sur les appareils/dispositifs de peering/tunnel.
+
+Lorsque le MTU est mal configuré (soit sur les hôtes exécutant Rancher, les nœuds dans les clusters créés/importés ou sur les appareils/dispositifs intermédiaires), des messages d'erreur seront enregistrés dans Rancher et dans les agents, similaires à :
+
+* `websocket: bad handshake`
+* `Failed to connect to proxy`
+* `read tcp: i/o timeout`
+
+Voir https://cloud.google.com/vpn/docs/concepts/mtu-considerations#gateway_mtu_vs_system_mtu[Considérations sur le MTU de Google Cloud VPN] pour un exemple de configuration correcte du MTU lors de l'utilisation de Google Cloud VPN entre Rancher et les nœuds du cluster.

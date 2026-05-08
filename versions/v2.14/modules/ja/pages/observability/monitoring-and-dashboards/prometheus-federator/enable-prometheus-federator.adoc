@@ -1,0 +1,108 @@
+= プロメテウスフェデレーターを有効にする
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/monitoring-alerting-guides/prometheus-federator-guides/enable-prometheus-federator.adoc 
+:product-path: observability/monitoring-and-dashboards/prometheus-federator/enable-prometheus-federator.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-enable-monitoring: xref:observability/monitoring-and-dashboards/enable-monitoring.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-enable-monitoring: xref:how-to-guides/advanced-user-guides/monitoring-alerting-guides/enable-monitoring.adoc
+endif::[]
+
+[#_requirements]
+== 要件
+
+デフォルトでは、プロメテウスフェデレーターは{xref-monitoring-and-dashboards}[ランチャーモニタリング]と一緒にデプロイされるように構成されており、各プロジェクトモニタリングスタックはデフォルトで名前空間スコープのメトリクスをフェデレートするように設定されたクラスターのプロメテウスをデプロイします。
+
+ランチャーモニタリングのインストール手順については、{xref-enable-monitoring}[このページ]を参照してください。
+
+デフォルトの設定は、既にランチャーモニタリングスタックと互換性があります。ただし、クラスター内のプロメテウスフェデレーターのセキュリティと使いやすさを最適化するために、ランチャーモニタリングに以下の追加設定を行うことをお勧めします：
+
+* <<_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster,cattle-monitoring-systemのネームスペースをSystem Projectに配置してください>>。
+* <<_configure_rancher_monitoring_to_only_watch_for_resources_created_by_the_helm_chart_itself,ランチャーモニタリングを、Helmチャート自体によって作成されたリソースのみを監視するように構成してください>>。
+* <<_increase_the_cpu_memory_limits_of_the_cluster_prometheus,クラスターのプロメテウスのCPU/メモリ制限を増やしてください>>。
+
+[#_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster]
+=== cattle-monitoring-systemのネームスペースをSystem Project（またはクラスター内の他のプロジェクトにアクセスできる同様に制限されたプロジェクト）に配置してください。
+
+image::install-in-system-project.png[プロジェクト-ネームスペース]
+
+プロメテウスオペレーターのセキュリティモデルは、デプロイされる名前空間（例：`cattle-monitoring-system`）がクラスター管理者以外の誰にも制限されたアクセスを持つことを期待しており、ポッドにexecすることによる特権の昇格を避けることができます（Helm操作を実行するジョブなど）。さらに、プロメテウスフェデレーターとすべてのプロジェクトプロメテウススタックをシステムプロジェクトにデプロイすることで、各プロジェクトプロメテウスがすべてのプロジェクトにわたってワークロードをスクレイプできるようになります。たとえネットワークポリシーがプロジェクトネットワーク分離を介して定義されていても。また、プロジェクトオーナー、プロジェクトメンバー、その他のユーザーに対して制限されたアクセスを提供し、彼らがアクセスすべきでないデータにアクセスできないようにします（すなわち、ポッドにexecすることを許可される、特定のプロジェクト外の名前空間をスクレイプする能力を設定するなど）。
+
+. あなたのネームスペースを確認するために`System`プロジェクトを開いてください：
++
+Rancher UIでmenu:クラスター[プロジェクト/ネームスペース]をクリックしてください。これにより、`System`プロジェクト内のすべてのネームスペースが表示されます：
++
+image::cattle-monitoring-system.png[プロジェクト-ネームスペース]
+
+. `cattle-monitoring-system`ネームスペース内に既存のMonitoring V2インストールがある場合、そのネームスペースが`System`プロジェクトにない場合は、`cattle-monitoring-system`ネームスペースを`System`プロジェクトまたは制限されたアクセスのある別のプロジェクトに移動できます。そのためには、次のいずれかを行うことができます：
+ ** ネームスペースを`System`プロジェクトにドラッグアンドドロップするか
+ ** ネームスペースの右側にある *⋮* を選択し、*移動* をクリックして、`System` を *ターゲットプロジェクト* のドロップダウンから選択します。
++
+image::move-to-new-project.png[新しいプロジェクトに移動]
+
+[#_configure_rancher_monitoring_to_only_watch_for_resources_created_by_the_helm_chart_itself]
+=== rancher-monitoring を、Helmチャート自体によって作成されたリソースのみを監視するように構成してください。
+
+各プロジェクトモニタリングスタックが他のネームスペースを監視し、すでに追加のカスタムワークロードメトリクスやダッシュボードを収集するため、Helm チャート自体によって作成されたリソースのみをクラスターのプロメテウススタックが監視するように、すべてのセレクターに以下の設定を構成することをお勧めします。
+
+----
+matchLabels:
+  release: "rancher-monitoring"
+----
+
+以下のセレクターフィールドにはこの値を設定することをお勧めします。
+
+* `.Values.alertmanager.alertmanagerSpec.alertmanagerConfigSelector`
+* `.Values.prometheus.prometheusSpec.serviceMonitorSelector`
+* `.Values.prometheus.prometheusSpec.podMonitorSelector`
+* `.Values.prometheus.prometheusSpec.ruleSelector`
+* `.Values.prometheus.prometheusSpec.probeSelector`
+
+この設定がオンになると、ラベル `release: "rancher-monitoring"` を追加することで、クラスターの Prometheus によって取得される ServiceMonitors または PodMonitors を常に作成できます。この場合、これらの ServiceMonitors または PodMonitors が存在するネームスペースがシステムネームスペースでなくても、プロジェクトモニタリングスタックによって自動的に無視されます。
+
+[NOTE]
+====
+
+ユーザーがプロジェクトネームスペースでクラスターの Prometheus に集約される ServiceMonitors および PodMonitors を作成できないようにしたい場合は、チャートの namespaceSelectors を設定して、システムネームスペースのみをターゲットにすることができます（これには `cattle-monitoring-system` と `cattle-dashboards` が含まれ、rancher-monitoring によってデフォルトでリソースがデプロイされる場所です。また、apiserver メトリクスを取得するために `default` ネームスペースを監視するか、デフォルトネームスペースに存在するサービスから apiserver メトリクスをスクレイプするカスタム ServiceMonitor を作成する必要があります）ので、クラスターの Prometheus が他の Prometheus Operator CR を取得しないように制限できます。その場合、システムネームスペース内から非システムネームスペースを監視できる ServiceMonitors を定義できるようにするために `.Values.prometheus.prometheusSpec.ignoreNamespaceSelectors=true` をオンにすることをお勧めします。
+====
+
+
+[#_increase_the_cpu_memory_limits_of_the_cluster_prometheus]
+=== クラスターの Prometheus の CPU/メモリ制限を増加させます。
+
+クラスターの設定に応じて、クラスターの Prometheus に大きな専用メモリを割り当てることが一般的に推奨されます。これは、通常、クラスター内で生成される大量の高カーディナリティのメトリクスが Prometheus に取り込まれることによって、メモリ不足エラー（OOMKilled）による再起動を避けるためです。これは、デフォルトの Rancher Monitoring スタックが通常のサイズのクラスターで動作するために約 4GB の RAM を期待する理由の一つです。ただし、すべてのプロジェクトモニタリングスタックが同じクラスターの Prometheus に`/federate`リクエストを送信し、その名前空間のシステムデータを連携させるためにクラスターの Prometheus が「稼働中」であることに依存している場合、クラスターの Prometheus に十分なCPU/メモリが割り当てられていることがさらに重要です。これにより、クラスター内のすべてのプロジェクト Prometheus にデータギャップを引き起こす可能性のある障害を防ぐことができます。
+
+[NOTE]
+====
+
+クラスターの Prometheus にどれだけのメモリを設定すべきかについての具体的な推奨はありません。これは完全にユーザーの設定に依存するためです（特にクラスター内で発生する高いchurn率や、その時に生成されるメトリクスの規模）。一般的に、設定ごとに異なります。
+====
+
+
+[#_install_the_prometheus_federator_application]
+== Prometheus Federator アプリケーションをインストールします。
+
+. *☰ > クラスター管理*をクリックします。
+. Prometheus Federator をインストールしたいクラスターに移動し、*Explore* をクリックします。
+. *アプリ \-> チャート* をクリックします。
+. *Prometheus Federator* チャートをクリックします。
+. ［*インストール］*をクリックします。
+. *メタデータ* ページで、*次へ* をクリックします。
+. *ネームスペース* > *プロジェクトリリースネームスペースプロジェクトID* フィールドでは、`System Project` がデフォルトとして使用されますが、同様の <<_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster,制限付きアクセス>> を持つ別のプロジェクトで上書きすることができます。プロジェクトIDは、ローカルのアップストリームクラスターで実行される以下のコマンドで見つけることができます。
+
+[,plain]
+----
+  kubectl get projects -A -o custom-columns="NAMESPACE":.metadata.namespace,"ID":.metadata.name,"NAME":.spec.displayName
+----
+
+. ［*インストール］*をクリックします。
+
+*結果:*Prometheus Federator アプリは`cattle-monitoring-system`ネームスペースにデプロイされています。

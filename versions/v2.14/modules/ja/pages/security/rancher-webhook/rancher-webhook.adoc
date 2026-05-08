@@ -1,0 +1,186 @@
+= {rancher-product-name} ウェブフック
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-29
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-webhook.adoc 
+:product-path: security/rancher-webhook/rancher-webhook.adoc
+ifeval::["{build-type}" != "community"]
+:xref-psa-pss: xref:security/psa-pss.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-psa-pss: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/pod-security-standards.adoc
+endif::[]
+
+Rancher-Webhookは、Kubernetesと連携してRancherのセキュリティを強化し、Rancher管理のクラスターに重要な機能を提供するRancherの重要なコンポーネントです。
+
+これは、 https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/[Kubernetesのドキュメント]に記載されているKubernetesの拡張可能なアドミッション・コントローラーと統合されており、Rancher-WebhookがKubernetes APIサーバーに送信される特定のリクエストを検査し、Rancherに特有のリクエストにカスタムバリデーションとミューテーションを追加できるようにします。Rancher-Webhookは、`rancher.cattle.io` `ValidatingWebhookConfiguration`および`rancher.cattle.io` `MutatingWebhookConfiguration`オブジェクトを使用して検証されるリソースを管理し、手動での編集を上書きします。
+
+Rancherは、ローカルおよびダウンストリームクラスタの両方で、Rancher-Webhookを別のデプロイメントおよびサービスとしてデプロイします。Rancherは、Helmを使用してRancher-Webhookを管理します。ユーザーがHelmリリースに加えた変更が上書きされる可能性があるため、Rancherはその点に留意する必要があります。これらの値を安全に変更するには、<<_customizing_rancher_webhook_configuration,Rancher-Webhookの設定をカスタマイズする>>を参照してください。
+
+各Rancherバージョンは、ウェブフックの単一バージョンと互換性があるように設計されています。互換性のあるバージョンは、便宜上以下に提供されています。
+
+NOTE: Rancherは、Webhookのデプロイメントとアップグレードを管理します。ほとんどの状況下では、実行中のRancherのバージョンとウェブフックのバージョンが互換性があることを確認するために、ユーザーの介入は必要ありません。
+
+|===
+| Rancherのバージョン | ウェブフックのバージョン | プライムでの利用可能性 | コミュニティでの利用可能性
+
+// DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT.
+| v2.14.1
+| v0.10.4
+| &#10003;
+| &#10003;
+
+| v2.13.3
+| v0.9.3
+| &#10003;
+| &#10003;
+
+| v2.13.2
+| v0.9.2
+| &#10003;
+| &#10003;
+
+| v2.13.1
+| v0.9.1
+| &#10003;
+| &#10003;
+
+| v2.13.0
+| v0.9.0
+| &cross;
+| &check;
+|===
+
+[#_why_do_we_need_it]
+== なぜそれが必要なのか？
+
+Rancher-Webhookは、Rancherがクラスターを悪意のある攻撃から保護し、さまざまな機能を有効にするために重要です。
+Rancherは、その機能の不可欠な部分としてRancher-Webhookに依存しています。ウェブフックがなければ、Rancherは完全な製品ではありません。
+これは、Rancher管理のクラスターに対して重要な保護を提供し、セキュリティの脆弱性を防ぎ、クラスターの一貫性と安定性を確保します。
+
+[#_what_resources_does_the_webhook_validate]
+== Webhookはどのリソースを検証しますか？
+
+ウェブフックが検証するリソースの進行中のリストは、 https://github.com/rancher/webhook/blob/release/v0.4/docs.md[ウェブフックのリポジトリ]で見つけることができます。これらのドキュメントは、グループ/バージョンおよびリソースごとに整理されています（最上位の見出しはグループ/バージョン、次のレベルの見出しはリソースです）。特定のバージョンに固有のチェックは、特定のタグに関連付けられた`docs.md`ファイルを表示することで見つけることができます（`v0.3.6`以前のウェブフックバージョンにはこのファイルはありません）。
+
+[#_bypassing_the_webhook]
+== ウェブフックのバイパス
+
+緊急の復元操作を行ったり、他の重要な問題を修正したりするために、Rancherのウェブフック検証をバイパスする必要がある場合があります。バイパス操作は徹底的であり、使用する際にはウェブフックの検証やミューテーションは適用されません。一部の検証やミューテーションをバイパスし、他のものが適用されることはできません ― すべてがバイパスされるか、すべてがアクティブになります。
+
+[WARNING]
+====
+
+Rancherのウェブフックは重要なセキュリティ保護を提供します。ウェブフックのバイパスは、すべての他のオプションが尽きた後に、特定のシナリオでのみ管理者によって行われるべきです。さらに、ウェブフックをバイパスする権限は慎重に管理されるべきであり、管理者でないユーザーには決して与えられるべきではありません。
+====
+
+
+ウェブフックをバイパスするには、`rancher-webhook-sudo`サービスアカウントと`system:masters`グループの両方を偽装する必要があります（両方が必要です）：
+
+[,bash]
+----
+kubectl create -f example.yaml --as=system:serviceaccount:cattle-system:rancher-webhook-sudo --as-group=system:masters
+----
+
+[#_customizing_rancher_webhook_configuration]
+== Rancher-Webhook設定のカスタマイズ
+
+Rancher-WebhookをHelm経由でインストールする際に、カスタムHelm値を追加できます。Rancher-WebhookチャートのHelmインストール中に、RancherはカスタムHelm値を確認します。これらのカスタム値は、`rancher-config`という名前のConfigMapに、`cattle-system`名前空間内のdataキー`rancher-webhook`の下で定義されている必要があります。このキーの値は有効なYAMLでなければなりません。
+
+[,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rancher-config
+  namespace: cattle-system
+  labels:
+    app.kubernetes.io/part-of: "rancher"
+data:
+  rancher-webhook: '{"port": 9553, "priorityClassName": "system-node-critical"}'
+----
+
+Rancherは、ConfigMapの値に変更が検出されると、Rancher-Webhookチャートを再デプロイします。
+
+[#_customizing_rancher_webhook_during_rancher_installation]
+=== Rancherインストール中のRancher-Webhookのカスタマイズ
+
+Helmを使用してRancherチャートをインストールする際に、ローカルクラスタのRancher-WebhookにカスタムHelm値を追加できます。Rancher-Webhookチャート内のすべての値は、`webhook`という名前の下にネストされた変数としてアクセス可能です。
+
+これらの値は、インストール中に`rancher-config` ConfigMapに同期されます。
+
+[,bash,subs="attributes+"]
+----
+helm install rancher {rancher-helm-repo}/rancher \
+  --namespace cattle-system \
+  ...
+  --set webhook.port=9553 \
+  --set webhook.priorityClassName="system-node-critical"
+----
+
+[#_common_issues]
+== よくある問題
+
+[#_eks_cluster_with_calico_cni]
+=== Calico CNIを使用したEKSクラスター
+
+Calico CNIを使用しているEKSクラスターを実行しているユーザーは、Kubernetes APIサーバーがRancher-Webhookに接続しようとする際にエラーが発生する可能性があります。
+この問題の回避策の一つは、 https://docs.tigera.io/calico/latest/getting-started/kubernetes/managed-public-cloud/eks#install-eks-with-calico-networking[Calicoによって文書化された]ウェブフックデプロイメントのために`hostNetwork=true`を設定することです。この値は、Helm値`global.hostNetwork=true`を`rancher-config` ConfigMapに追加することで変更できます。詳細については、<<_customizing_rancher_webhook_configuration,Rancher-Webhook設定のカスタマイズ>>を参照してください。
+
+[,bash]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rancher-config
+  namespace: cattle-system
+  labels:
+    app.kubernetes.io/part-of: "rancher"
+data:
+  rancher-webhook: '{"global": {"hostNetwork": true}}'
+----
+
+NOTE: この一時的な回避策は、環境のセキュリティポリシーに違反する可能性があります。この回避策では、ホストネットワーク上でポート9443が未使用である必要があります。
+
+NOTE: デフォルトでは、Helmは情報をシークレットとして保存します。シークレットは、一部のウェブフックのバージョンで検証されるリソースです。これらのケースでは、kubectlを使用して`hostNetwork=true`値でデプロイメントを直接更新し、その後、上記のようにウェブフック設定を更新してください。
+
+[#_private_gke_cluster]
+=== プライベートGKEクラスター
+
+プライベートGKEクラスターを使用している場合、Kubernetes APIサーバーがウェブフックと通信できなくなるエラーが発生する可能性があります。次のエラーメッセージが表示されることがあります：
+
+----
+Internal error occurred: failed calling webhook "rancher.cattle.io.namespaces.create-non-kubesystem": failed to call webhook: Post "https://rancher-webhook.cattle-system.svc:443/v1/webhook/validation/namespaces?timeout=10s": context deadline exceeded
+----
+
+この問題は、ファイアウォールルールがAPIサーバーとプライベートクラスター間の通信を制限するために発生します。この通信問題を解決するために、ユーザーはGKEコントロールプレーンがポート9443でRancher-Webhookと通信できるようにファイアウォールルールを追加する必要があります。ファイアウォールルールの更新に関する詳細情報と手順については、 https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#add_firewall_rules[GKEドキュメント]を参照してください。
+
+[#_application_fails_to_deploy_due_to_rancher_webhook_blocking_access]
+=== rancher-webhookによるアクセスブロックのためにアプリケーションのデプロイに失敗する
+
+ウェブフックは、 https://github.com/rancher/webhook/blob/release/v0.4/docs.md#psa-label-validation[ネームスペース]に対して追加の検証を提供します。これらの検証の1つは、ユーザーが適切な権限を持っている場合にのみ、PSA関連のラベルを更新できることを保証します（`updatepsa`は`projects`の`management.cattle.io`に対して）。これにより、TigeraやTridentなどの特定のオペレーターが、PSAラベルを持つネームスペースをデプロイしようとしたときに失敗する可能性があります。この問題を解決する方法はいくつかあります：
+
+* アプリケーションを構成して、PSAラベルを持たないネームスペースを作成します。ユーザーがこれらのネームスペースにPSAを適用したい場合、構成後に希望するPSAを持つプロジェクトに追加できます。手順については、{xref-psa-pss}[PSSおよびPSAリソースに関するドキュメント]をご覧ください。
+ ** これは推奨されるオプションですが、すべてのアプリケーションがこの方法で構成できるわけではありません。
+* オペレーターにネームスペースのPSAを管理する権限を手動で付与します。
+ ** このオプションはセキュリティリスクを引き起こす可能性があります。なぜなら、オペレーターはアクセスできるネームスペースのPSAを設定できるようになるからです。これにより、オペレーターが特権ポッドをデプロイしたり、他の手段でクラスターを乗っ取ったりする可能性があります。
+* 適切な権限を持つユーザーアカウントが、適切な構成でネームスペースを事前に作成できます。
+ ** このオプションは、アプリケーションが既存のリソースを処理できる能力に依存します。
+
+これらの検証のもう1つは、ユーザーが名前空間の`field.cattle.io/projectId`注釈を更新するための適切な権限を持っていることを保証します。これは`manage-namespaces`の`projects`に対する`management.cattle.io`権限です。
+
+[#_issues_on_specific_versions]
+== 特定のバージョンに関する問題
+
+NOTE: 以下は、特定のRancher/webhookバージョンに影響を与える重大度の高い問題の不完全なリストです。ほとんどの場合、これらの問題は、より新しいRancherバージョンにアップグレードすることで解決できます。
+
+[#_incompatible_webhook_version_on_rollback]
+=== ロールバック時の互換性のないウェブフックバージョン
+
+NOTE: これは、Rancher v2.7.5またはそれ以前へのロールバックに影響します。
+
+Rancher v2.7.5またはそれ以前にロールバックすると、ダウンストリームクラスターが Rancher v2.7.5以前のバージョンを実行しているため、互換性がない最新のウェブフックバージョンが表示される可能性があります。これにより、さまざまな互換性の問題が発生する可能性があります。例えば、プロジェクトメンバーはネームスペースを作成できない場合があります。さらに、ウェブフックがダウンストリームのクラスターにインストールされる前のバージョンにロールバックすると、ウェブフックがインストールされたままになる可能性があり、これが同様の互換性の問題を引き起こすことがあります。
+
+これらの問題を軽減するために、ロールバック後に https://github.com/rancherlabs/support-tools/tree/master/adjust-downstream-webhook[adjust-downstream-webhook]シェルスクリプトを実行することができます。このスクリプトは、対応するRancherバージョンに対して適切なウェブフックのバージョンを選択してインストールするか、ウェブフックを完全に削除する。

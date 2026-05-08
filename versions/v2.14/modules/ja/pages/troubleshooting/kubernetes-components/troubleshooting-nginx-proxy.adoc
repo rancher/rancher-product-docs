@@ -1,0 +1,84 @@
+= nginx-proxyのトラブルシューティング
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc 
+:product-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc
+
+[CAUTION]
+====
+`nginx-proxy`コンテナはRKE1特有のコンポーネントです。RKE2またはK3sを使用している場合、このコンテナはデプロイされません。APIサーバーへの負荷分散は、エージェントプロセス内のクライアント側の負荷分散装置によって内部的に処理されます。
+
+さらに、RKE1は https://support.scc.suse.com/s/kb/RKE-EOL-what-when-why?[サービス終了 (EOL)]に達したことに注意してください。したがって、このページの情報は廃止と見なされます。
+====
+
+`nginx-proxy`コンテナは、`controlplane`ロールを持たないすべてのノードにデプロイされます。それは、`controlplane`ロールを持つ利用可能なノードに基づいてNGINXの設定を動的に生成することにより、`controlplane`ロールを持つすべてのノードへのアクセスを提供します。
+
+[#_check_if_the_container_is_running]
+== コンテナが実行中かどうかを確認してください
+
+コンテナの名前は`nginx-proxy`で、ステータスは`Up`であるべきです。の後`Up`に表示される期間は、コンテナが実行中の時間です。
+
+----
+docker ps -a -f=name=nginx-proxy
+----
+
+出力の例：
+
+----
+docker ps -a -f=name=nginx-proxy
+CONTAINER ID        IMAGE                       COMMAND                  CREATED             STATUS              PORTS               NAMES
+c3e933687c0e        rancher/rke-tools:v0.1.15   "nginx-proxy CP_HO..."   3 hours ago         Up 3 hours                              nginx-proxy
+----
+
+[#_check_generated_nginx_configuration]
+== 生成されたNGINX設定を確認してください
+
+生成された設定には、`controlplane`ロールを持つノードのIPアドレスが含まれている必要があります。設定は次のコマンドを使用して確認できます：
+
+----
+docker exec nginx-proxy cat /etc/nginx/nginx.conf
+----
+
+出力の例：
+
+----
+error_log stderr notice;
+
+worker_processes auto;
+events {
+  multi_accept on;
+  use epoll;
+  worker_connections 1024;
+}
+
+stream {
+        upstream kube_apiserver {
+
+            server ip_of_controlplane_node1:6443;
+
+            server ip_of_controlplane_node2:6443;
+
+        }
+
+        server {
+            listen        6443;
+            proxy_pass    kube_apiserver;
+            proxy_timeout 30;
+            proxy_connect_timeout 2s;
+
+        }
+
+}
+----
+
+[#_nginx_proxy_container_logging]
+== nginx-proxyコンテナのログ
+
+コンテナのログには、問題の可能性に関する情報が含まれている場合があります。
+
+----
+docker logs nginx-proxy
+----

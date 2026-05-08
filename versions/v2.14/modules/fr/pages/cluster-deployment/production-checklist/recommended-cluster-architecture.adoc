@@ -1,0 +1,122 @@
+= Architecture recommandée du cluster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/checklist-for-production-ready-clusters/recommended-cluster-architecture.adoc 
+:product-path: cluster-deployment/production-checklist/recommended-cluster-architecture.adoc
+ifeval::["{build-type}" != "community"]
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-production-checklist-node-roles: xref:cluster-deployment/production-checklist/roles-for-nodes-in-kubernetes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-production-checklist-node-roles: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/checklist-for-production-ready-clusters/roles-for-nodes-in-kubernetes.adoc
+endif::[]
+
+Il y a trois rôles qui peuvent être attribués aux nœuds{nbsp}: `etcd`, `controlplane` et `worker`.
+
+[#_separating_worker_nodes_from_nodes_with_other_roles]
+== Séparer les nœuds de travail des nœuds avec d'autres rôles
+
+Lors de la conception de votre ou vos clusters, vous avez deux options :
+
+* Utiliser des nœuds dédiés pour chaque rôle. Cela garantit la disponibilité des ressources pour les composants nécessaires au rôle spécifié. Cela isole également strictement le trafic réseau entre chacun des rôles selon les {xref-node-reqs}#_networking_requirements[exigences de ports].
+* Attribuer les rôles `etcd` et `controlplane` aux mêmes nœuds. Ces nœuds doivent répondre aux exigences matérielles pour les deux rôles.
+
+Dans les deux cas, le rôle `worker` ne doit pas être utilisé ou ajouté à des nœuds avec le rôle `etcd` ou `controlplane`.
+
+Par conséquent, chaque nœud doit avoir l'une des configurations de rôle suivantes :
+
+* `etcd`
+* `controlplane`
+* Les deux rôles `etcd` et `controlplane`
+* `worker`
+
+[#_recommended_number_of_nodes_with_each_role]
+== Nombre recommandé de nœuds avec chaque rôle
+
+Le cluster doit avoir :
+
+* Au moins trois nœuds avec le rôle `etcd` pour survivre à la perte d'un nœud. Augmentez ce nombre pour une meilleure tolérance aux pannes des nœuds, et répartissez-les sur plusieurs zones de disponibilité afin d'offrir une tolérance aux pannes encore meilleure.
+* Au moins deux nœuds avec le rôle `controlplane` pour une haute disponibilité du composant maître.
+* Au moins deux nœuds avec le rôle `worker` pour la replanification des charges de travail en cas de défaillance d'un nœud.
+
+Pour plus d'informations sur l'utilisation de chaque rôle, référez-vous à la {xref-production-checklist-node-roles}[section sur les rôles des nœuds dans Kubernetes.]
+
+[#_number_of_controlplane_nodes]
+=== Nombre de nœuds du Controlplane
+
+Ajouter plus d'un nœud avec le rôle `controlplane` rend chaque composant maître hautement disponible.
+
+[#_number_of_etcd_nodes]
+=== Nombre de nœuds etcd
+
+Le nombre de nœuds que vous pouvez perdre en une seule fois tout en maintenant la disponibilité du cluster est déterminé par le nombre de nœuds assignés au rôle `etcd`. Pour un cluster avec n membres, le minimum est (n/2)+1. Par conséquent, nous recommandons de créer un nœud `etcd` dans 3 zones de disponibilité différentes au sein d'une région pour survivre à la perte d'une zone de disponibilité. Si vous n'utilisez que deux zones, vous ne pouvez survivre qu'à la perte de la zone où vous ne perdez pas la majorité des nœuds.
+
+|===
+| Nœuds avec le rôle `etcd` | Majorité | Tolérance aux pannes
+
+| 1
+| 1
+| 0
+
+| 2
+| 2
+| 0
+
+| 3
+| 2
+| *1*
+
+| 4
+| 3
+| 1
+
+| 5
+| 3
+| *2*
+
+| 6
+| 4
+| 2
+
+| 7
+| 4
+| *3*
+
+| 8
+| 5
+| 3
+
+| 9
+| 5
+| *4*
+|===
+
+Références :
+
+* https://etcd.io/docs/v3.5/faq/#what-is-failure-tolerance[Documentation officielle etcd sur la taille optimale du cluster etcd]
+* https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/[Documentation officielle de Kubernetes sur l'exploitation des clusters etcd pour Kubernetes]
+
+[#_number_of_worker_nodes]
+=== Nombre de nœuds de travail
+
+Ajouter plus d'un nœud avec le rôle `worker` garantira que vos charges de travail peuvent être replanifiées si un nœud échoue.
+
+[#_why_production_requirements_are_different_for_the_rancher_cluster_and_the_clusters_running_your_applications]
+=== Pourquoi les exigences de production sont différentes pour le cluster Rancher et les clusters exécutant vos applications
+
+Vous avez peut-être remarqué que nos instructions d'{xref-install-rancher}[Installation de Kubernetes] ne répondent pas à notre définition d'un cluster prêt pour la production, car il n'y a pas de nœuds dédiés pour le rôle `worker`. Cependant, pour votre installation de Rancher, ce cluster de trois nœuds est valide, car{nbsp}:
+
+* Il permet un échec d'un nœud `etcd`.
+* Il maintient plusieurs instances des composants principaux en ayant plusieurs nœuds `controlplane`.
+* Aucune autre charge de travail que Rancher lui-même ne devrait être créée sur ce cluster.
+
+[#_references]
+== Références
+
+* https://kubernetes.io/docs/concepts/overview/components/#master-components[Kubernetes{nbsp}: Composants principaux]

@@ -1,0 +1,317 @@
+= Comment fonctionne la surveillance
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-23
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/monitoring-and-alerting/how-monitoring-works.adoc 
+:product-path: observability/monitoring-and-dashboards/how-monitoring-works.adoc
+ifeval::["{build-type}" != "community"]
+:xref-receivers: xref:observability/monitoring-and-dashboards/configuration/receivers.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-receivers: xref:reference-guides/monitoring-v2-configuration/receivers.adoc
+endif::[]
+
+[#_1_architecture_overview]
+== 1. Présentation de l'architecture
+
+_*Les sections suivantes décrivent comment les données circulent à travers l'application Monitoring V2 :*_
+
+[#_prometheus_operator]
+=== Prometheus Operator
+
+Prometheus Operator observe la création de ServiceMonitors, PodMonitors et PrometheusRules. Lorsque les ressources de configuration de Prometheus sont créées, Prometheus Operator appelle l'API Prometheus pour synchroniser la nouvelle configuration. Comme le montre le diagramme à la fin de cette section, Prometheus Operator agit comme intermédiaire entre Prometheus et Kubernetes, appelant l'API Prometheus pour synchroniser Prometheus avec les ressources liées à la surveillance dans Kubernetes.
+
+[#_servicemonitors_and_podmonitors]
+=== ServiceMonitors et PodMonitors
+
+ServiceMonitors et PodMonitors spécifient de manière déclarative les cibles, telles que les Services et les Pods, qui doivent être surveillées.
+
+* Les cibles sont récupérées selon un calendrier récurrent basé sur l'intervalle de récupération configuré de Prometheus, et les métriques récupérées sont stockées dans la base de données de séries temporelles Prometheus (TSDB).
+* Pour effectuer la récupération, ServiceMonitors et PodMonitors sont définis avec des sélecteurs d'étiquettes qui déterminent quels Services ou Pods doivent être récupérés et des points de terminaison qui déterminent comment la récupération doit se faire sur la cible donnée, par exemple, scrape/metrics en TCP 10252, en passant par l'adresse IP x.x.x.x.
+* Prêt à l'emploi, Monitoring V2 est livré avec certains exportateurs préconfigurés qui sont déployés en fonction du type de cluster Kubernetes sur lequel il est déployé. Pour plus d'informations, voir <<_5_scraping_and_exposing_metrics,Récupération et exposition des métriques>>.
+
+[#_how_pushprox_works]
+=== Comment fonctionne PushProx
+
+* Certains composants internes de Kubernetes sont récupérés via un proxy déployé dans le cadre de Monitoring V2 appelé *PushProx*. Les composants Kubernetes qui exposent des métriques à Prometheus via PushProx sont les suivants{nbsp}:
+`kube-controller-manager`, `kube-scheduler`, `etcd`, et `kube-proxy`.
+* Pour chaque exportateur PushProx, nous déployons un client PushProx sur tous les nœuds cibles. Par exemple, un client PushProx est déployé sur tous les nœuds de controlplane pour kube-controller-manager, tous les nœuds etcd pour kube-etcd, et tous les nœuds pour kubelet.
+* Nous déployons exactement un proxy PushProx par exportateur. Le processus d'exportation des métriques est le suivant{nbsp}:
+
+. Le client PushProx établit une connexion sortante avec le proxy PushProx.
+. Le client interroge ensuite le proxy pour les requêtes de récupération qui sont arrivées au proxy.
+. Lorsque le proxy reçoit une requête de récupération de Prometheus, le client la détecte grâce au sondage.
+. Le client récupère le composant interne.
+. Le composant interne répond en renvoyant des métriques au proxy.
+
+.Processus d'exportation des métriques avec PushProx
+image::pushprox-process.svg[Processus d'exportation des métriques avec PushProx]
+
+[#_prometheusrules]
+=== PrometheusRules
+
+Les PrometheusRules permettent aux utilisateurs de définir des règles pour déterminer quelles métriques ou requêtes de base de données de séries temporelles doivent déclencher des alertes. Les règles sont évaluées à intervalles réguliers.
+
+* *Les règles d'enregistrement* créent une nouvelle série temporelle basée sur des séries existantes qui ont été collectées. Elles sont souvent utilisées pour précalculer des requêtes complexes.
+* *Les règles d'alerte* exécutent une requête particulière et déclenchent une alerte si la requête évalue à une valeur non nulle.
+
+[#_alert_routing]
+=== Routage des alertes
+
+Une fois que Prometheus détermine qu'une alerte doit être déclenchée, les alertes sont transférées à *Alertmanager*.
+
+* Les alertes contiennent des étiquettes provenant de la requête PromQL elle-même ainsi que des étiquettes et annotations supplémentaires qui peuvent être fournies dans le cadre de la spécification de la PrometheusRule initiale.
+* Avant de recevoir des alertes, Alertmanager utilisera les *routes* et *récepteurs* spécifiés dans sa configuration pour former un arbre de routage sur lequel toutes les alertes entrantes sont évaluées. Chaque nœud de l'arbre de routage peut spécifier un regroupement, un étiquetage et un filtrage supplémentaires qui doivent se produire en fonction des étiquettes attachées à l'alerte Prometheus. Un nœud de l'arbre de routage (généralement un nœud terminal) peut également spécifier qu'une alerte qui l'atteint doit être envoyée à un récepteur configuré, par exemple, Slack, PagerDuty, SMS, etc. Notez qu'Alertmanager enverra d'abord une alerte à *alertingDriver*, puis alertingDriver enverra ou transférera l'alerte à la destination appropriée.
+* Les routes et les récepteurs sont également stockés dans l'API Kubernetes via le Secret d'Alertmanager. Lorsque le Secret est mis à jour, Alertmanager est également mis à jour automatiquement. Notez que le routage se fait uniquement via des étiquettes (et non via des annotations, etc.).
+
+[#_2_how_prometheus_works]
+== 2. Comment fonctionne Prometheus
+
+[#_storing_time_series_data]
+=== Stockage des données de séries temporelles
+
+Après avoir collecté des métriques auprès des exportateurs, Prometheus stocke les séries temporelles dans une base de données de séries temporelles locale sur disque. Prometheus s'intègre optionnellement à des systèmes distants, mais `rancher-monitoring` utilise un stockage local pour la base de données de séries temporelles.
+
+Une fois stockées, les utilisateurs peuvent interroger cette TSDB en utilisant PromQL, le langage de requête pour Prometheus.
+
+Les requêtes PromQL peuvent être visualisées de deux manières{nbsp}:
+
+. En fournissant la requête dans l'interface graphique de Prometheus, qui affichera une vue graphique simple des données.
+. En créant un tableau de bord Grafana qui contient la requête PromQL et des directives de formatage supplémentaires qui étiquettent les axes, ajoutent des unités, changent les couleurs, utilisent des visualisations alternatives, etc.
+
+[#_defining_rules_for_prometheus]
+=== Définir des règles pour Prometheus
+
+Les règles définissent des requêtes que Prometheus doit exécuter régulièrement `evaluationInterval` pour effectuer certaines actions, telles que déclencher une alerte (règles d'alerte) ou précalculer une requête basée sur d'autres existant dans sa TSDB (règles d'enregistrement). Ces règles sont encodées dans des ressources personnalisées PrometheusRules. Lorsque des ressources personnalisées PrometheusRule sont créées ou mises à jour, l'Opérateur Prometheus observe le changement et appelle l'API Prometheus pour synchroniser l'ensemble des règles que Prometheus évalue actuellement à intervalles réguliers.
+
+Une PrometheusRule vous permet de définir un ou plusieurs RuleGroups. Chaque RuleGroup se compose d'un ensemble d'objets Rule qui peuvent chacun représenter soit une règle d'alerte, soit une règle d'enregistrement avec les champs suivants{nbsp}:
+
+* Le nom de la nouvelle alerte ou enregistrement
+* Une expression PromQL pour la nouvelle alerte ou enregistrement
+* Des étiquettes qui doivent être attachées à l'alerte ou à l'enregistrement qui l'identifient (par exemple, le nom du cluster ou la gravité)
+* Les annotations codent des éléments d'information supplémentaires importants à afficher dans la notification d'une alerte (par exemple, résumé, description, message, URL du runbook, etc.). Ce champ n'est pas requis pour les règles d'enregistrement.
+
+Lors de l'évaluation d'une https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api-reference/api.md#rule[règle], Prometheus exécute la requête PromQL fournie, ajoute les étiquettes fournies et exécute l'action appropriée pour la règle. Si la règle déclenche une alerte, Prometheus ajoute également les annotations fournies. Par exemple, une règle d'alerte qui ajoute `team: front-end` comme étiquette à la requête PromQL fournie ajoutera cette étiquette à l'alerte déclenchée, ce qui permettra à Alertmanager de transmettre l'alerte au bon destinataire.
+
+[#_alerting_and_recording_rules]
+=== Règles d'alerte et d'enregistrement
+
+Prometheus ne maintient pas l'état des alertes actives. Il déclenche des alertes de manière répétée à chaque intervalle d'évaluation, s'appuyant sur Alertmanager pour regrouper et filtrer les alertes en notifications significatives.
+
+La constante `evaluation_interval` définit la fréquence à laquelle Prometheus évalue ses règles d'alerte par rapport à la base de données de séries temporelles. Semblable au `scrape_interval`, le `evaluation_interval` a également une valeur par défaut d'une minute.
+
+Les règles sont contenues dans un ensemble de fichiers de règles. Les fichiers de règles incluent à la fois des règles d'alerte et des règles d'enregistrement, mais seules les règles d'alerte entraînent le déclenchement d'alertes après leur évaluation.
+
+Pour les règles d'enregistrement, Prometheus exécute une requête, puis la stocke en tant que série temporelle. Cette série temporelle synthétique est utile pour stocker les résultats d'une requête coûteuse ou chronophage afin qu'elle puisse être interrogée plus rapidement à l'avenir.
+
+Les règles d'alerte sont plus couramment utilisées. Chaque fois qu'une règle d'alerte renvoie un nombre positif, Prometheus déclenche une alerte.
+
+Le fichier de règles ajoute des étiquettes et des annotations aux alertes avant de les déclencher, en fonction du cas d'utilisation{nbsp}:
+
+* Les étiquettes indiquent des informations qui identifient l'alerte et pourraient affecter le routage de l'alerte. Par exemple, lors de l'envoi d'une alerte concernant un certain conteneur, l'ID du conteneur pourrait être utilisé comme étiquette.
+* Les annotations désignent des informations qui n'affectent pas le routage d'une alerte, par exemple, un runbook ou un message d'erreur.
+
+[#_3_how_alertmanager_works]
+== 3. Comment fonctionne Alertmanager
+
+L'Alertmanager gère les alertes envoyées par des applications clientes telles que le serveur Prometheus. Il s'occupe des tâches suivantes{nbsp}:
+
+* Dédupliquer, regrouper et router les alertes vers l'intégration du récepteur approprié, telle que l'email, PagerDuty ou OpsGenie
+* Silencer et inhiber les alertes
+* Suivre les alertes qui se déclenchent au fil du temps
+* Envoyer l'état d'une alerte, qu'elle soit actuellement déclenchée ou résolue
+
+[#_alerts_forwarded_by_alertingdrivers]
+=== Alertes transférées par alertingDrivers
+
+Lorsque les alertingDrivers sont installés, cela crée un `Service` qui peut être utilisé comme l'URL du récepteur pour Teams ou SMS, en fonction de la configuration de l'alertingDriver. L'URL dans le récepteur pointe vers les alertingDrivers{nbsp}; ainsi, l'Alertmanager envoie d'abord l'alerte à l'alertingDriver, puis l'alertingDriver transfère ou envoie l'alerte à la destination appropriée.
+
+[#_routing_alerts_to_receivers]
+=== Routage des alertes vers les récepteurs
+
+L'Alertmanager coordonne où les alertes sont envoyées. Il vous permet de regrouper les alertes en fonction des étiquettes et de les déclencher en fonction de la correspondance de certaines étiquettes. Une route de niveau supérieur accepte toutes les alertes. À partir de là, l'Alertmanager continue de router les alertes vers les récepteurs en fonction de la correspondance avec les conditions de la prochaine route.
+
+Bien que les formulaires de l'interface utilisateur de Rancher ne permettent d'éditer qu'un arbre de routage de deux niveaux, vous pouvez configurer des structures de routage plus profondément imbriquées en modifiant le Secret d'Alertmanager.
+
+[#_configuring_multiple_receivers]
+=== Configuration de plusieurs récepteurs
+
+En modifiant les formulaires dans l'interface utilisateur de Rancher, vous pouvez configurer une ressource Récepteur avec toutes les informations nécessaires à l'Alertmanager pour envoyer des alertes à votre système de notification.
+
+En modifiant le YAML personnalisé dans la configuration d'Alertmanager ou de Récepteur, vous pouvez également envoyer des alertes à plusieurs systèmes de notification. Pour plus d'informations, consultez la section sur la configuration de {xref-receivers}#_configuring_multiple_receivers[Récepteurs.]
+
+[#_4_monitoring_v2_specific_components]
+== 4. Composants spécifiques de la surveillance V2
+
+L'opérateur Prometheus introduit un ensemble de https://github.com/prometheus-operator/prometheus-operator#customresourcedefinitions[Définitions de ressources personnalisées] qui permettent aux utilisateurs de déployer et de gérer des instances de Prometheus et d'Alertmanager en créant et en modifiant ces ressources personnalisées sur un cluster.
+
+L'opérateur Prometheus mettra automatiquement à jour votre configuration Prometheus en fonction de l'état en direct des ressources et des options de configuration qui sont modifiées dans l'interface utilisateur de Rancher.
+
+[#_resources_deployed_by_default]
+=== Ressources déployées par défaut
+
+Par défaut, un ensemble de ressources sélectionnées par le projet https://github.com/prometheus-operator/kube-prometheus[kube-prometheus] est déployé sur votre cluster dans le cadre de l'installation de l'application de surveillance Rancher pour configurer une pile de surveillance/alerte de base.
+
+Les ressources qui sont déployées sur votre cluster pour soutenir cette solution se trouvent dans le chart Helm https://github.com/rancher/charts/tree/main/charts/rancher-monitoring[`rancher-monitoring`], qui suit de près le chart Helm https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack[kube-prometheus-stack] en amont maintenu par la communauté Prometheus avec certains changements suivis dans le https://github.com/rancher/charts/blob/main/charts/rancher-monitoring/CHANGELOG.md[CHANGELOG.md].
+
+[#_default_exporters]
+=== Exportateurs par défaut
+
+La surveillance V2 déploie trois exportateurs par défaut qui fournissent des métriques supplémentaires que Prometheus peut stocker{nbsp}:
+
+. `node-exporter` : expose des métriques matérielles et système d'exploitation pour les hôtes Linux. Pour plus d'informations sur `node-exporter`, consultez la https://prometheus.io/docs/guides/node-exporter/[documentation en amont].
+. `windows-exporter` : expose des métriques matérielles et système d'exploitation pour les hôtes Windows (déployé uniquement sur des clusters Windows). Pour plus d'informations sur `windows-exporter`, consultez la https://github.com/prometheus-community/windows_exporter[documentation en amont].
+. `kube-state-metrics` : expose des métriques supplémentaires qui suivent l'état des ressources contenues dans l'API Kubernetes (par exemple, pods, charges de travail, etc.). Pour plus d'informations sur `kube-state-metrics`, consultez la https://github.com/kubernetes/kube-state-metrics/tree/master/docs[documentation en amont].
+
+Les ServiceMonitors et PodMonitors vont interroger ces exportateurs, comme défini <<_defining_what_metrics_are_scraped,ici>>. Prometheus stocke ces métriques, et vous pouvez interroger les résultats via l'interface utilisateur de Prometheus ou Grafana.
+
+Voir la section <<_1_architecture_overview,architecture>> pour plus d'informations sur les règles d'enregistrement, les règles d'alerte et Alertmanager.
+
+[#_components_exposed_in_the_rancher_ui]
+=== Composants exposés dans l'interface utilisateur Rancher
+
+Lorsque l'application de surveillance est installée, vous pourrez modifier les composants suivants dans l'interface utilisateur de Rancher{nbsp}:
+
+|===
+| Composant | Type de composant | Objectif et cas d'utilisation courants pour l'édition
+
+| ServiceMonitor
+| Ressource personnalisée
+| Configure les services Kubernetes pour interroger des métriques personnalisées. Met à jour automatiquement la configuration de scraping dans la ressource personnalisée Prometheus.
+
+| PodMonitor
+| Ressource personnalisée
+| Configure des Pods Kubernetes pour interroger des métriques personnalisées. Met à jour automatiquement la configuration de scraping dans la ressource personnalisée Prometheus.
+
+| Récepteur
+| Bloc de configuration (partie d'Alertmanager)
+| Modifie les informations sur l'endroit où envoyer une alerte (par exemple, Slack, PagerDuty, etc.) et toute information nécessaire pour envoyer l'alerte (par exemple, certificats TLS, URLs de proxy, etc.). Met à jour automatiquement la ressource personnalisée Alertmanager.
+
+| Route
+| Bloc de configuration (partie d'Alertmanager)
+| Modifie l'arbre de routage utilisé pour filtrer, étiqueter et regrouper les alertes en fonction des étiquettes et les envoyer au récepteur approprié. Met à jour automatiquement la ressource personnalisée Alertmanager.
+
+| Règle Prometheus
+| Ressource personnalisée
+| Définit des requêtes supplémentaires qui doivent déclencher des alertes ou définir des vues matérialisées de séries existantes dans la TSDB de Prometheus.  Met à jour automatiquement la ressource personnalisée Prometheus.
+|===
+
+[#_pushprox]
+=== PushProx
+
+PushProx permet à Prometheus d'extraire des métriques à travers une frontière réseau, ce qui empêche les utilisateurs d'avoir à exposer des ports de métriques pour les composants internes de Kubernetes sur chaque nœud d'un cluster Kubernetes.
+
+Étant donné que les métriques pour les composants Kubernetes sont généralement exposées sur le réseau hôte des nœuds dans le cluster, PushProx déploie un DaemonSet de clients qui se trouvent sur le réseau hôte de chaque nœud et établissent une connexion sortante vers un seul proxy qui se trouve sur l'API Kubernetes. Prometheus peut ensuite être configuré pour proxy les requêtes de scraping à travers le proxy vers chaque client, ce qui lui permet d'extraire des métriques des composants internes de Kubernetes sans nécessiter l'ouverture de ports de nœud entrants.
+
+Consultez <<_scraping_metrics_with_pushprox,Scraping Metrics with PushProx>> pour plus d'informations.
+
+[#_5_scraping_and_exposing_metrics]
+== 5. Extraction et exposition des métriques
+
+[#_defining_what_metrics_are_scraped]
+=== Définir quelles métriques sont extraites
+
+ServiceMonitors et PodMonitors définissent des cibles destinées à être interrogées par Prometheus. La https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/getting-started/design.md#prometheus[ressource personnalisée Prometheus] indique à Prometheus quels ServiceMonitors ou PodMonitors il doit utiliser pour savoir d'où interroger les métriques.
+
+L'Opérateur Prometheus observe les ServiceMonitors et PodMonitors. Lorsqu'il observe qu'ils sont créés ou mis à jour, il appelle l'API Prometheus pour mettre à jour la configuration de scraping dans la ressource personnalisée Prometheus et la maintenir synchronisée avec la configuration de scraping dans les ServiceMonitors ou PodMonitors. Cette configuration de scraping indique à Prometheus depuis quels points de terminaison scraper les métriques et comment il étiquettera les métriques de ces points de terminaison.
+
+Prometheus scrappe toutes les métriques définies dans sa configuration de scraping à chaque `scrape_interval`, ce qui correspond à une minute par défaut.
+
+La configuration de scraping peut être vue comme faisant partie de la ressource personnalisée de Prometheus qui est exposée dans l'interface utilisateur de Rancher.
+
+[#_how_the_prometheus_operator_sets_up_metrics_scraping]
+=== Comment l'Opérateur Prometheus configure le scraping des métriques
+
+Le déploiement ou StatefulSet de Prometheus scrappe les métriques, et la configuration de Prometheus est contrôlée par les ressources personnalisées de Prometheus. L'Opérateur Prometheus surveille les ressources Prometheus et Alertmanager, et lorsqu'elles sont créées, l'Opérateur Prometheus crée un déploiement ou StatefulSet pour Prometheus ou Alertmanager avec la configuration définie par l'utilisateur.
+
+Lorsque l'Opérateur Prometheus observe la création de ServiceMonitors, PodMonitors et PrometheusRules, il sait que la configuration de scraping doit être mise à jour dans Prometheus. Il met à jour Prometheus en commençant par mettre à jour les fichiers de configuration et de règles dans les volumes du déploiement ou StatefulSet de Prometheus. Ensuite, il appelle l'API de Prometheus pour synchroniser la nouvelle configuration, ce qui entraîne la modification en place du déploiement ou StatefulSet de Prometheus.
+
+[#_how_kubernetes_component_metrics_are_exposed]
+=== Comment les métriques des composants Kubernetes sont exposées
+
+Prometheus scrappe les métriques des déploiements connus sous le nom de https://prometheus.io/docs/instrumenting/exporters/[exporters,] qui exportent les données de séries temporelles dans un format que Prometheus peut ingérer. Dans Prometheus, les séries temporelles consistent en des flux de valeurs horodatées appartenant à la même métrique et au même ensemble de dimensions étiquetées.
+
+[#_scraping_metrics_with_pushprox]
+=== Scraping des métriques avec PushProx
+
+Certains composants internes de Kubernetes sont scrappés via un proxy déployé dans le cadre de Monitoring V2 appelé PushProx. Pour des informations détaillées sur PushProx, référez-vous <<_how_pushprox_works,ici>> et à la section <<_1_architecture_overview,architecture>> ci-dessus.
+
+[#_scraping_metrics]
+=== Scraping des métriques
+
+Les composants Kubernetes suivants sont directement scrappés par Prometheus{nbsp}:
+
+* kubelet*
+* Traefik**
+* coreDns/kubeDns
+* kube-api-server
+
+* Vous pouvez utiliser `hardenedKubelet.enabled` pour utiliser un PushProx, mais ce n'est pas la valeur par défaut.
+
+** Pour les clusters RKE2, Traefik est déployé par défaut et considéré comme un composant interne de Kubernetes.
+
+[#_scraping_metrics_based_on_kubernetes_distribution]
+=== Collecte de métriques en fonction de la distribution Kubernetes
+
+Les métriques sont collectées différemment en fonction de la distribution Kubernetes. Pour de l'aide avec la terminologie, référez-vous <<_terminology,ici>>. Pour plus de détails, consultez le tableau ci-dessous{nbsp}:
+
+.Comment les métriques sont exposées à Prometheus
+|===
+| Composant Kubernetes | RKE2 | KubeADM | K3s
+
+| kube-controller-manager
+| rke2ControllerManager.enabled
+| kubeAdmControllerManager.enabled
+| k3sServer.enabled
+
+| kube-scheduler
+| rke2Scheduler.enabled
+| kubeAdmScheduler.enabled
+| k3sServer.enabled
+
+| etcd
+| rke2Etcd.enabled
+| kubeAdmEtcd.enabled
+| Non disponible
+
+| kube-proxy
+| rke2Proxy.enabled
+| kubeAdmProxy.enabled
+| k3sServer.enabled
+
+| kubelet
+| Collecte des métriques directement exposées par kubelet
+| Collecte des métriques directement exposées par kubelet
+| Collecte des métriques directement exposées par kubelet
+
+| Traefik*
+| Collecte des métriques directement exposées par kubelet
+| Non disponible
+| Non disponible
+
+| coreDns/kubeDns
+| Collecte des métriques directement exposées par coreDns/kubeDns
+| Collecte des métriques directement exposées par coreDns/kubeDns
+| Collecte des métriques directement exposées par coreDns/kubeDns
+
+| kube-api-server
+| Collecte des métriques directement exposées par kube-api-server
+| Collecte des métriques directement exposées par kube-appi-server
+| Collecte des métriques directement exposées par kube-api-server
+|===
+
+* Pour les clusters RKE2, Traefik est déployé par défaut et considéré comme un composant interne de Kubernetes.
+
+[#_terminology]
+=== Terminologie
+
+* *kube-scheduler:* Le composant interne de Kubernetes qui utilise les informations dans la spécification du pod pour décider sur quel nœud exécuter un pod.
+* *kube-controller-manager:* Le composant interne de Kubernetes qui est responsable de la gestion des nœuds (détection des pannes de nœuds), de la réplication des pods et de la création des points de terminaison.
+* *etcd:* Le composant interne de Kubernetes qui est le magasin clé/valeur distribué que Kubernetes utilise pour le stockage persistant de toutes les informations du cluster.
+* *kube-proxy:* Le composant interne de Kubernetes qui surveille le serveur API pour les changements de pods/services afin de maintenir le réseau à jour.
+* *kubelet:* Le composant interne de Kubernetes qui surveille le serveur API pour les pods sur un nœud et s'assure qu'ils sont en cours d'exécution.
+* *Traefik\&nbsp;:* Un contrôleur Ingress pour Kubernetes qui peut être utilisé comme un proxy inverse et un équilibreur de charge.
+* *coreDns/kubeDns:* Le composant interne de Kubernetes responsable du DNS.
+* *kube-api-server:* Le principal composant interne de Kubernetes qui est responsable de l'exposition des API pour les autres composants maîtres.

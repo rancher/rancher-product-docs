@@ -1,0 +1,775 @@
+= Aktivierung des API-Auditprotokolls zur Aufzeichnung von Systemereignissen
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-27
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-api-audit-log.adoc 
+:product-path: observability/logging/enable-api-audit-log.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-logging: xref:observability/logging/logging.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-logging: xref:integrations-in-rancher/logging/index.adoc
+endif::[]
+
+Sie können das API-Auditprotokoll aktivieren, um die Reihenfolge der von einzelnen Benutzern initiierten Systemereignisse aufzuzeichnen. Sie können nachvollziehen, was passiert ist, wann es passiert ist, wer es initiiert hat und welchen Cluster es betroffen hat. Wenn Sie diese Funktion aktivieren, werden alle Anfragen an die Rancher-API und alle Antworten darauf in ein Protokoll geschrieben.
+
+Sie können API-Auditing während der Rancher-Installation oder eines Upgrades aktivieren.
+
+[#_enabling_api_audit_log]
+== Aktivierung des API-Auditprotokolls
+
+Das Auditprotokoll ist aktiviert und wird konfiguriert, indem Umgebungsvariablen an den Rancher-Server-Container übergeben werden. Siehe Folgendes, um es in Ihrer Installation zu aktivieren.
+
+* {xref-helm-chart-options}#_api_audit_log[Kubernetes Install]
+
+[#_api_audit_log_options]
+== Optionen für das API-Auditprotokoll
+
+Die folgende Nutzung definiert Regeln darüber, was das Auditprotokoll aufzeichnen und welche Daten es enthalten soll:
+
+|===
+| Parameter | Beschreibung
+
+| `AUDIT_LOG_ENABLED`
+| `false` - Deaktiviert das Auditprotokoll (Standardeinstellung). +
+ +
+`true` - Aktiviert das Auditprotokoll.
+
+| `AUDIT_LEVEL`
+| `0` - Protokolliert Anforderungs- und Antwortmetadaten (Standardeinstellung). +
+`1` - Protokolliert Anforderungs- und Antwortheader. +
+`2` - Protokolliert den Anfragekörper +
+`3` - Protokolliert den Antwortkörper. Jede Protokollebene ist kumulativ und jede nachfolgende Ebene protokolliert die Daten der vorherigen Ebene. Jede Protokolltransaktion für ein Anforderungs-/Antwortpaar verwendet denselben `auditID` Wert. +
+ +
+Siehe <<_audit_log_levels,Audit Level Logging>> für eine Tabelle, die anzeigt, was jede Einstellung protokolliert.
+
+| `AUDIT_LOG_PATH`
+| Protokollpfad für die Rancher Server API. Der Standardpfad lautet `/var/log/auditlog/rancher-api-audit.log`. Sie können das Protokollverzeichnis auf den Host einbinden. +
+ +
+Beispiel für die Verwendung: `AUDIT_LOG_PATH=/my/custom/path/`
+
+
+
+| `AUDIT_LOG_MAXAGE`
+| Definiert die maximale Anzahl von Tagen, um alte Protokolldateien aufzubewahren. Der Standardwert beträgt 10 Tage.
+
+| `AUDIT_LOG_MAXBACKUP`
+| Definiert die maximale Anzahl von Protokolldateien, die aufbewahrt werden sollen. Der Standardwert ist 10.
+
+| `AUDIT_LOG_MAXSIZE`
+| Definiert die maximale Größe in Megabyte der Protokolldatei, bevor sie rotiert wird. Die Standardgröße beträgt 100M.
+|===
+
+{blank}
+
+[#_audit_log_levels]
+=== Prüfprotokollstufen
+
+Die folgende Tabelle zeigt, welche Teile der API-Transaktionen für jede <<_api_audit_log_options,`AUDIT_LEVEL`>> Einstellung protokolliert werden.
+
+|===
+| `AUDIT_LEVEL` Einstellung | Metadata (Metadaten) | Anforderungsheader | Antwortheader | Anforderungskörper | Antwortkörper
+
+| `0`
+| ✓
+|
+|
+|
+|
+
+| `1`
+| ✓
+| ✓
+| ✓
+|
+|
+
+| `2`
+| ✓
+| ✓
+| ✓
+| ✓
+|
+
+
+| `3`
+| ✓
+| ✓
+| ✓
+| ✓
+| ✓
+
+|===
+
+[#_audit_log_policies]
+== Auditprotokollrichtlinien
+
+Auditprotokollrichtlinien ermöglichen es Endbenutzern, Redaktionen mithilfe von `AuditPolicy` cluster-scoped CRs zusätzlich zu den <<Default redactions & filters,Standardredaktionen und -filtern>> zu konfigurieren.
+
+Alle konfigurierten Auditprotokollrichtlinien sind additiv.
+
+Redaktionsrichtlinien für Header verwenden eine reguläre Ausdrucks- (Regex-)Engine, um Header zu redigieren, während eine JSONPath-Engine verwendet wird, um Anforderungs-/Antwortheader zu redigieren.
+
+Die JSONPath-Engine unterstützt keine Skript- oder Filterausdrücke. Um mit JSONPath-Ausdrücken zu beginnen, ist eine gute Ressource, die zu konsultieren ist, https://goessner.net/articles/JsonPath/[Stafan Goessners Artikel über JSONPath].
+
+Die Struktur einer Auditprotokollrichtlinien-CR ist wie folgt:
+
+[,yaml]
+----
+apiVersion: auditlog.cattle.io/v1
+kind: AuditPolicy
+spec:
+  enabled : true # true/false
+  # list of API request filters
+  filters:
+    - action: allow # allow/deny
+        # would allow logs sent to "/foo/some/endpoint" but not "/foo" or "/foobar".
+      requestURI: "/foo/.*"
+  # additionalRedactions allows configuration of redactions on headers using `jsonpath` expressions
+  additionalRedactions:
+    # redacts headers based on regex expressions
+    - headers:
+      - "Cache.*"
+      # paths redacts information from request and response bodies based on json path expressions
+      paths: 
+      - "$.gitCommit"
+  verbosity:
+    level : 0 # matches the levels in the above audit log table
+    # request allows fine-grained control over which request data 
+    # gets included. This overrides the behaviour of the generic verbosity.level
+    request:
+      headers : true # true/false
+      body : true # true/false
+    # response allows fine-grained control over which response data 
+    # gets included. This overrides the behaviour of the generic verbosity.level
+    response:
+      headers : true # true/false
+      body: true # true/false
+----
+
+[#_examples]
+=== Beispiele
+
+Das folgende Beispiel zeigt, wie nur Anfragen, die `login` im Anfragepfad enthalten, im Audit-Protokollpfad protokolliert werden:
+
+[,yaml]
+----
+apiVersion: auditlog.cattle.io/v1
+kind: AuditPolicy
+metadata:
+  name: filters
+spec:
+  filters:
+    - action: deny
+      requestUri: ".*"
+    - action: allow
+      requestUri: ".*login.*"
+----
+
+Das folgende Beispiel zeigt, wie spezifische Felder, die `gitCommint` in den Anfrage- und Antwortkörpern enthalten, redigiert werden können:
+
+[,yaml]
+----
+apiVersion: auditlog.cattle.io/v1
+kind: AuditPolicy
+metadata:
+  name: redactions
+spec:
+  additionalRedactions:
+    - paths:
+      - "$.gitCommit"
+----
+
+[#_default_redactions_filters]
+=== Standardredaktionen und -filter
+
+Der Auditprotokoll-Controller kommt mit standardmäßig integrierten Redaktionen für häufige sensible Informationen.
+
+[#_redacted_headers]
+==== Redigierte Header
+
+Allgemeine Header:
+
+* `Cookie`
+* `Set-Cookie`
+* `X-Api-Set-Cookie-Header`
+* `Authorization`
+* `X-Api-Tunnel-Params`
+* `X-Api-Tunnel-Token`
+* `X-Api-Auth-Header`
+* `X-Amz-Security-Token`
+
+[#_redacted_body_fields]
+==== Redigierte Körperfelder
+
+Allgemeine Körperfelder:
+
+* `credentials`
+* `applicationSecret`
+* `oauthCredential`
+* `serviceAccountCredential`
+* `spKey`
+* `spCert`
+* `certificate`
+* `privateKey`
+* `secretsEncryptionConfig`
+* `manifestUrl`
+* `insecureWindowsNodeCommand`
+* `insecureNodeCommand`
+* `insecureCommand`
+* `command`
+* `nodeCommand`
+* `windowsNodeCommand`
+* `clientRandom`
+
+Allgemeiner Körper-Regex-Redaktor:
+
+- `".*([pP]assword|[Kk]ube[Cc]onfig|[Tt]oken).*"`
+
+[#_cluster_driver]
+==== Cluster-Treiber
+
+Standardmäßig werden alle API-Anfragen mit Feldern, die an Cluster-Treiber gebunden sind, vom Auditprotokoll-Controller redigiert, sofern sie nicht `public*` oder `optional*` sind.
+
+[#_redacted_uris]
+==== Redigierte URIs
+
+Jeder Endpunkt, der `secrets` oder `configmaps` enthält, sorgt dafür, dass relevante Felder aus den Anfrage- und Antwortkörpern entfernt werden. Zusätzlich wird bei jedem Endpunkt, der `/v3/imports/*` enthält, die URI redigiert.
+
+[#_viewing_api_audit_logs]
+== Anzeigen von API-Audit-Protokollen
+
+[#_docker_install]
+=== Docker-Installation
+
+Teilen Sie das `AUDIT_LOG_PATH`-Verzeichnis (Standard: `/var/log/auditlog`) mit dem Host-System. Das Protokoll kann mit Standard-Kommandozeilenschnittstellen-Tools analysiert oder an ein Protokollsammlungswerkzeug wie Fluentd, Filebeat, Logstash usw. weitergeleitet werden.
+
+[#_kubernetes_install]
+=== Kubernetes Install
+
+Die Aktivierung des API-Auditprotokolls mittels Helm-Chart-Installation erstellt einen `rancher-audit-log`-Sidecar-Container im Rancher-Pod. Dieser Container streamt das Protokoll an die Standardausgabe (stdout). Sie können das Protokoll wie jedes andere Containerprotokoll anzeigen.
+
+Der `rancher-audit-log` Container ist Teil des `rancher` Pods im `cattle-system` Namespace.
+
+[#_cli]
+==== CLI
+
+[,bash]
+----
+kubectl -n cattle-system logs -f rancher-84d886bdbb-s4s69 rancher-audit-log
+----
+
+[#_shipping_the_audit_log]
+==== Versand des Auditprotokolls
+
+Sie können die integrierte Protokollsammlung und den Versand von Rancher aktivieren, um die Audit- und andere Dienstprotokolle an einen unterstützten Sammlungspunkt zu versenden. Siehe {xref-logging}[Rancher-Tools - Protokollierung] für Details.
+
+[#_audit_log_samples]
+== Beispiele für Auditprotokolle
+
+Nachdem Sie die Protokollierung aktiviert haben, wird jede API-Anfrage oder -Antwort von Rancher in Form von JSON protokolliert. Jedes der folgenden Codebeispiele bietet Beispiele dafür, wie man jede API-Transaktion identifiziert.
+
+[#_metadata_level]
+=== Metadatenebene
+
+Wenn Sie Ihre `AUDIT_LEVEL` auf `0` setzen, protokolliert Rancher den Metadaten-Header für jede API-Anfrage, jedoch weder den Anforderungskörper noch die Anforderungs- und Antwortheader. Die Metadaten bieten grundlegende Informationen über die API-Transaktion, wie die Transaktions-ID, den Initiator der Transaktion, die Zeit, zu der sie stattfand, usw.
+
+[,json]
+----
+{
+  "auditID": "40bd4e40-875b-4020-933e-4c4f4c4db366",
+  "requestURI": "/v3/schemas",
+  "user": {
+      "name": "user-6j5s6",
+      "group": [
+          "system:authenticated",
+          "system:cattle:authenticated"
+      ],
+      "extra": {
+          "principalid": [
+              "local://user-6j5s6"
+          ],
+          "requesthost": [
+              "localhost:8443"
+          ],
+          "requesttokenid": [
+              "token-zs42h"
+          ],
+          "username": [
+              "admin"
+          ]
+      }
+  },
+  "method": "GET",
+  "remoteAddr": "127.0.0.1:58652",
+  "responseCode": 200,
+  "requestTimestamp": "2025-06-30T11:13:25-04:00",
+  "responseTimestamp": "2025-06-30T11:13:25-04:00"
+}
+----
+
+[#_metadata_and_headers_level]
+=== Metadaten- und Header-Ebene
+
+Wenn Sie Ihre `AUDIT_LEVEL` auf `1` setzen, protokolliert Rancher die Metadaten sowie die Anforderungs- und Antwortheader für jede API-Anfrage.
+
+[,json]
+----
+{
+    "auditID": "f8c83dc6-a080-4e2e-ab43-552bddf01716",
+    "requestURI": "/v1/apps.deployments?page=1&pagesize=100&sort=metadata.name&filter=metadata.namespace!=p-npsl5&filter=metadata.namespace!=p-nzp6c&filter=metadata.namespace!=cattle-fleet-clusters-system&filter=metadata.namespace!=cattle-fleet-system&filter=metadata.namespace!=cattle-global-data&filter=metadata.namespace!=cattle-impersonation-system&filter=metadata.namespace!=cattle-provisioning-capi-system&filter=metadata.namespace!=cattle-system&filter=metadata.namespace!=cattle-ui-plugin-system&filter=metadata.namespace!=cluster-fleet-local-local-1a3d67d0a899&filter=metadata.namespace!=fleet-default&filter=metadata.namespace!=fleet-local&filter=metadata.namespace!=kube-node-lease&filter=metadata.namespace!=kube-public&filter=metadata.namespace!=kube-system&exclude=metadata.managedFields",
+    "user": {
+        "name": "user-6j5s6",
+        "group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "extra": {
+            "principalid": [
+                "local://user-6j5s6"
+            ],
+            "requesthost": [
+                "localhost:8443"
+            ],
+            "requesttokenid": [
+                "token-zs42h"
+            ],
+            "username": [
+                "admin"
+            ]
+        }
+    },
+    "method": "GET",
+    "remoteAddr": "127.0.0.1:58833",
+    "responseCode": 200,
+    "requestTimestamp": "2025-06-30T11:17:04-04:00",
+    "responseTimestamp": "2025-06-30T11:17:04-04:00",
+    "requestHeader": {
+        "Accept": [
+            "application/json"
+        ],
+        "Accept-Encoding": [
+            "gzip, deflate, br, zstd"
+        ],
+        "Accept-Language": [
+            "en-US,en;q=0.5"
+        ],
+        "Connection": [
+            "keep-alive"
+        ],
+        "Cookie": [
+            "[redacted]"
+        ],
+        "Referer": [
+            "https://localhost:8443/dashboard/c/local/explorer/apps.deployment"
+        ],
+        "Sec-Fetch-Dest": [
+            "empty"
+        ],
+        "Sec-Fetch-Mode": [
+            "cors"
+        ],
+        "Sec-Fetch-Site": [
+            "same-origin"
+        ],
+        "User-Agent": [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        ],
+        "X-Api-Csrf": [
+            "fccc690cab7b0c169b3fc6527edadef3"
+        ]
+    },
+    "responseHeader": {
+        "Cache-Control": [
+            "no-cache, no-store, must-revalidate"
+        ],
+        "Content-Encoding": [
+            "gzip"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Expires": [
+            "Wed 24 Feb 1982 18:42:00 GMT"
+        ],
+        "X-Api-Cattle-Auth": [
+            "true"
+        ],
+        "X-Api-Schemas": [
+            "https://localhost:8443/v1/schemas"
+        ],
+        "X-Content-Type-Options": [
+            "nosniff"
+        ]
+    }
+}
+----
+
+[#_metadata_headers_and_request_body_level]
+=== Metadaten, Header und Anforderungskörper-Ebene
+
+Wenn Sie Ihre `AUDIT_LEVEL` auf `2` setzen, protokolliert Rancher die Metadaten, die Anfrage- und Antwortheader sowie den Anforderungskörper für jede API-Anfrage.
+
+Das folgende Codebeispiel zeigt eine API-Anfrage mit ihren Metadaten, Headern und dem Anforderungskörper.
+
+[#_request]
+==== Anforderung
+
+Das folgende Codebeispiel zeigt eine API-Anfrage, einschließlich ihres Metadaten-Headers und ihres Anforderungskörpers.
+
+[,json]
+----
+{
+    "auditID": "d1088a09-2a13-4450-970e-0d44bd2c49ee",
+    "requestURI": "/v3/projects",
+    "user": {
+        "name": "user-6j5s6",
+        "group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "extra": {
+            "principalid": [
+                "local://user-6j5s6"
+            ],
+            "requesthost": [
+                "localhost:8443"
+            ],
+            "requesttokenid": [
+                "token-zs42h"
+            ],
+            "username": [
+                "admin"
+            ]
+        }
+    },
+    "method": "POST",
+    "remoteAddr": "127.0.0.1:49966",
+    "responseCode": 201,
+    "requestTimestamp": "2025-06-30T12:32:13-04:00",
+    "responseTimestamp": "2025-06-30T12:32:13-04:00",
+    "requestHeader": {
+        "Accept": [
+            "application/json"
+        ],
+        "Accept-Encoding": [
+            "gzip, deflate, br, zstd"
+        ],
+        "Accept-Language": [
+            "en-US,en;q=0.5"
+        ],
+        "Connection": [
+            "keep-alive"
+        ],
+        "Content-Length": [
+            "214"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Cookie": [
+            "[redacted]"
+        ],
+        "Impersonate-Extra-Principalid": [
+            "local://user-6j5s6"
+        ],
+        "Impersonate-Extra-Requesthost": [
+            "localhost:8443"
+        ],
+        "Impersonate-Extra-Requesttokenid": [
+            "token-zs42h"
+        ],
+        "Impersonate-Extra-Username": [
+            "admin"
+        ],
+        "Impersonate-Group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "Impersonate-User": [
+            "user-6j5s6"
+        ],
+        "Origin": [
+            "https://localhost:8443"
+        ],
+        "Priority": [
+            "u=0"
+        ],
+        "Referer": [
+            "https://localhost:8443/dashboard/c/local/explorer/management.cattle.io.project/create"
+        ],
+        "Sec-Fetch-Dest": [
+            "empty"
+        ],
+        "Sec-Fetch-Mode": [
+            "cors"
+        ],
+        "Sec-Fetch-Site": [
+            "same-origin"
+        ],
+        "User-Agent": [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        ],
+        "X-Api-Csrf": [
+            "fccc690cab7b0c169b3fc6527edadef3"
+        ]
+    },
+    "responseHeader": {
+        "Cache-Control": [
+            "no-cache, no-store, must-revalidate"
+        ],
+        "Content-Encoding": [
+            "gzip"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Expires": [
+            "Wed 24 Feb 1982 18:42:00 GMT"
+        ],
+        "X-Api-Cattle-Auth": [
+            "true"
+        ],
+        "X-Api-Schemas": [
+            "https://localhost:8443/v3/project/schemas"
+        ],
+        "X-Content-Type-Options": [
+            "nosniff"
+        ]
+    },
+    "requestBody": {
+        "annotations": {},
+        "clusterId": "local",
+        "containerDefaultResourceLimit": {},
+        "creatorId": "local://user-6j5s6",
+        "labels": {},
+        "name": "example-project",
+        "namespaceDefaultResourceQuota": {},
+        "resourceQuota": {},
+        "type": "project"
+    }
+}
+----
+
+[#_metadata_headers_request_body_and_response_body_level]
+==== Metadaten-, Header-, Anforderungskörper- und Antwortkörper-Ebene
+
+Wenn Sie Ihr `AUDIT_LEVEL` auf `3` setzen, protokolliert Rancher die Metadaten, die Anfrage- und Antwortheader sowie den Anforderungskörper und den Antwortkörper.
+
+Das folgende Codebeispiel zeigt ein Beispiel für eine API-Anfrage, bei der diese Informationen protokolliert werden.
+
+[,json]
+----
+{
+    "auditID": "a9549a5b-4351-4bd5-adcd-12f7ec667a6b",
+    "requestURI": "/v3/projects",
+    "user": {
+        "name": "user-6j5s6",
+        "group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "extra": {
+            "principalid": [
+                "local://user-6j5s6"
+            ],
+            "requesthost": [
+                "localhost:8443"
+            ],
+            "requesttokenid": [
+                "token-zs42h"
+            ],
+            "username": [
+                "admin"
+            ]
+        }
+    },
+    "method": "POST",
+    "remoteAddr": "127.0.0.1:50454",
+    "responseCode": 201,
+    "requestTimestamp": "2025-06-30T12:42:24-04:00",
+    "responseTimestamp": "2025-06-30T12:42:24-04:00",
+    "requestHeader": {
+        "Accept": [
+            "application/json"
+        ],
+        "Accept-Encoding": [
+            "gzip, deflate, br, zstd"
+        ],
+        "Accept-Language": [
+            "en-US,en;q=0.5"
+        ],
+        "Connection": [
+            "keep-alive"
+        ],
+        "Content-Length": [
+            "214"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Cookie": [
+            "[redacted]"
+        ],
+        "Impersonate-Extra-Principalid": [
+            "local://user-6j5s6"
+        ],
+        "Impersonate-Extra-Requesthost": [
+            "localhost:8443"
+        ],
+        "Impersonate-Extra-Requesttokenid": [
+            "token-zs42h"
+        ],
+        "Impersonate-Extra-Username": [
+            "admin"
+        ],
+        "Impersonate-Group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "Impersonate-User": [
+            "user-6j5s6"
+        ],
+        "Origin": [
+            "https://localhost:8443"
+        ],
+        "Priority": [
+            "u=0"
+        ],
+        "Referer": [
+            "https://localhost:8443/dashboard/c/local/explorer/management.cattle.io.project/create"
+        ],
+        "Sec-Fetch-Dest": [
+            "empty"
+        ],
+        "Sec-Fetch-Mode": [
+            "cors"
+        ],
+        "Sec-Fetch-Site": [
+            "same-origin"
+        ],
+        "User-Agent": [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        ],
+        "X-Api-Csrf": [
+            "fccc690cab7b0c169b3fc6527edadef3"
+        ]
+    },
+    "responseHeader": {
+        "Cache-Control": [
+            "no-cache, no-store, must-revalidate"
+        ],
+        "Content-Encoding": [
+            "gzip"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Expires": [
+            "Wed 24 Feb 1982 18:42:00 GMT"
+        ],
+        "X-Api-Cattle-Auth": [
+            "true"
+        ],
+        "X-Api-Schemas": [
+            "https://localhost:8443/v3/project/schemas"
+        ],
+        "X-Content-Type-Options": [
+            "nosniff"
+        ]
+    },
+    "requestBody": {
+        "annotations": {},
+        "clusterId": "local",
+        "containerDefaultResourceLimit": {},
+        "creatorId": "local://user-6j5s6",
+        "labels": {},
+        "name": "example-project",
+        "namespaceDefaultResourceQuota": {},
+        "resourceQuota": {},
+        "type": "project"
+    },
+    "responseBody": {
+        "actions": {
+            "exportYaml": "https://localhost:8443/v3/projects/local:p-qt6tq?action=exportYaml"
+        },
+        "annotations": {
+            "authz.management.cattle.io/creator-role-bindings": "{\"required\":[\"project-owner\"]}"
+        },
+        "backingNamespace": "local-p-qt6tq",
+        "baseType": "project",
+        "clusterId": "local",
+        "containerDefaultResourceLimit": {
+            "type": "/v3/schemas/containerResourceLimit"
+        },
+        "created": "2025-06-30T16:42:24Z",
+        "createdTS": 1751301744000,
+        "creatorId": "user-6j5s6",
+        "id": "local:p-qt6tq",
+        "labels": {
+            "cattle.io/creator": "norman"
+        },
+        "links": {
+            "basicAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/basicauths",
+            "certificates": "https://localhost:8443/v3/projects/local:p-qt6tq/certificates",
+            "configMaps": "https://localhost:8443/v3/projects/local:p-qt6tq/configmaps",
+            "cronJobs": "https://localhost:8443/v3/projects/local:p-qt6tq/cronjobs",
+            "daemonSets": "https://localhost:8443/v3/projects/local:p-qt6tq/daemonsets",
+            "deployments": "https://localhost:8443/v3/projects/local:p-qt6tq/deployments",
+            "dnsRecords": "https://localhost:8443/v3/projects/local:p-qt6tq/dnsrecords",
+            "dockerCredentials": "https://localhost:8443/v3/projects/local:p-qt6tq/dockercredentials",
+            "horizontalPodAutoscalers": "https://localhost:8443/v3/projects/local:p-qt6tq/horizontalpodautoscalers",
+            "ingresses": "https://localhost:8443/v3/projects/local:p-qt6tq/ingresses",
+            "jobs": "https://localhost:8443/v3/projects/local:p-qt6tq/jobs",
+            "namespacedBasicAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedbasicauths",
+            "namespacedCertificates": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedcertificates",
+            "namespacedDockerCredentials": "https://localhost:8443/v3/projects/local:p-qt6tq/namespaceddockercredentials",
+            "namespacedSecrets": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedsecrets",
+            "namespacedServiceAccountTokens": "[redacted]",
+            "namespacedSshAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedsshauths",
+            "persistentVolumeClaims": "https://localhost:8443/v3/projects/local:p-qt6tq/persistentvolumeclaims",
+            "pods": "https://localhost:8443/v3/projects/local:p-qt6tq/pods",
+            "projectNetworkPolicies": "https://localhost:8443/v3/projects/local:p-qt6tq/projectnetworkpolicies",
+            "projectRoleTemplateBindings": "https://localhost:8443/v3/projects/local:p-qt6tq/projectroletemplatebindings",
+            "remove": "https://localhost:8443/v3/projects/local:p-qt6tq",
+            "replicaSets": "https://localhost:8443/v3/projects/local:p-qt6tq/replicasets",
+            "replicationControllers": "https://localhost:8443/v3/projects/local:p-qt6tq/replicationcontrollers",
+            "secrets": "https://localhost:8443/v3/projects/local:p-qt6tq/secrets",
+            "self": "https://localhost:8443/v3/projects/local:p-qt6tq",
+            "serviceAccountTokens": "[redacted]",
+            "services": "https://localhost:8443/v3/projects/local:p-qt6tq/services",
+            "sshAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/sshauths",
+            "statefulSets": "https://localhost:8443/v3/projects/local:p-qt6tq/statefulsets",
+            "subscribe": "https://localhost:8443/v3/projects/local:p-qt6tq/subscribe",
+            "update": "https://localhost:8443/v3/projects/local:p-qt6tq",
+            "workloads": "https://localhost:8443/v3/projects/local:p-qt6tq/workloads"
+        },
+        "name": "example-project",
+        "namespaceDefaultResourceQuota": {
+            "limit": {
+                "type": "/v3/schemas/resourceQuotaLimit"
+            },
+            "type": "/v3/schemas/namespaceResourceQuota"
+        },
+        "namespaceId": null,
+        "resourceQuota": {
+            "limit": {
+                "type": "/v3/schemas/resourceQuotaLimit"
+            },
+            "type": "/v3/schemas/projectResourceQuota",
+            "usedLimit": {
+                "type": "/v3/schemas/resourceQuotaLimit"
+            }
+        },
+        "state": "active",
+        "transitioning": "no",
+        "transitioningMessage": "",
+        "type": "project",
+        "uuid": "b582603b-7826-4302-8393-792df2611265"
+    }
+}
+----

@@ -1,0 +1,186 @@
+= {rancher-product-name} Webhook
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-29
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-webhook.adoc 
+:product-path: security/rancher-webhook/rancher-webhook.adoc
+ifeval::["{build-type}" != "community"]
+:xref-psa-pss: xref:security/psa-pss.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-psa-pss: xref:como-guia/novos-usuários/guias-de-autenticação-e-permissões/configuração-global/padrões-de-segurança-de-pod.adoc
+endif::[]
+
+O Rancher-Webhook é um componente essencial do Rancher que funciona em conjunto com o Kubernetes para aumentar a segurança e habilitar recursos críticos para clusters gerenciados pelo Rancher.
+
+Ele se integra com os controladores de admissão extensíveis do Kubernetes, conforme descrito na https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/[documentação do Kubernetes], o que permite que o Rancher-Webhook inspecione solicitações específicas enviadas ao servidor de API do Kubernetes e adicione validações e mutações personalizadas às solicitações que são específicas do Rancher. O Rancher-Webhook gerencia os recursos a serem validados usando os objetos `rancher.cattle.io` `ValidatingWebhookConfiguration` e `rancher.cattle.io` `MutatingWebhookConfiguration`, e irá substituir quaisquer edições manuais.
+
+O Rancher implanta o Rancher-Webhook como uma implantação e serviço separados em clusters locais e downstream. O Rancher gerencia o Rancher-Webhook usando o Helm. É importante notar que o Rancher pode substituir modificações feitas pelos usuários na versão do Helm. Para modificar esses valores com segurança, veja <<_customizing_rancher_webhook_configuration,Personalizando a Configuração do Rancher-Webhook>>.
+
+Cada versão do Rancher é projetada para ser compatível com uma única versão do webhook. As versões compatíveis são fornecidas abaixo para conveniência.
+
+NOTE: O Rancher gerencia a implantação e faz upgrade do webhook. Na maioria das circunstâncias, nenhuma intervenção do usuário deve ser necessária para garantir que a versão do webhook seja compatível com a versão do Rancher que você está executando.
+
+|===
+| Versão do Rancher | Versão do Webhook | Disponibilidade no Prime | Disponibilidade na Comunidade
+
+// DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT.
+| v2.14.1
+| v0.10.4
+| &#10003;
+| &#10003;
+
+| v2.13.3
+| v0.9.3
+| &#10003;
+| &#10003;
+
+| v2.13.2
+| v0.9.2
+| &#10003;
+| &#10003;
+
+| v2.13.1
+| v0.9.1
+| &#10003;
+| &#10003;
+
+| v2.13.0
+| v0.9.0
+| &cross;
+| &check;
+|===
+
+[#_why_do_we_need_it]
+== Por que precisamos disso?
+
+O Rancher-Webhook é crucial para o Rancher proteger clusters contra ataques maliciosos e habilitar vários recursos.
+O Rancher depende do Rancher-Webhook como parte integral de sua funcionalidade. Sem o webhook, o Rancher não seria um produto completo.
+Ele fornece proteção essencial para clusters gerenciados pelo Rancher, prevenindo vulnerabilidades de segurança e garantindo a consistência e estabilidade do cluster.
+
+[#_what_resources_does_the_webhook_validate]
+== Quais Recursos o Webhook Valida?
+
+Você pode encontrar uma lista em andamento dos recursos que o webhook valida no repositório https://github.com/rancher/webhook/blob/release/v0.4/docs.md[do webhook]. Esses documentos estão organizados por grupo/versão e recurso (o cabeçalho de nível superior é grupo/versão, o próximo nível de cabeçalho é recurso). Verificações específicas para uma versão podem ser encontradas ao visualizar o arquivo `docs.md` associado a uma tag específica (observe que versões do webhook anteriores a `v0.3.6` não terão este arquivo).
+
+[#_bypassing_the_webhook]
+== Ignorando o Webhook
+
+Às vezes, é necessário ignorar a validação do webhook do Rancher para realizar operações de restauração de emergência ou corrigir outros problemas críticos. A operação de ignorar é completa, o que significa que nenhuma validação ou mutação do webhook se aplica quando você a utiliza. Não é possível ignorar algumas validações ou mutações e ter outras ainda aplicadas - elas são todas ignoradas ou todas ativas.
+
+[WARNING]
+====
+
+O webhook do Rancher fornece proteções críticas de segurança. Ignorar o webhook deve ser feito apenas por administradores em cenários específicos, após todas as outras opções terem sido esgotadas. Além disso, a permissão para ignorar o webhook deve ser cuidadosamente controlada e nunca dada a usuários que não são administradores.
+====
+
+
+Para ignorar o webhook, impersonifique tanto a conta de serviço `rancher-webhook-sudo` quanto o grupo `system:masters` (ambos são necessários):
+
+[,bash]
+----
+kubectl create -f example.yaml --as=system:serviceaccount:cattle-system:rancher-webhook-sudo --as-group=system:masters
+----
+
+[#_customizing_rancher_webhook_configuration]
+== Personalizando a configuração do Rancher-Webhook
+
+Você pode adicionar valores personalizados do Helm ao instalar o Rancher-Webhook via Helm. Durante uma instalação do Helm do gráfico Rancher-Webhook, o Rancher verifica valores personalizados do Helm. Esses valores personalizados devem ser definidos em um ConfigMap chamado `rancher-config`, no namespace `cattle-system`, sob a chave de dados, `rancher-webhook`. O valor desta chave deve ser um YAML válido.
+
+[,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rancher-config
+  namespace: cattle-system
+  labels:
+    app.kubernetes.io/part-of: "rancher"
+data:
+  rancher-webhook: '{"port": 9553, "priorityClassName": "system-node-critical"}'
+----
+
+O Rancher reimplanta o gráfico Rancher-Webhook quando são detectadas alterações nos valores do ConfigMap.
+
+[#_customizing_rancher_webhook_during_rancher_installation]
+=== Personalizando o Rancher-Webhook durante a instalação do Rancher
+
+Quando você usa o Helm para instalar o gráfico do Rancher, pode adicionar valores personalizados do Helm ao Rancher-Webhook do cluster local. Todos os valores no gráfico do Rancher-Webhook estão acessíveis como variáveis aninhadas sob o nome `webhook`.
+
+Esses valores são sincronizados com o ConfigMap `rancher-config` durante a instalação.
+
+[,bash,subs="attributes+"]
+----
+helm install rancher {rancher-helm-repo}/rancher \
+  --namespace cattle-system \
+  ...
+  --set webhook.port=9553 \
+  --set webhook.priorityClassName="system-node-critical"
+----
+
+[#_common_issues]
+== Problemas comuns
+
+[#_eks_cluster_with_calico_cni]
+=== Cluster EKS com Calico CNI
+
+Usuários que executam um cluster EKS com Calico CNI podem encontrar erros quando o servidor de API do Kubernetes tenta contatar o Rancher-Webhook.
+Uma solução alternativa para esse problema, conforme https://docs.tigera.io/calico/latest/getting-started/kubernetes/managed-public-cloud/eks#install-eks-with-calico-networking[documentado pela Calico], envolve definir `hostNetwork=true` para a implantação do webhook. Você pode alterar esse valor adicionando o valor do Helm `global.hostNetwork=true` ao ConfigMap `rancher-config`. Veja <<_customizing_rancher_webhook_configuration,Personalizando a Configuração do Rancher-Webhook>> para mais informações.
+
+[,bash]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rancher-config
+  namespace: cattle-system
+  labels:
+    app.kubernetes.io/part-of: "rancher"
+data:
+  rancher-webhook: '{"global": {"hostNetwork": true}}'
+----
+
+NOTE: Essa solução alternativa temporária pode violar a política de segurança de um ambiente. Essa solução alternativa também requer que a porta 9443 não esteja em uso na rede do host.
+
+NOTE: Por padrão, o Helm armazena informações como segredos. Segredos são um recurso que algumas versões de webhook validam. Nesses casos, atualize diretamente a implantação com o valor `hostNetwork=true` usando kubectl, e depois atualize a configuração do webhook conforme especificado acima.
+
+[#_private_gke_cluster]
+=== Cluster GKE privado
+
+Ao usar um cluster GKE privado, podem ocorrer erros que impedem o servidor de API do Kubernetes de se comunicar com o webhook. A seguinte mensagem de erro aparecerá:
+
+----
+Internal error occurred: failed calling webhook "rancher.cattle.io.namespaces.create-non-kubesystem": failed to call webhook: Post "https://rancher-webhook.cattle-system.svc:443/v1/webhook/validation/namespaces?timeout=10s": context deadline exceeded
+----
+
+Esse problema ocorre porque as regras do gateway de segurança restringem a comunicação entre o servidor de API e o cluster privado. Para resolver esse problema de comunicação, os usuários devem adicionar regras do gateway de segurança para permitir que o plano de controle do GKE se comunique com o Rancher-Webhook na porta 9443. Por favor, consulte a https://cloud.google.com/kubernetes-engine/docs/how-to/private-clusters#add_firewall_rules[documentação do GKE] para informações detalhadas e etapas sobre como atualizar as regras do gateway de segurança.
+
+[#_application_fails_to_deploy_due_to_rancher_webhook_blocking_access]
+=== Aplicativo falha ao implantar devido ao rancher-webhook bloqueando o acesso
+
+O webhook fornece validações extras em https://github.com/rancher/webhook/blob/release/v0.4/docs.md#psa-label-validation[namespaces]. Uma dessas validações garante que os usuários só possam atualizar rótulos relevantes de PSA se tiverem as permissões adequadas (`updatepsa` para `projects` em `management.cattle.io`). Isso pode resultar em operadores específicos, como Tigera ou Trident, falhando ao tentar implantar namespaces com rótulos de PSA. Existem várias maneiras de resolver esse problema:
+
+* Configure o aplicativo para criar um namespace sem rótulos de PSA. Se os usuários desejarem aplicar um PSA a esses namespaces, podem adicioná-los a um projeto com o PSA desejado após a configuração. Veja a {xref-psa-pss}[documentação sobre recursos de PSS e PSA] para instruções sobre como fazer isso.
+ ** Esta é a opção preferida, embora nem todos os aplicativos possam ser configurados dessa maneira.
+* Conceda manualmente as permissões ao operador para gerenciar PSAs para namespaces.
+ ** Esta opção introduzirá riscos de segurança, uma vez que o operador agora poderá definir o PSA para os namespaces aos quais tem acesso. Isso poderia permitir que o operador implantasse um pod privilegiado ou realizasse a tomada de controle do cluster por outros meios.
+* Uma conta de usuário com as permissões adequadas pode pré-criar o namespace com a configuração apropriada.
+ ** Esta opção depende da capacidade do aplicativo de lidar com recursos existentes.
+
+Outra dessas validações garante que o usuário tenha as permissões adequadas para atualizar a anotação `field.cattle.io/projectId` em um namespace. Esta é a permissão `manage-namespaces` para `projects` em `management.cattle.io`.
+
+[#_issues_on_specific_versions]
+== Problemas em Versões Específicas
+
+NOTE: A seguir, uma lista incompleta de problemas de alta severidade que afetam versões específicas do Rancher/webhook. Na maioria dos casos, esses problemas podem ser resolvidos atualizando para uma versão mais recente do Rancher.
+
+[#_incompatible_webhook_version_on_rollback]
+=== Versão de Webhook Incompatível na Reversão
+
+NOTE: Isso afeta a reversão para o Rancher v2.7.5 ou anterior.
+
+Se você reverter para o Rancher v2.7.5 ou anterior, pode ver versões de webhook que são muito recentes para serem compatíveis com clusters downstream que executam versões anteriores ao v2.7.5 do Rancher. Isso pode causar vários problemas de incompatibilidade. Por exemplo, os membros do projeto podem não conseguir criar namespaces. Além disso, quando você reverter para versões anteriores à instalação do webhook em clusters downstream, o webhook pode permanecer instalado, o que pode resultar em problemas de incompatibilidade semelhantes.
+
+Para ajudar a aliviar esses problemas, você pode executar o https://github.com/rancherlabs/support-tools/tree/master/adjust-downstream-webhook[adjust-downstream-webhook] script shell após o rollback. Este script seleciona e instala a versão correta do webhook (ou remove o webhook completamente) para a versão correspondente do Rancher.

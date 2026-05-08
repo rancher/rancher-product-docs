@@ -1,0 +1,128 @@
+= Provisionamento Dinâmico de Novo Armazenamento em {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-09-12
+:page-revdate: {revdate}
+:community-path: como-fazer-guias/novos-guias-de-usuário/gerenciar-clusters/criar-armazenamento-persistente-kubernetes/gerenciar-armazenamento-persistente/provisionar-novo-armazenamento-dinamicamente.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/dynamically-provision-new-storage.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-cluster-project-roles: xref:rancher-admin/usuarios/authn-e-authz/gerenciar-controle-de-acesso-com-base-em-função-rbac/funções-de-cluster-e-projeto.adoc
+:xref-longhorn: xref:integrations/longhorn/longhorn.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-unsupported-storage-drivers: xref:rancher-admin/experimental-features/unsupported-storage-drivers.adoc
+:xref-about-persistent-storage: xref:cluster-admin/manage-clusters/persistent-storage/about-persistent-storage.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cluster-project-roles: xref:como-fazer-guias/novos-guias-de-usuário/autenticação-permissões-e-configuração-global/gerenciar-controle-de-acesso-com-base-em-função-rbac/funções-de-cluster-e-projeto.adoc
+:xref-longhorn: xref:integrations-in-rancher/longhorn/index.adoc
+:xref-set-up-cloud-providers: xref:como-fazer-guias/novos-guias-de-usuário/configuração-de-clusters-kubernetes-no-rancher/configurar-provedores-de-nuvem/index.adoc
+:xref-unsupported-storage-drivers: xref:como-fazer-guias/guias-avançados-de-usuários/ativar-recursos-experimentais/drivers-de-armazenamento-não-suportados.adoc
+:xref-about-persistent-storage: xref:como-fazer-guias/novos-guias-de-usuário/gerenciar-clusters/criar-armazenamento-persistente-kubernetes/gerenciar-armazenamento-persistente/sobre-armazenamento-persistente.adoc
+endif::[]
+
+Esta seção descreve como provisionar novo armazenamento persistente para cargas de trabalho no Rancher.
+
+Esta seção assume que você entende os conceitos de classes de armazenamento e reivindicações de volume persistente do Kubernetes. Para mais informações, consulte a seção sobre {xref-about-persistent-storage}[como o armazenamento funciona.]
+
+Novo armazenamento é frequentemente provisionado por um provedor de nuvem, como o Amazon EBS. No entanto, o novo armazenamento não precisa estar na nuvem.
+
+Se você tiver um pool de armazenamento em blocos e não quiser usar um provedor de nuvem, o Longhorn pode ajudá-lo a fornecer armazenamento persistente para seu cluster Kubernetes. Para mais informações, veja {xref-longhorn}[Armazenamento Nativo de Nuvem com Longhorn].
+
+Para provisionar novo armazenamento para suas cargas de trabalho, siga estas etapas:
+
+. <<_1_add_a_storage_class_and_configure_it_to_use_your_storage,Adicione uma classe de armazenamento e configure-a para usar seu armazenamento.>>
+. <<_2_use_the_storage_class_for_pods_deployed_with_a_statefulset,Use a Classe de Armazenamento para Pods Implantados com um StatefulSet.>>
+
+[#_prerequisites]
+== Pré-requisitos
+
+* Para configurar o armazenamento persistente, o `Manage Volumes` {xref-cluster-project-roles}#_project_role_reference[role] é necessário.
+* Se você estiver provisionando armazenamento para um cluster hospedado na nuvem, o armazenamento e os hosts do cluster devem ter o mesmo provedor de nuvem.
+* O provedor de nuvem deve estar habilitado. Para detalhes sobre como habilitar provedores de nuvem, consulte {xref-set-up-cloud-providers}[esta página.]
+* Certifique-se de que seu provisionador de armazenamento esteja disponível para ser habilitado.
+
+Os seguintes provisionadores de armazenamento estão habilitados por padrão:
+
+|===
+| Nome | Plugin
+
+| Amazon EBS Disk
+| `aws-ebs`
+
+ifeval::["{build-type}" != "srfa"]
+| AzureFile
+| `azure-file`
+
+| AzureDisk
+| `azure-disk`
+
+| Disco Persistente do Google
+| `gce-pd`
+
+| Volume VMware vSphere
+| `vsphere-volume`
+endif::[]
+
+| Local
+| `local`
+
+| Network File System (Sistema de arquivos de rede)
+| `nfs`
+
+| hostPath
+| `host-path`
+|===
+
+Para usar um provisionador de armazenamento que não está na lista acima, você precisará usar um {xref-unsupported-storage-drivers}[flag de recurso para habilitar drivers de armazenamento não suportados.]
+
+[#_1_add_a_storage_class_and_configure_it_to_use_your_storage]
+== 1. Adicione uma classe de armazenamento e configure-a para usar seu armazenamento
+
+Esses passos descrevem como configurar uma classe de armazenamento no nível do cluster.
+
+. Clique em *☰ > Gerenciamento de Cluster*.
+. Vá para o cluster onde você deseja provisionar volumes de armazenamento persistente dinamicamente e clique em *Explorar*.
+. Clique em menu:Armazenamento[Classes de Armazenamento].
+. Clique em *Criar*.
+. Digite um nome para sua classe de armazenamento.
+. No menu suspenso *Provisionador*, selecione o serviço que você deseja usar para provisionar volumes de armazenamento dinamicamente. Por exemplo, se você tiver um cluster Amazon EC2 e quiser usar armazenamento em nuvem para ele, use o provisionador `Amazon EBS Disk`.
+. Na aba *Parâmetros*, preencha as informações necessárias para que o serviço provisione volumes de armazenamento dinamicamente. Cada provisionador requer informações diferentes para provisionar volumes de armazenamento dinamicamente. Consulte a documentação do serviço para obter ajuda sobre como obter essas informações.
+. Clique em *Criar*.
+
+*Resultado:* A classe de armazenamento está disponível para ser consumida por um PVC.
+
+Para obter informações completas sobre os parâmetros da classe de armazenamento, consulte a documentação oficial https://kubernetes.io/docs/concepts/storage/storage-classes/#parameters[Kubernetes.].
+
+[#_2_use_the_storage_class_for_pods_deployed_with_a_statefulset]
+== 2. Use a Classe de Armazenamento para Pods Implantados com um StatefulSet
+
+StatefulSets gerenciam a implantação e escalonamento de Pods enquanto mantêm uma identidade fixa para cada Pod. Neste StatefulSet, configuraremos um VolumeClaimTemplate. Cada Pod gerenciado pelo StatefulSet será implantado com um PersistentVolumeClaim baseado neste VolumeClaimTemplate. O PersistentVolumeClaim fará referência à StorageClass que criamos. Portanto, quando cada Pod gerenciado pelo StatefulSet for implantado, ele será vinculado a um armazenamento provisionado dinamicamente usando a StorageClass definida em seu PersistentVolumeClaim.
+
+. Clique em *☰ > Gerenciamento de Cluster*.
+. Vá para o cluster onde você deseja usar a StorageClass para uma carga de trabalho e clique em *Explorar*.
+. Na barra de navegação à esquerda, clique em *Carga de Trabalho*.
+. Clique em *Criar*.
+. Clique em *StatefulSet*.
+. Na aba *Modelos de Reivindicação de Volume*, clique em *Adicionar Modelo de Reivindicação*.
+. Digite um nome para o volume persistente.
+. No campo *StorageClass*, selecione a StorageClass que irá provisionar armazenamento dinamicamente para os pods gerenciados por este StatefulSet.
+. No campo *Ponto de Montagem*, insira o caminho que a carga de trabalho usará para acessar o volume.
+. Clique em *Lançar*.
+
+*Resultado:* Quando cada Pod gerenciado pelo StatefulSet for implantado, ele fará uma solicitação pela quantidade especificada de espaço em disco para o mestre do Kubernetes. Se um PV com os recursos especificados estiver disponível quando a carga de trabalho for implantada, o mestre do Kubernetes irá vincular o PV ao Pod com um PVC compatível.
+
+Para anexar o PVC a uma carga de trabalho existente,
+
+. Clique em *☰ > Gerenciamento de Cluster*.
+. Vá para o cluster onde você deseja usar a StorageClass para uma carga de trabalho e clique em *Explorar*.
+. Na barra de navegação à esquerda, clique em *Carga de Trabalho*.
+. Vá para a carga de trabalho que usará o armazenamento provisionado com a StorageClass que você configurou e clique em *⋮ > Editar Config*.
+. Na seção *Modelos de Reivindicação de Volume*, clique em *Adicionar Modelo de Reivindicação*.
+. Digite um nome para o volume persistente.
+. No campo *StorageClass*, selecione a StorageClass que irá provisionar armazenamento dinamicamente para os pods gerenciados por este StatefulSet.
+. No campo *Ponto de Montagem*, insira o caminho que a carga de trabalho usará para acessar o volume.
+. Clique em *Salvar*.
+
+*Resultado:* A carga de trabalho fará uma solicitação pela quantidade especificada de espaço em disco ao mestre do Kubernetes. Se um PV com os recursos especificados estiver disponível quando a carga de trabalho for implantada, o mestre do Kubernetes irá vincular o PV ao PVC. Caso contrário, o Rancher irá provisionar um novo armazenamento persistente.

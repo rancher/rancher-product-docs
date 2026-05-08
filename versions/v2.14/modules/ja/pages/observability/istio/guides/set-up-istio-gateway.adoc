@@ -1,0 +1,173 @@
+= Istio ゲートウェイを設定します。
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-istio-gateway.adoc 
+:product-path: observability/istio/guides/set-up-istio-gateway.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-traffic-management-setup: xref:observability/istio/guides/set-up-traffic-management.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-traffic-management-setup: xref:how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio]はRancher v2.12.0以降廃止されました。セキュリティを強化するために、 https://apps.rancher.io[SUSE Application Collection]のIstioビルドに切り替えてください（SUSE Rancher Primeサブスクリプションに含まれています）。
+詳細情報は https://forums.suse.com/t/deprecation-of-rancher-istio/45043[この発表]にあります。
+====
+
+各クラスターへのゲートウェイは、サービスメッシュとは無関係に独自のポートまたはロードバランサーを持つことができます。デフォルトでは、各Rancherプロビジョニングクラスターには、クラスターへのトラフィックを許可する1つのNGINX Ingressコントローラーがあります。
+
+Istio をインストールしているかどうかにかかわらず、Nginx Ingress コントローラーを使用できます。これがクラスターへの唯一のゲートウェイである場合、Istio はサービス間のトラフィックをルーティングできますが、クラスター外からのトラフィックを受信することはできません。
+
+Istio が外部トラフィックを受信できるようにするには、外部トラフィックのための南北プロキシとして機能する Istio のゲートウェイを有効にする必要があります。Istio ゲートウェイを有効にすると、クラスターには 2 つの Ingress が作成されます。
+
+サービスのために Kubernetes ゲートウェイを設定する必要もあります。この Kubernetes リソースは、クラスターへの Ingress ゲートウェイの Istio 実装を指します。
+
+ロードバランサーを使用してサービスメッシュにトラフィックをルーティングするか、Istio の NodePort ゲートウェイを使用できます。このセクションでは、NodePort ゲートウェイの設定方法について説明します。
+
+Istio ゲートウェイに関する詳細は、 https://istio.io/docs/reference/config/networking/v1alpha3/gateway/[Istio ドキュメントを参照してください。]
+
+image::istio-ingress.svg[Istio が有効なクラスターにおいて, you can have two Ingresses: the default Nginx Ingress, and the default Istio controller.]
+
+[#_enable_an_istio_gateway]
+== Istio ゲートウェイを有効にします。
+
+Ingress ゲートウェイは、クラスターにデプロイされる Kubernetes サービスです。Istio ゲートウェイは、より広範なカスタマイズと柔軟性を提供します。
+
+. *☰ > クラスター管理*をクリックします。
+. 作成したクラスターに移動し、*探索*をクリックします。
+. 左のナビゲーションバーで menu:Istio[ゲートウェイ] をクリックします。
+. *Create from Yaml* をクリックします。
+. Istio ゲートウェイの YAML を貼り付けるか、*ファイルから読み込む* を選択します。
+. ［*作成*］をクリックします。
+
+*結果:*ゲートウェイがデプロイされ、適用されたルールでトラフィックをルーティングします。
+
+[#_example_istio_gateway]
+== 例: Istio ゲートウェイ
+
+Workloads の例を通じて、サービスに BookInfo アプリのデプロイを追加します。次に、アプリがクラスターの外部からアクセスできるように、Istio ゲートウェイを追加します。
+
+. *☰ > クラスター管理*をクリックします。
+. 作成したクラスターに移動し、*探索*をクリックします。
+. 左のナビゲーションバーで menu:Istio[ゲートウェイ] をクリックします。
+. *Create from Yaml* をクリックします。
+. 以下に提供された Gateway の yaml をコピーして貼り付けます。
+. ［*作成*］をクリックします。
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+----
+
+次に、Gateway のトラフィックルーティングを提供する VirtualService をデプロイします：
+
+. *☰ > クラスター管理*をクリックします。
+. 作成したクラスターに移動し、*探索*をクリックします。
+. 左のナビゲーションバーで menu:Istio[VirtualServices] をクリックします。
+. 以下に提供された仮想サービスの yaml をコピーして貼り付けてください。
+. ［*作成*］をクリックします。
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: bookinfo
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - bookinfo-gateway
+  http:
+  - match:
+    - uri:
+        exact: /productpage
+    - uri:
+        prefix: /static
+    - uri:
+        exact: /login
+    - uri:
+        exact: /logout
+    - uri:
+        prefix: /api/v1/products
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+----
+
+*結果:*ゲートウェイリソースを構成したので、Istio はクラスターの外部からトラフィックを受信できます。
+
+リソースが存在することを確認するには、次のコマンドを実行します：
+
+----
+kubectl get gateway -A
+----
+
+結果は次のようになります：
+
+----
+NAME               AGE
+bookinfo-gateway   64m
+----
+
+[#_access_the_productpage_service_from_a_web_browser]
+=== WebブラウザからProductPageサービスにアクセスします。
+
+BookInfo アプリが正しくデプロイされたかをテストするために、アプリは Istio コントローラーの IP とポートを使用して Web ブラウザで表示できます。これは、Kubernetes ゲートウェイリソースで指定されたリクエスト名と組み合わせます：
+
+`\http://<IP of Istio controller>:<Port of istio controller>/productpage`
+
+Ingress ゲートウェイの URL とポートを取得するには、
+
+. *☰ > クラスター管理*をクリックします。
+. 作成したクラスターに移動し、*探索*をクリックします。
+. 左のナビゲーションバーで*ワークロード*をクリックします。
+. `istio-system`ネームスペースまでスクロールダウンします。
+. `istio-system`ネームスペース内には、`istio-ingressgateway`という名前のワークロードがあります。このワークロードの名前の下に、`80/tcp`のようなリンクが表示されるはずです。
+. そのリンクの1つをクリックします。これにより、Web ブラウザで Ingress ゲートウェイの URL が表示されるはずです。URLに `/productpage` を追加します。
+
+*結果:*Web ブラウザで BookInfo アプリが表示されるはずです。
+
+Istio コントローラーの URL とポートを確認するためのヘルプが必要な場合は、 https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#determining-the-ingress-ip-and-ports[Istio のドキュメントを参照してください。]
+
+[#_troubleshooting]
+== トラブルシューティング
+
+https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#troubleshooting[公式の Istio ドキュメント]は、外部リクエストの正しい Ingress ホストと Ingress ポートを確認するための`kubectl`コマンドを提案しています。
+
+[#_confirming_that_the_kubernetes_gateway_matches_istios_ingress_controller]
+=== Kubernetes ゲートウェイが Istio の Ingress コントローラーと一致していることを確認します。
+
+このセクションの手順を試して、Kubernetes ゲートウェイが正しく構成されていることを確認できます。
+
+ゲートウェイリソースでは、セレクターが Istio のデフォルトの Ingress コントローラーをそのラベルで参照しており、ラベルのキーは `istio` で、値は `ingressgateway` です。 ゲートウェイに対してラベルが適切であることを確認するために、次のことを行ってください：
+
+. *☰ > クラスター管理*をクリックします。
+. 作成したクラスターに移動し、*探索*をクリックします。
+. 左のナビゲーションバーで*ワークロード*をクリックします。
+. `istio-system`ネームスペースまでスクロールダウンします。
+. `istio-system`ネームスペース内には、`istio-ingressgateway`という名前のワークロードがあります。このワークロードの名前をクリックして、*ラベルとアノテーション* セクションに移動します。キー `istio` と値 `ingressgateway` があることが確認できるはずです。これにより、ゲートウェイリソースのセレクターが Istio のデフォルトの Ingress コントローラーと一致していることが確認されます。
+
+[#__xref_istio_traffic_management_setup_next_set_up_istios_components_for_traffic_management]
+=== {xref-istio-traffic-management-setup}[次へ：トラフィック管理のための Istio コンポーネントを設定します]

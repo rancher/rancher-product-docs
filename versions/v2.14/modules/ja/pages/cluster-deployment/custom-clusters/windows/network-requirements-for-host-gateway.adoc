@@ -1,0 +1,55 @@
+= ホストゲートウェイ（L2bridge）のネットワーク要件
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/network-requirements-for-host-gateway.adoc 
+:product-path: cluster-deployment/custom-clusters/windows/network-requirements-for-host-gateway.adoc
+
+このセクションでは、_ホストゲートウェイ（L2bridge）_モードを使用しているカスタムWindowsクラスターの設定方法について説明します。
+
+[#_disabling_private_ip_address_checks]
+== プライベートIPアドレスチェックの無効化
+
+_ホストゲートウェイ（L2bridge）_モードを使用し、下記のクラウドサービスでノードをホストしている場合は、LinuxまたはWindowsホストを起動する際にプライベートIPアドレスチェックを無効にする必要があります。各ノードのこのチェックを無効にするには、以下の各サービスが提供する指示に従ってください。
+
+|===
+| サービス | プライベートIPアドレスチェックを無効にするための指示
+
+| Amazon EC2
+| https://docs.aws.amazon.com/vpc/latest/userguide/VPC_NAT_Instance.html#EIP_Disable_SrcDestCheck[ソース/デスティネーションチェックの無効化]
+
+| Google GCE
+| https://cloud.google.com/vpc/docs/using-routes#canipforward[インスタンスのIP転送を有効にする]（デフォルトでは、VMは他のVMから発信されたパケットを転送できません）
+
+| Azure VM
+| https://docs.microsoft.com/en-us/azure/virtual-network/virtual-network-network-interface#enable-or-disable-ip-forwarding[IP転送を有効または無効にする]
+|===
+
+[#_cloud_hosted_vm_routes_configuration]
+== クラウドホストVMのルート設定
+
+Flannelの https://github.com/coreos/flannel/blob/master/Documentation/backends.md#host-gw[*ホストゲートウェイ（L2bridge）*]バックエンドを使用している場合、同じノード上のすべてのコンテナはプライベートサブネットに属し、あるノードのサブネットから別のノードのサブネットへのトラフィックはホストネットワーク経由でルーティングされます。
+
+* AWS、仮想化クラスター、またはベアメタルサーバー上にワーカーノードがプロビジョニングされる場合、同じレイヤー2サブネットに属するようにしてください。ノードが同じレイヤー2サブネットに属していない場合、`host-gw`ネットワークは機能しません。
+* ワーカーノードがGCEまたはAzure上にプロビジョニングされると、同じレイヤー2サブネット上にはありません。GCEおよびAzureのノードは、ルーティング可能なレイヤー3ネットワークに属しています。以下の指示に従って、GCEおよびAzureを構成し、クラウドネットワークが各ノードのホストサブネットへのルートを認識できるようにしてください。
+
+GCEまたはAzureでホストサブネットのルーティングを構成するには、まず次のコマンドを実行して各ワーカーノードのホストサブネットを確認します:
+
+[,bash]
+----
+kubectl get nodes -o custom-columns=nodeName:.metadata.name,nodeIP:status.addresses[0].address,routeDestination:.spec.podCIDR
+----
+
+次に、各クラウドプロバイダーの指示に従って、各ノードのルーティングルールを設定してください。
+
+|===
+| サービス | 指示
+
+| Google GCE
+| GCEの場合、各ノードに対して静的ルートを追加します: https://cloud.google.com/vpc/docs/using-routes#addingroute[静的ルートの追加]。
+
+| Azure VM
+| Azureの場合、ルーティングテーブルを作成します： https://docs.microsoft.com/en-us/azure/virtual-network/virtual-networks-udr-overview#user-defined[カスタムルート：ユーザー定義]。
+|===

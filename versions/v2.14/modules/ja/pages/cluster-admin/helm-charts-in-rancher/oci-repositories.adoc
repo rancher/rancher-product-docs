@@ -1,0 +1,129 @@
+= OCIベースのHelmチャートリポジトリの使用
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/helm-charts-in-rancher/oci-repositories.adoc 
+:product-path: cluster-admin/helm-charts-in-rancher/oci-repositories.adoc
+ifeval::["{build-type}" != "community"]
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-logging-troubleshooting: xref:observability/logging/troubleshooting.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-logging-troubleshooting: xref:troubleshooting/other-troubleshooting-tips/logging.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+endif::[]
+
+Helm v3では、Helmチャートを https://opencontainers.org/about/overview/[Open Container Initiative (OCI)]アーティファクトとしてコンテナレジストリに保存することが導入されました。Rancher v2.9.0では、HTTPベースおよびGitベースのリポジトリと並行して https://helm.sh/docs/topics/registries/[OCIベースのHelmチャートリポジトリ]を追加できます。これは、OCIアーティファクトとして保存されたアプリをデプロイできることを意味します。
+
+[#_add_an_oci_based_helm_chart_repository]
+== OCIベースのHelmチャートリポジトリを追加する
+
+Rancher UIを通じてOCIベースのHelmチャートリポジトリを追加するには：
+
+. *☰ > クラスター管理*をクリックします。
+. アクセスしたいリポジトリを持つクラスターの名前を見つけてください。クラスターの行の最後にある*Explore*をクリックします。
+. 左側のナビゲーションバーで、menu:Apps[Repositories]を選択します。
+. ［*作成*］をクリックします。
+. レジストリの*名前*を入力してください。ターゲットとして*OCIリポジトリ*を選択します。
+. レジストリの*OCIリポジトリホストURL*を入力します。レジストリエンドポイントには、OCI Helmチャートアーティファクト以外のものを含めてはいけません。アーティファクトはすべてユニークな名前を持っている必要があります。他の種類のファイルやアーティファクトを含むエンドポイントを追加しようとすると、OCIリポジトリは追加されません。
+
+[NOTE]
+====
+*OCI URL*フィールドを使用して、Rancherにインストール可能なレジストリからのチャートの数を微調整できます。より一般的なエンドポイントは、次の例が示すように、より多くのチャートを対象とします：
+
+....
+- `oci://<registry-host>`: Every chart in the registry becomes available for installation, regardless of namespace or tag.
+- `oci://<registry-host>/<namespace>`: Every chart in the specified namespace within the registry becomes available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>`: Only the specified chart and any associated tags or versions of that chart become available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>:<tag>`: Only the chart with the specified tag becomes available for installation.
+....
+====
+
+
+. 認証のセットアップ。認証フィールドから*Basicauth*を選択し、必要に応じてユーザー名とパスワードを入力します。そうでない場合は、*Authentication*シークレットを作成または選択します。完全な説明については<<_authentication_for_oci_based_helm_chart_repositories,Authentication>>を参照してください。
+. （オプション）*CA Cert Bundle*フィールドにbase64エンコードされたDER証明書を入力します。このフィールドは、プライベートなOCIベースのHelmチャートリポジトリを持ち、その証明書をRancherに信頼させる必要がある場合に使用します。
+. （オプション）SSLチェックを行わずに安全でない接続を許可するには、*TLS検証をスキップ*を選択します。Rancherがリポジトリにリクエストを送信する際にHTTPSの代わりにHTTPを使用するよう強制するには、*安全でないプレーンHTTP*を選択します。
+. （オプション）リポジトリにレート制限ポリシーがあり、ステータスコード`429 Too Many Requests`で応答する可能性がある場合は、*指数バックオフ*の下のフィールドに入力してください。
+ ** *最小待機時間*：Rancherが再試行する前に待機すべき最小の秒数です。デフォルトの設定は1です。
+ ** *最大待機時間*：Rancherが再試行する前に待機すべき最大の秒数です。デフォルトは5秒です。
+ ** *最大再試行回数*：デフォルトは5回の再試行です。
+
++
+これらの値が設定されると、Rancherは最小および最大待機値に基づいて`429`ステータスコードに応じてリクエストを間隔をあけて送信します。再試行間の待機時間は指数的に増加し、Rancherが設定された最大再試行回数を送信するまで続きます。詳細については、<<_rate_limiting_of_oci_based_helm_chart_repositories,レート制限>>を参照してください。
+. ラベルと注釈を追加します。
+. ［*作成*］をクリックします。
+
+OCIリポジトリがアクティブになるまでに時間がかかる場合があります。これは特にOCIエンドポイントに複数のネームスペースが含まれている場合に当てはまります。
+
+[#_authentication_for_oci_based_helm_chart_repositories]
+== OCIベースのHelmチャートリポジトリの認証
+
+RancherはOCIレジストリのBasicAuthをサポートしています。 https://kubernetes.io/docs/concepts/configuration/secret/#basic-authentication-secret[*BasicAuth* Kubernetesシークレット]を作成する必要があります。また、{xref-secrets}[Rancher UIを通じてシークレットを作成することもできます].
+
+OCIベースのHelmリポジトリにリンクされているCRDは`ClusterRepo`です。
+
+[#_view_helm_charts_in_oci_based_helm_chart_repositories]
+== OCIベースのHelmチャートリポジトリでHelmチャートを表示する
+
+OCIベースのHelmチャートリポジトリでHelmチャートを表示するには、`Active`状態に達した後：
+
+. *☰*をクリックします。左側のナビゲーションメニューにある*Explore Cluster*の下で、クラスターを選択します.
+. menu:アプリ[チャート]をクリックしてください。
+. ドロップダウンからOCIベースのHelmチャートリポジトリを選択します。
+
+[#_refresh_an_oci_based_helm_chart_repository]
+== OCIベースのHelmチャートリポジトリを更新する
+
+Rancherは6時間ごとにOCIベースのHelmチャートリポジトリを自動的に更新します。
+
+すぐに更新する必要がある場合は、{xref-helm-charts-in-rancher}#_refresh_chart_repositories[手動で更新を実行できます]。
+
+[#_update_an_oci_based_helm_chart_repository_configuration]
+== OCIベースのHelmチャートリポジトリの設定を更新する
+
+. *☰ > クラスター管理*をクリックします。
+. アクセスしたいリポジトリを持つクラスターの名前を見つけてください。クラスターの行の最後にある*Explore*をクリックします。
+. 左側のナビゲーションバーで、menu:Apps[Repositories]を選択します。
+. OCIベースのHelmチャートリポジトリに関連する行を見つけて、*⋮*をクリックします。
+. サブメニューから*設定を編集*を選択します。
+
+[#_delete_an_oci_based_helm_chart_repository]
+== OCIベースのHelmチャートリポジトリを削除する
+
+. *☰ > クラスター管理*をクリックします。
+. アクセスしたいリポジトリを持つクラスターの名前を見つけてください。クラスターの行の最後にある*Explore*をクリックします。
+. 左側のナビゲーションバーで、menu:Apps[Repositories]を選択します。
+. OCIベースのHelmチャートリポジトリに関連する行を選択し、*削除*をクリックします。
+
+[#_size_limitations_of_oci_based_helm_chart_repositories_in_rancher]
+== RancherにおけるOCIベースのHelmチャートリポジトリのサイズ制限
+
+セキュリティ上の懸念から、OCIベースのリポジトリを通じてデプロイできるHelmチャートのサイズや、単一のOCIエンドポイント内でHelmチャートを説明するために使用できるメタデータの量には制限があります。
+
+Rancherは最大20MBのOCI Helmチャートをデプロイできます。
+
+[#_rate_limiting_of_oci_based_helm_chart_repositories]
+== OCIベースのHelmチャートリポジトリのレート制限
+
+異なるOCIレジストリは、異なる方法でレート制限を実装しています。
+
+ほとんどのサーバーは、レート制限が解除されるまでの待機時間を示す`Retry-After`ヘッダーを返します。
+
+Docker Hubは、すべての割り当てられたリクエストが完了すると、`429`のステータスコードを返します。また、レート制限ポリシーを説明する`RateLimit-Remaining`のヘッダーも返します。
+
+Rancherは現在、`Retry-After`のヘッダーを確認しています。また、Docker Hubスタイルのレスポンス（ステータスコード`429`と`RateLimit-Remaining`のヘッダー）を処理し、新しいリクエストを行う前に自動的に待機します。`Retry-After`またはDocker Hubスタイルのレスポンスを処理する際、Rancherは`ExponentialBackOff`の値を無視します。
+
+もし、`Retry-After`または`RateLimit-Remaining`のヘッダーを実装していないOCIベースのHelmチャートリポジトリがあり、いつかレート制限される可能性があると思う場合は、リポジトリを追加する際に*Exponential Back Off*の下のフィールドを記入してください。
+
+例えば、`Retry-After`のヘッダーを返さないOCIベースのHelmチャートリポジトリがあり、サーバーが24時間で50リクエストを許可していることが分かっている場合、Rancherに*Min Wait*の値として*86400*秒、*Max Wait*の値として*90000*秒、*Max Number of Retries*の値として*1*を提供できます。その後、Rancherがサーバーによってレート制限された場合、Rancherは再試行する前に24時間待機します。リクエストは成功するはずです。なぜなら、Rancherは前の24時間に他のリクエストを送信していないからです。
+
+[#_troubleshooting_oci_based_helm_registries]
+== OCIベースのHelmレジストリのトラブルシューティング
+
+* ログ情報を強化するために、Rancherをデプロイする際に{xref-logging-troubleshooting}#_kubernetes_install[デバッグオプションを有効にしてください]。
+* リポジトリの内容とRancherの間に不一致がある場合、最初の手段としてクラスターリポジトリを更新するべきです。不一致が続く場合は、RancherからOCIベースのHelmチャートリポジトリを削除し、再度追加してください。リポジトリを削除しても、すでにインストールされているHelmチャートは削除されません。
+* OCIベースのHelmチャートリポジトリを通じてインストールされたアプリは、Rancherがアップグレード可能なバージョン情報を表示する方法に関する既知の問題の影響を受けます。詳細については、*Helm Charts and Apps*の{xref-helm-charts-in-rancher}#_limitations[制限]セクションをご覧ください。

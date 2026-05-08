@@ -1,0 +1,80 @@
+= iSCSIボリューム
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/install-iscsi-volumes.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/install-iscsi-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+iSCSIボリュームにデータを保存する{xref-launch-k8s-with-rancher}[Rancherが起動したKubernetesクラスター]では、kubeletがiSCSIボリュームに自動的に接続できない問題が発生することがあります。このエラーは、iSCSIイニシエータツールに関する互換性の問題が原因である可能性が高いです。この問題は、クラスターの各ノードにiSCSIイニシエータツールをインストールすることで解決できます。
+
+iSCSIボリュームにデータを保存するRancherが起動したKubernetesクラスターは、kubeletの`rancher/hyperkube` Dockerイメージに埋め込まれているを利用します。各kubelet（つまり、_イニシエータ_）から、このツールはiSCSIボリューム（つまり、_ターゲット_）とのセッションを発見し、開始します。ただし、場合によっては、イニシエータとターゲットにインストールされているiSCSIイニシエータツールのバージョンが一致しないことがあり、接続エラーが発生します。
+
+この問題に直面した場合、クラスター内の各ノードにイニシエータツールをインストールすることで回避できます。クラスターのノードにログインし、以下のいずれかのコマンドを入力することで、iSCSIイニシエータツールをインストールできます：
+
+|===
+| プラットフォーム | [Package Name] | インストールコマンド
+
+| Ubuntu/Debian
+| `open-iscsi`
+| `sudo apt install open-iscsi`
+
+| RHEL
+| `iscsi-initiator-utils`
+| `yum install iscsi-initiator-utils -y`
+|===
+
+ノードにイニシエータツールをインストールした後、クラスターのYAMLを編集し、iSCSIバイナリと設定をマウントするようにkubeletの設定を編集します。以下のサンプルに示すように。
+
+[NOTE]
+.備考
+====
+
+* iSCSIバイナリと設定をマウントするためにKubernetes YAMLを更新する前に、クラスターのノードに`open-iscsi`（deb）または`iscsi-initiator-utils`（yum）パッケージのいずれかがインストールされていることを確認してください。このパッケージがKubernetes YAMLでバインドマウントが作成される_前_にインストールされていない場合、Dockerは各ノードにディレクトリとファイルを自動的に作成し、パッケージのインストールが成功することを許可しません。
+* 以下の例のYAMLはK3sには適用されず、RKEクラスターのみに適用されます。K3sのkubeletはコンテナ内で実行されないため、追加のバインドは必要ありません。ただし、すべてのiSCSIツールはK3sノードにインストールする必要があります。
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+----
+
+RHEL 7.9を使用している場合は、以下のサンプルに示すようにファイル`/usr/lib64/libcrypto.so.10`をマウントする必要があります。
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.10:/usr/lib/libcrypto.so.10"
+----
+
+RHEL 8.6を使用している場合は、以下のサンプルに示すようにファイル`/usr/lib64/libcrypto.so.1.1`をマウントする必要があります。
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.1.1:/usr/lib/libcrypto.so.1.1"
+----
+
+[TIP]
+====
+
+iscsiadmが正しく動作しているか確認するには、任意のノードでコマンド`docker exec kubelet iscsiadm --version`を実行できます。
+====
+

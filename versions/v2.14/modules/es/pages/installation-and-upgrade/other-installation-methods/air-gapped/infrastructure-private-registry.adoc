@@ -1,0 +1,212 @@
+= 1. Configurar infraestructura y registro privado
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/infrastructure-private-registry.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/infrastructure-private-registry.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-install-upgrade: xref:installation-and-upgrade/installation-and-upgrade.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-mysql-amazon-rds: xref:installation-and-upgrade/infrastructure-setup/mysql-database-in-amazon-rds.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-install-upgrade: xref:getting-started/installation-and-upgrade/index.adoc
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-mysql-amazon-rds: xref:how-to-guides/new-user-guides/infrastructure-setup/mysql-database-in-amazon-rds.adoc
+endif::[]
+
+
+En esta sección, provisiona la infraestructura subyacente para tu servidor de gestión de Rancher en un entorno aislado. Configura también el registro privado de imágenes de contenedor que debe estar disponible para tus nodos de Rancher.
+
+Un entorno aislado es un entorno donde el servidor de Rancher está instalado sin conexión o detrás de un firewall.
+
+La infraestructura depende de si está instalando Rancher en un clúster de Kubernetes K3s, un clúster de Kubernetes RKE o un único contenedor Docker. Para más información sobre cada opción de instalación, consulta {xref-install-upgrade}[esta página.]
+
+Rancher se puede instalar en cualquier clúster de Kubernetes. Los tutoriales de infraestructura de RKE y K3s de Kubernetes a continuación siguen incluidos por conveniencia.
+
+[tabs]
+======
+K3s::
++
+--
+Recomendamos configurar la siguiente infraestructura para una instalación de alta disponibilidad:
+
+* *Dos nodos Linux,* típicamente máquinas virtuales, en el proveedor de infraestructura de vuestra elección.
+* *Una base de datos externa* para almacenar los datos del clúster. PostgreSQL, MySQL y etcd son compatibles.
+* *Un equilibrador de carga* para dirigir el tráfico a los dos nodos.
+* *Un registro DNS* para mapear una URL al equilibrador de carga. Esto se convertirá en la URL del servidor de Rancher, y los clústeres de Kubernetes en sentido descendente necesitarán poder acceder a ella.
+* *Un registro de imágenes privado* para distribuir imágenes de contenedor a tus máquinas.
+
+[#_k3s_1_set_up_linux_nodes]
+[pass]
+<h3><a class="anchor" id="_k3s_1_set_up_linux_nodes" href="#_k3s_1_set_up_linux_nodes"></a>1. Configurar Nodos Linux</h3>
+
+Estos hosts estarán desconectados de internet, pero necesitarán poder conectarse con tu registro privado.
+
+Asegúrate de que tus nodos cumplan con los requisitos generales de instalación para {xref-install-reqs}[SO, entorno de ejecución de contenedor, hardware y red.]
+
+Para un ejemplo de una forma de configurar nodos Linux, consulta este {xref-setup-ec2-nodes}[tutorial] para configurar nodos como instancias en Amazon EC2.
+
+[#_2_set_up_external_datastore]
+[pass]
+<h3><a class="anchor" id="_2_set_up_external_datastore" href="#_2_set_up_external_datastore"></a>2. Configurar almacenamiento de datos externo</h3>
+
+La capacidad de ejecutar Kubernetes utilizando un almacenamiento diferente a etcd distingue a K3s de otras distribuciones de Kubernetes. Esta característica proporciona flexibilidad a los operadores de Kubernetes. Las opciones disponibles os permiten seleccionar un almacenamiento de datos que se ajuste mejor a vuestro caso de uso.
+
+Para una instalación K3s de alta disponibilidad, configura una de las siguientes bases de datos externas:
+
+* https://www.postgresql.org/[PostgreSQL] (certificado contra las versiones 10.7 y 11.5)
+* https://www.mysql.com/[MySQL] (certificado contra la versión 5.7)
+* https://etcd.io/[etcd] (certificado contra la versión 3.3.15)
+
+Cuando instales Kubernetes, proporciona los detalles para que K3s se conecte a la base de datos.
+
+Para un ejemplo que muestre cómo configurar la base de datos, consulta este {xref-mysql-amazon-rds}[tutorial] para configurar una base de datos MySQL en el servicio RDS de Amazon.
+
+Para la lista completa de opciones disponibles para configurar un almacenamiento de datos de clúster K3s, consultad la https://rancher.com/docs/k3s/latest/en/installation/datastore/[documentación de K3s.]
+
+[#_k3s_3_set_up_the_load_balancer]
+[pass]
+<h3><a class="anchor" id="_k3s_3_set_up_the_load_balancer" href="#_k3s_3_set_up_the_load_balancer"></a>3. Configurar el balanceador de carga</h3>
+
+También necesitarás configurar un balanceador de carga para dirigir el tráfico a la réplica de Rancher en ambos nodos. Eso evitará que una caída de cualquier nodo individual interrumpa las comunicaciones con el servidor de gestión de Rancher.
+
+Cuando Kubernetes se configure en un paso posterior, la herramienta K3s desplegará un controlador de Ingress Traefik. Este controlador escuchará en los puertos 80 y 443 de los nodos trabajadores, respondiendo al tráfico destinado a nombres de host específicos.
+
+Cuando Rancher esté instalado (también en un paso posterior), el sistema Rancher creará un recurso de Ingress. Ese Ingress le indica al controlador de Ingress Traefik que escuche el tráfico destinado al nombre de host de Rancher. El controlador de Ingress Traefik, al recibir tráfico destinado al nombre de host de Rancher, redirigirá ese tráfico a los pods de Rancher en ejecución en el clúster.
+
+Para tu implementación, considera si deseas o necesitas usar un balanceador de carga de Capa 4 o Capa 7:
+
+* *Un balanceador de carga de capa 4* es la opción más simple de las dos, en la que estás reenviando tráfico TCP a tus nodos. Recomendamos configurar tu balanceador de carga como un balanceador de Capa 4, reenviando tráfico a los puertos TCP/80 y TCP/443 a los nodos del clúster de gestión de Rancher. El controlador de Ingress en el clúster redirigirá el tráfico HTTP a HTTPS y terminará SSL/TLS en el puerto TCP/443. El controlador Ingress redirigirá el tráfico al puerto TCP/80 al pod Ingress en el despliegue de Rancher.
+* *Un equilibrador de carga de capa 7* es un poco más complicado, pero puede ofrecer características que desees. Por ejemplo, un equilibrador de carga de capa 7 es capaz de manejar la terminación de TLS en el equilibrador de carga, a diferencia de que Rancher realice la terminación de TLS por sí mismo. Esto puede ser beneficioso si deseas centralizar la terminación de TLS en tu infraestructura. El equilibrado de carga de capa 7 también ofrece la capacidad de que tu equilibrador de carga tome decisiones basadas en atributos HTTP como cookies, etc., que un equilibrador de carga de capa 4 no puede considerar. Si decides terminar el tráfico SSL/TLS en un equilibrador de carga de capa 7, necesitarás usar la opción `--set tls=external` al instalar Rancher en un paso posterior. Para más información, consulta las {xref-helm-chart-options}#_external_tls_termination[opciones del gráfico Helm de Rancher.]
+
+Para un ejemplo que muestre cómo configurar un equilibrador de carga NGINX, consulta {xref-nginx-load-balancer}[esta página.]
+
+Para una guía de instrucciones para configurar un balanceador de carga de red Amazon ELB, consulta {xref-amazon-elb}[esta página.]
+
+[NOTE]
+.Importante:
+====
+
+No utilices este equilibrador de carga (es decir, el `local` Ingress del clúster) para equilibrar aplicaciones distintas a Rancher tras la instalación. Compartir este Ingress con otras aplicaciones puede resultar en errores de websocket para Rancher tras las recargas de configuración de Ingress para otras aplicaciones. Recomendamos dedicar el `local` clúster a Rancher y no a otras aplicaciones.
+====
+
+
+[#_k3s_4_set_up_the_dns_record]
+[pass]
+<h3><a class="anchor" id="_k3s_4_set_up_the_dns_record" href="#_k3s_4_set_up_the_dns_record"></a>4. Configura el registro DNS</h3>
+
+Una vez que hayas configurado tu equilibrador de carga, necesitarás crear un registro DNS para enviar tráfico a este equilibrador de carga.
+
+Dependiendo de vuestro entorno, esto puede ser un registro A apuntando a la IP del equilibrador de carga, o puede ser un CNAME apuntando al nombre de host del equilibrador de carga. En cualquier caso, asegúrate de que este registro sea el nombre de host al que pretendes que Rancher responda.
+
+Necesitarás especificar este nombre de host en un paso posterior cuando instales Rancher, y no es posible cambiarlo más tarde. Asegúrate de que tu decisión sea definitiva.
+
+Para una guía de instrucciones para configurar un registro DNS que dirija el tráfico de dominio a un equilibrador de carga Amazon ELB, consulta la https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[documentación oficial de AWS.]
+
+[#_k3s_5_set_up_a_private_image_registry]
+[pass]
+<h3><a class="anchor" id="_k3s_5_set_up_a_private_image_registry" href="#_k3s_5_set_up_a_private_image_registry"></a>5. Configura un registro de imágenes privado</h3>
+
+Rancher admite instalaciones en entorno aislado utilizando un registro privado. Debes tener tu propio registro privado u otros medios para distribuir imágenes de contenedor a tus máquinas.
+
+En un paso posterior, cuando configures tu clúster de Kubernetes K3s, crearás un https://rancher.com/docs/k3s/latest/en/installation/private-registry/[archivo de configuración de registros privados] con los detalles de este registro.
+
+Si necesitas crear un registro privado, consulta las páginas de documentación para tu entorno de ejecución respectivo:
+
+* https://github.com/containerd/containerd/blob/main/docs/cri/config.md#registry-configuration[Containerd].
+ ** https://github.com/containerd/nerdctl/blob/main/docs/registry.md[Comandos de Nerdctl y servicios de registro gestionados].
+* https://docs.docker.com/registry/deploying/[Docker].
+--
+
+RKE::
++
+--
+Para instalar el servidor de gestión de Rancher en un clúster RKE de alta disponibilidad, recomendamos configurar la siguiente infraestructura:
+
+- **Tres nodos Linux,** típicamente máquinas virtuales, en un proveedor de infraestructura como EC2 de Amazon, Google Compute Engine o vSphere.
+- **Un equilibrador de carga** para dirigir el tráfico front end a los tres nodos.
+- **Un registro DNS** para mapear una URL al equilibrador de carga. Esto se convertirá en la URL del servidor de Rancher, y los clústeres de Kubernetes en sentido descendente necesitarán poder acceder a ella.
+- **Un registro de imágenes privado** para distribuir imágenes de contenedor a tus máquinas.
+
+Estos nodos deben estar en la misma región/centro de datos. Se pueden colocar estos servidores en zonas de disponibilidad separadas.
+
+[#_why_three_nodes]
+[pass]
+<h3><a class="anchor" id="_why_three_nodes" href="#_why_three_nodes"></a>¿Por qué tres nodos?</h3>
+
+En un clúster RKE, los datos del servidor de Rancher se almacenan en etcd. Esta base de datos etcd se ejecuta en los tres nodos.
+
+La base de datos etcd requiere un número impar de nodos para que siempre pueda elegir un líder con la mayoría del clúster etcd. Si la base de datos etcd no puede elegir un líder, etcd puede sufrir de https://www.quora.com/What-is-split-brain-in-distributed-systems[cerebro dividido], lo que requiere que el clúster sea restaurado desde una copia de seguridad. Si uno de los tres nodos etcd falla, los dos nodos restantes pueden elegir un líder porque tienen la mayoría del número total de nodos etcd.
+
+[#_rke_1_set_up_linux_nodes]
+[pass]
+<h3><a class="anchor" id="_rke_1_set_up_linux_nodes" href="#_rke_1_set_up_linux_nodes"></a>1. Configurar Nodos Linux</h3>
+
+Estos hosts estarán desconectados de internet, pero necesitarán poder conectarse con tu registro privado.
+
+Asegúrate de que tus nodos cumplan con los requisitos generales de instalación para {xref-install-reqs}[SO, entorno de ejecución de contenedor, hardware y red].
+
+Para un ejemplo de una forma de configurar nodos Linux, consulta este {xref-setup-ec2-nodes}[tutorial] para configurar nodos como instancias en Amazon EC2.
+
+[#_rke_2_set_up_the_load_balancer]
+[pass]
+<h3><a class="anchor" id="_rke_2_set_up_the_load_balancer" href="#_rke_2_set_up_the_load_balancer"></a> 2. Configurar el balanceador de carga</h3>
+
+También necesitarás configurar un balanceador de carga para dirigir el tráfico a la réplica de Rancher en ambos nodos. Eso evitará que una caída de cualquier nodo individual interrumpa las comunicaciones con el servidor de gestión de Rancher.
+
+Cuando Kubernetes se configure en un paso posterior, la herramienta RKE desplegará un controlador de Ingress NGINX. Este controlador escuchará en los puertos 80 y 443 de los nodos trabajadores, respondiendo al tráfico destinado a nombres de host específicos.
+
+Cuando Rancher esté instalado (también en un paso posterior), el sistema Rancher creará un recurso de Ingress. Ese Ingress le indica al controlador de Ingress NGINX que escuche el tráfico destinado al nombre de host de Rancher. El controlador de Ingress NGINX, al recibir tráfico destinado al nombre de host de Rancher, redirigirá ese tráfico a los pods de Rancher en ejecución en el clúster.
+
+Para tu implementación, considera si deseas o necesitas usar un balanceador de carga de Capa 4 o Capa 7:
+
+- **Un equilibrador de carga de capa 4** es la opción más simple de las dos, en la que estás reenviando tráfico TCP a tus nodos. Recomendamos configurar tu balanceador de carga como un balanceador de Capa 4, reenviando tráfico a los puertos TCP/80 y TCP/443 a los nodos del clúster de gestión de Rancher. El controlador de Ingress en el clúster redirigirá el tráfico HTTP a HTTPS y terminará SSL/TLS en el puerto TCP/443. El controlador Ingress redirigirá el tráfico al puerto TCP/80 al pod Ingress en el despliegue de Rancher.
+- **Un equilibrador de carga de capa 7** es un poco más complicado, pero puede ofrecer características que desees. Por ejemplo, un equilibrador de carga de capa 7 es capaz de manejar la terminación de TLS en el equilibrador de carga, a diferencia de que Rancher realice la terminación de TLS por sí mismo. Esto puede ser beneficioso si deseas centralizar la terminación de TLS en tu infraestructura. El equilibrado de carga de capa 7 también ofrece la capacidad de que tu equilibrador de carga tome decisiones basadas en atributos HTTP como cookies, etc., que un equilibrador de carga de capa 4 no puede considerar. Si decides terminar el tráfico SSL/TLS en un equilibrador de carga de capa 7, necesitarás usar la opción `--set tls=external` al instalar Rancher en un paso posterior. Para más información, consulta las {xref-helm-chart-options}#_external_tls_termination[opciones del gráfico Helm de Rancher].
+
+Para un ejemplo que muestre cómo configurar un equilibrador de carga NGINX, consulta {xref-nginx-load-balancer}[esta página].
+
+Para una guía de instrucciones para configurar un equilibrador de carga de red Amazon ELB, consulta {xref-amazon-elb}[esta página].
+
+[CAUTION]
+====
+No utilices este equilibrador de carga (es decir, el `local` Ingress del clúster) para equilibrar aplicaciones distintas a Rancher tras la instalación. Compartir este Ingress con otras aplicaciones puede resultar en errores de websocket para Rancher tras las recargas de configuración de Ingress para otras aplicaciones. Recomendamos dedicar el `local` clúster a Rancher y no a otras aplicaciones.
+====
+
+[#_rke_3_set_up_the_dns_record]
+[pass]
+<h3><a class="anchor" id="_rke_3_set_up_the_dns_record" href="#_rke_3_set_up_the_dns_record"></a>3. Configura el registro DNS</h3>
+
+Una vez que hayas configurado tu equilibrador de carga, necesitarás crear un registro DNS para enviar tráfico a este equilibrador de carga.
+
+Dependiendo de tu entorno, esto puede ser un registro A apuntando a la IP del LB, o puede ser un CNAME apuntando al nombre de host del equilibrador de carga. En cualquier caso, asegúrate de que este registro sea el nombre de host al que pretendes que Rancher responda.
+
+Necesitarás especificar este nombre de host en un paso posterior cuando instales Rancher, y no es posible cambiarlo más tarde. Asegúrate de que tu decisión sea definitiva.
+
+Para una guía de instrucciones para configurar un registro DNS que dirija el tráfico de dominio a un equilibrador de carga Amazon ELB, consulta la https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[documentación oficial de AWS].
+
+[#_rke_4_set_up_a_private_image_registry]
+[pass]
+<h3><a class="anchor" id="_rke_4_set_up_a_private_image_registry" href="#_rke_4_set_up_a_private_image_registry"></a>4. Configura un registro de imágenes privado</h3>
+
+Rancher admite instalaciones en entorno aislado utilizando un registro privado seguro. Debes tener tu propio registro privado u otros medios para distribuir imágenes de contenedor a tus máquinas.
+
+En un paso posterior, cuando configures tu clúster de Kubernetes RKE, crearás un https://rke.docs.rancher.com/config-options/private-registries[archivo de configuración de registros privados] con los detalles de este registro.
+
+Si necesitas crear un registro privado, consulta las páginas de documentación para tu entorno de ejecución respectivo:
+
+* https://github.com/containerd/containerd/blob/main/docs/cri/config.md#registry-configuration[Containerd]
+** https://github.com/containerd/nerdctl/blob/main/docs/registry.md[Comandos de Nerdctl y servicios de registro gestionados] 
+* https://docs.docker.com/registry/deploying/[Docker]
+--
+======

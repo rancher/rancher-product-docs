@@ -1,0 +1,93 @@
+= Configurando a Infraestrutura para um Cluster Kubernetes RKE de Alta Disponibilidade
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/ha-rke1-kubernetes-cluster.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/ha-rke1-kubernetes-cluster.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc
+endif::[]
+
+
+include::shared:ROOT:partial$en/eol-rke1-warning.adoc[]
+
+Este tutorial tem como objetivo ajudá-lo a criar um cluster RKE de alta disponibilidade que pode ser usado para instalar um servidor Rancher.
+
+[NOTE]
+.Importante:
+====
+
+Esses nós devem estar na mesma região. Você pode colocar esses servidores em zonas de disponibilidade separadas (data center).
+====
+
+
+Para instalar o servidor de gerenciamento Rancher em um cluster RKE de alta disponibilidade, recomendamos configurar a seguinte infraestrutura:
+
+* *Três nós Linux,* tipicamente máquinas virtuais, em um provedor de infraestrutura como o EC2 da Amazon, Google Compute Engine ou vSphere.
+* *Um balanceador de carga* para direcionar o tráfego do front end para os três nós.
+* *Um registro DNS* para mapear uma URL para o balanceador de carga. Isso se tornará a URL do servidor Rancher, e os clusters Kubernetes downstream precisarão acessá-la.
+
+Esses nós devem estar na mesma região/data center. Você pode colocar esses servidores em zonas de disponibilidade separadas.
+
+[#_why_three_nodes]
+== Por que Três Nós?
+
+Em um cluster RKE, os dados do servidor Rancher são armazenados no etcd. Este banco de dados etcd é executado em todos os três nós.
+
+O banco de dados etcd requer um número ímpar de nós para que possa sempre eleger um líder com a maioria do cluster etcd. Se o banco de dados etcd não conseguir eleger um líder, o etcd pode sofrer de https://www.quora.com/What-is-split-brain-in-distributed-systems[split brain], exigindo que o cluster seja restaurado do backup. Se um dos três nós etcd falhar, os dois nós restantes podem eleger um líder porque têm a maioria do número total de nós etcd.
+
+[#_1_set_up_linux_nodes]
+== 1. Configure os Nós Linux
+
+Certifique-se de que seus nós atendam aos requisitos gerais de instalação para {xref-install-reqs}[sistema operacional, tempo de execução do contêiner, hardware e rede.]
+
+Para um exemplo de uma maneira de configurar nós Linux, consulte este {xref-setup-ec2-nodes}[tutorial] para configurar nós como instâncias na Amazon EC2.
+
+[#_2_set_up_the_load_balancer]
+== 2. Configure o Balanceador de Carga
+
+Você também precisará configurar um balanceador de carga para direcionar o tráfego para a réplica do Rancher em qualquer um dos três nós. Isso evitará que a falha de qualquer nó único interrompa as comunicações com o servidor de gerenciamento do Rancher.
+
+Quando o Kubernetes for configurado em uma etapa posterior, a ferramenta RKE irá implantar um controlador de Ingress NGINX. Esse controlador escutará nas portas 80 e 443 dos nós de trabalho, respondendo ao tráfego destinado a nomes de host específicos.
+
+Quando o Rancher for instalado (também em uma etapa posterior), o sistema Rancher cria um recurso de Ingress. Esse Ingress informa ao controlador de Ingress NGINX para ouvir o tráfego destinado ao nome de host do Rancher. O controlador de Ingress NGINX, ao receber tráfego destinado ao nome de host do Rancher, encaminhará esse tráfego para os pods do Rancher em execução no cluster.
+
+Para sua implementação, considere se você deseja ou precisa usar um balanceador de carga de Camada 4 ou Camada 7:
+
+* *Um balanceador de carga de camada 4* é a escolha mais simples das duas, na qual você está encaminhando tráfego TCP para seus nós. Recomendamos configurar seu balanceador de carga como um balanceador de Camada 4, encaminhando tráfego para as portas TCP/80 e TCP/443 para os nós do cluster de gerenciamento do Rancher. O controlador de Ingress no cluster redirecionará o tráfego HTTP para HTTPS e encerrará o SSL/TLS na porta TCP/443. O controlador de Ingress encaminhará o tráfego para a porta TCP/80 para o pod de Ingress na implantação do Rancher.
+* *Um balanceador de carga de camada 7* é um pouco mais complicado, mas pode oferecer recursos que você pode querer. Por exemplo, um balanceador de carga de camada 7 é capaz de lidar com a terminação TLS no balanceador de carga, ao contrário do Rancher que faz a terminação TLS por conta própria. Isso pode ser benéfico se você quiser centralizar a terminação TLS em sua infraestrutura. O balanceamento de carga de camada 7 também oferece a capacidade de o seu balanceador de carga tomar decisões com base em atributos HTTP, como cookies, etc., que um balanceador de carga de camada 4 não consegue considerar. Se você decidir terminar o tráfego SSL/TLS em um balanceador de carga de camada 7, precisará usar a opção `--set tls=external` ao instalar o Rancher em um passo posterior. Para mais informações, consulte as opções do {xref-helm-chart-options}#_external_tls_termination[gráfico Helm do Rancher.]
+
+Para um exemplo mostrando como configurar um balanceador de carga NGINX, consulte {xref-nginx-load-balancer}[esta página.]
+
+Para um guia de procedimentos para configurar um balanceador de carga de rede Amazon ELB, consulte {xref-amazon-elb}[esta página.]
+
+[CAUTION]
+====
+
+Não use este balanceador de carga (ou seja, o `local` Ingress do cluster) para balancear aplicações além do Rancher após a instalação. Compartilhar este Ingress com outras aplicações pode resultar em erros de websocket para o Rancher após recarregamentos de configuração do Ingress para outros apps. Recomendamos dedicar o `local` cluster ao Rancher e a nenhuma outra aplicação.
+====
+
+
+[#_3_set_up_the_dns_record]
+== 3. Configure o Registro DNS
+
+Uma vez que você tenha configurado seu balanceador de carga, precisará criar um registro DNS para enviar tráfego a este balanceador de carga.
+
+Dependendo do seu ambiente, isso pode ser um registro A apontando para o IP do LB, ou pode ser um CNAME apontando para o nome do host do balanceador de carga. Em qualquer um dos casos, certifique-se de que este registro é o nome do host que você pretende que o Rancher responda.
+
+Você precisará especificar este nome do host em um passo posterior ao instalar o Rancher, e não é possível alterá-lo depois. Certifique-se de que sua decisão é final.
+
+Para um guia de procedimentos para configurar um registro DNS para direcionar o tráfego de domínio para um balanceador de carga Amazon ELB, consulte a https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[documentação oficial da AWS.]

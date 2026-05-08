@@ -1,0 +1,248 @@
+= 汎用 OIDC を設定する
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-generic-oidc.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-generic-oidc.adoc
+:description: OpenID Connect (OIDC) クライアントを作成し、Rancher を認証プロバイダーと連携させるように設定します。ユーザーは、認証プロバイダーのログインを使用して Rancher にサインインできます。
+
+汎用 OpenID Connect (OIDC) を使用すると、ユーザーは OIDC アイデンティティプロバイダー (IdP) にある既存のアカウントの資格情報を使用して Rancher にサインインできます。Rancher は OIDC プロトコルと SAML プロトコルとの統合をサポートしています。両方の実装は、Rancher で使用する際に機能的に同等です。以下の手順では、OIDC クライアントを作成し、Rancher を認証プロバイダーと連携させる方法を説明します。ユーザーは OIDC IdP のログインを使用して Rancher にサインインできます。
+
+[#_prerequisites]
+== 前提条件
+
+[#_identity_provider]
+=== アイデンティティプロバイダ
+
+Rancher では、汎用 OIDC が無効になっています。
+
+[NOTE]
+====
+特定の IdP のドキュメントを参照して、リストされた前提条件を完了してください。
+====
+
+[#_oidc_client]
+==== OIDC クライアント
+
+IdP で、以下の設定を持つ新しいクライアントを作成します：
+
+|===
+| 設定 | 値
+
+| `Client ID`
+| +++<CLIENT_ID>+++(e.g. `rancher`)+++</CLIENT_ID>+++
+
+| `Name`
+| +++<CLIENT_NAME>+++(e.g. `rancher`)+++</CLIENT_NAME>+++
+
+| `Client Protocol`
+| `openid-connect`
+
+| `Access Type`
+| `confidential`
+
+| `Valid Redirect URI`
+| `https://yourRancherHostURL/verify-auth`
+|===
+
+新しい OIDC クライアントで、ユーザーのフィールドを公開するためにマッパーを作成します。
+
+[NOTE]
+====
+あなたのアイデンティティプロバイダーの OIDC クライアント内で作成したグループおよびグループパスマッパーによって生成された `groups` および `full_group_path` クレームは、JSON 配列である必要があります。例: `"groups":["admins","devs","qa"]` および `"full_group_path":["/admins","/devs","/qa"]`。
+====
+
+. 以下の設定を持つ新しい `Groups Mapper` を作成します：
++
+|===
+| 設定 | 値
+
+| `Name`
+| `Groups Mapper`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `groups`
+
+| `Add to ID token`
+| `OFF`
+
+| `Add to access token`
+| `OFF`
+
+| `Add to user info`
+| `ON`
+|===
+
+. 以下の設定を持つ新しい `Client Audience` を作成します：
++
+|===
+| 設定 | 値
+
+| `Name`
+| `Client Audience`
+
+| `Mapper Type`
+| `Audience`
+
+| `Included Client Audience`
+| +++<CLIENT_NAME>++++++</CLIENT_NAME>+++
+
+| `Add to access token`
+| `ON`
+|===
+
+. 以下の設定を持つ新しい `Groups Path` を作成してください。
++
+|===
+| 設定 | 値
+
+| `Name`
+| `Group Path`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `full_group_path`
+
+| `Full group path`
+| `ON`
+
+| `Add to user info`
+| `ON`
+|===
+
+[CAUTION]
+====
+Rancher は "sub" クレームで受け取った値を使用して、Rancher 内の一意の識別子である PrincipalID を形成します。 これを一意で不変の値にすることが重要です。
+====
+
+[#_configuring_generic_oidc_in_rancher]
+== Rancherでの汎用OIDCの設定
+
+. Rancher UIの左上隅で、*☰ > ユーザーと認証*をクリックします。
+. 左のナビゲーションバーで、*認証プロバイダー*をクリックします。
+. *汎用 OIDC*を選択します。
+. *OIDCアカウントの設定*フォームに入力してください。フォームの記入に関するヘルプは、<<_configuration_reference,設定リファレンス>>を参照してください。
+. ［*有効］*をクリックします。
++
+RancherはIdPのログインページにリダイレクトします。RancherのKeycloak設定を検証するために、IdPの認証情報を入力してください。
++
+[NOTE]
+====
+IdPログインページを見るためにポップアップブロッカーを無効にする必要があるかもしれません。
+====
+
+*結果:*RancherはOIDCプロトコルを使用して、あなたのプロバイダーと連携するように設定されています。ユーザーはIdPのログインを使用してRancherにサインインできるようになりました。
+
+[#_custom_claim_mapping]
+=== カスタムクレームマッピング
+
+汎用 OIDC 設定内でのカスタムクレームマッピングは、`name`、`email`、および `groups` のクレームに対応しています。これにより、IdPがトークン内で標準名を使用しない場合に、これらのOIDCクレームを手動でマッピングできます。
+
+[#_how_a_custom_groups_claim_works]
+==== カスタムグループクレームの動作
+
+カスタムグループクレームは、ユーザーグループの動作に影響を与えます：
+
+* ユーザーのトークンに標準OIDCの`groups`クレームとカスタムグループクレームの両方が存在する場合、カスタムクレームは標準クレームによって提供されるグループのリストを補完します。
+* トークンに標準のグループクレームが存在しない場合、カスタムクレームにリストされたグループがユーザーの唯一のグループを形成します。
+
+[NOTE]
+====
+カスタムクレームから取得したグループに対しては、検索機能は利用できません。これらのグループのいずれかに役割を割り当てるには、RBACフィールドにグループの正確な名前を手動で入力する必要があります。
+====
+
+[#_configuring_custom_claims]
+==== カスタムクレームの設定
+
+*OIDCアカウントの設定*フォームにいるとき：
+
+. *カスタムクレームを追加*を選択します。
+. カスタム`name`、`email`、または`groups`クレームを適切な*カスタムクレーム*フィールドに追加してください。
+
+例えば、IdPが`groups`というクレームで`custom_roles`を送信する場合、*カスタムグループクレーム*フィールドに`custom_roles`を入力してください。Rancherは、標準のOIDC `groups`クレームを補完するか、ユーザーのトークンを処理する際にその特定のクレームを探します。
+
+[#_configuration_reference]
+=== 構成リファレンス
+
+|===
+| フィールド | 説明
+
+| クライアントID
+| あなたのOIDCクライアントのクライアントID。
+
+| クライアントシークレット
+| あなたのOIDCクライアントの生成されたシークレット。
+
+| 秘密鍵/証明書
+| RancherとあなたのIdPの間に安全な接続を作成するための鍵/証明書ペアです。OIDCサーバーでHTTPS/SSLが有効になっている場合は必須です。
+
+| エンドポイント
+| Rancher URL、Issue、およびAuth Endpointフィールドに生成された値を使用するか、誤っている場合は手動で上書きするかを選択してください。
+
+| Rancher URL
+| あなたのRancherサーバーのURLです。
+
+| ［発行者］
+| あなたのIdPのURLです。 プロバイダーにディスカバリーが有効になっている場合、RancherはIssuer URLを使用して必要なすべてのURLを取得します。
+
+| 認証エンドポイント
+| ユーザーが認証するためにリダイレクトされるURLです。
+|===
+
+[#_custom_claims]
+==== カスタムクレーム
+
+|===
+| カスタムクレームフィールド | デフォルトOIDCクレーム | カスタムクレームの説明
+
+| カスタム名クレーム
+| `name`
+| ユーザーのフルネームまたは表示名を含むOIDCトークン内のクレームの名前。
+
+| カスタムメールクレーム
+| `email`
+| ユーザーのメールアドレスを含むOIDCトークン内のクレームの名前。
+
+| カスタムグループクレーム
+| `groups`
+| ユーザーのグループメンバーシップを含むOIDCトークン内のクレームの名前（RBACに使用）。
+|===
+
+[#_oidc_support_for_pkce_extension]
+== PKCE拡張のためのOIDCサポート
+
+include::shared:ROOT:partial$en/oidc-pkce-support.adoc[]
+
+[#_troubleshooting]
+== トラブルシューティング
+
+OIDCサーバーへの接続をテストしている際に問題が発生した場合は、まずOIDCクライアントの設定オプションを再確認してください。Rancherのログを確認して、問題の原因を特定する手助けをすることもできます。デバッグログには、エラーに関するより詳細な情報が含まれている場合があります。このドキュメントのxref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[デバッグログを有効にする方法]を参照してください。
+
+すべての汎用 OIDC 関連のログエントリは、`[generic oidc]`または`[oidc]`で前置きされています。
+
+[#_you_are_not_redirected_to_your_authentication_provider]
+=== 認証プロバイダーにリダイレクトされません。
+
+*Generic OIDCアカウントの設定*フォームに記入し、*有効にする*をクリックしてもIdPにリダイレクトされない場合は、OIDCクライアントの設定を確認してください。
+
+[#_the_generated_issuer_and_auth_endpoint_are_incorrect]
+=== 生成された`Issuer`と`Auth Endpoint`は不正確です。
+
+`Issuer`と`Auth Endpoint`が不正に生成された場合は、*OIDCアカウントの設定*フォームを開き、*エンドポイント*を`Specify (advanced)`に変更し、`Issuer`の値を上書きしてください。
+
+[#_error_invalid_grant_type]
+=== エラー:"Invalid grant_type"
+
+場合によっては、「無効なgrant_type」エラーメッセージが誤解を招くことがあり、実際には`Valid Redirect URI`を不正に設定したことが原因です。
+
+[#_configuring_oidc_single_logout_slo]
+== OIDCシングルログアウト（SLO）の設定
+
+include::shared:ROOT:partial$en/configure-slo-oidc.adoc[]

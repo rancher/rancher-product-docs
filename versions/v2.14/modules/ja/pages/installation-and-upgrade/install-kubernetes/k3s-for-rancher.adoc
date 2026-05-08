@@ -1,0 +1,165 @@
+= 高可用性の{k3s-product-name}Kubernetesクラスターのセットアップ{rancher-product-name}用
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-cluster-setup/k3s-for-rancher.adoc 
+:product-path: installation-and-upgrade/install-kubernetes/k3s-for-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-arch-rec: xref:about-rancher/architecture/recommendations.adoc
+:xref-ha-k3s: xref:installation-and-upgrade/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-arch-rec: xref:reference-guides/rancher-manager-architecture/architecture-recommendations.adoc
+:xref-ha-k3s: xref:how-to-guides/new-user-guides/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+endif::[]
+
+このセクションでは、{xref-arch-rec}#_environment_for_kubernetes_installations[ランチャーサーバー環境のベストプラクティス]に従ってKubernetesクラスターをインストールする方法について説明します。
+
+インターネットに直接アクセスできないシステムの場合は、エアギャップインストール手順を参照してください。
+
+[TIP]
+.単一ノードインストールのヒント：
+====
+
+単一ノードのKubernetesクラスターでは、Rancherサーバーは高可用性を持たず、これは本番環境でRancherを実行するために重要です。ただし、単一ノードクラスターにRancherをインストールすることは、短期間に単一ノードを使用してリソースを節約しつつ、高可用性への移行パスを確保したい場合に役立ちます。
+
+単一ノードのK3sクラスターを設定するには、2つのノードではなく1つのノードでRancherサーバーのインストールコマンドを実行します。
+
+両方の単一ノードセットアップでは、RancherはKubernetesクラスターにHelmを使用してインストールでき、他のクラスターにインストールするのと同じ方法で行えます。
+====
+
+
+[#_prerequisites]
+== 前提条件
+
+これらの手順は、{xref-ha-k3s}[このセクション]に記載されているように、2つのノード、ロードバランサー、DNSレコード、および外部MySQLデータベースを設定したことを前提としています。
+
+Rancherは、サポートされているKubernetesバージョンにインストールする必要があります。ご利用のRancherバージョンに対してサポートされているKubernetesのバージョンを確認するには、 https://rancher.com/support-maintenance-terms/[Rancherサポートマトリックス]を参照してください。
+
+K3s（Kubernetes）バージョンを指定するには、K3sインストールスクリプトを実行する際にINSTALL_K3S_VERSION（例：`INSTALL_K3S_VERSION="v1.24.10+k3s1"`）環境変数を使用します。
+
+[#_installing_kubernetes]
+== Kubernetesのインストール
+
+[#_1_install_kubernetes_and_set_up_the_k3s_product_name_server]
+=== 1.Kubernetesをインストールし、{k3s-product-name}サーバーを設定する
+
+K3s Kubernetes APIサーバーを起動するコマンドを実行する際には、前に設定した外部データストアを使用するオプションを渡します。
+
+. ランチャーサーバーを実行するために準備したLinuxノードの1つに接続します。
+. Linuxノードで、K3sサーバーを起動し、外部データストアに接続するためにこのコマンドを実行します：
++
+----
+ curl -sfL https://get.k3s.io |  INSTALL_K3S_VERSION=<VERSION> sh -s - server \
+   --datastore-endpoint="<DATASTORE_ENDPOINT>"
+----
++
+ここで、`<DATASTORE_ENDPOINT>`はデータストアの接続URIです。例えば、MySQLを使用している場合は`mysql://username:password@tcp(hostname:3306)/database-name`です。有効なデータストアには、etcd、MySQL、PostgreSQL、またはSQLite（デフォルト）が含まれます。
++
+
+[NOTE]
+====
+データストアエンドポイントは、環境変数 `$K3S_DATASTORE_ENDPOINT` を使用して渡すこともできます。
+====
+
+
+. メインサーバーノードトークンを取得します：
++
+----
+ cat /var/lib/rancher/k3s/server/token
+----
+
+. 2番目のK3sサーバーノードでコマンドを実行します：
++
+----
+   curl -sfL https://get.k3s.io |  INSTALL_K3S_VERSION=<VERSION> sh -s - server \
+     --datastore-endpoint="<DATASTORE_ENDPOINT>" \
+     --token "<MAIN_SERVER_NODE_TOKEN>"
+----
+
+[#_2_confirm_that_k3s_product_name_is_running]
+=== 2.{k3s-product-name} が実行中であることを確認します。
+
+K3s が正常にセットアップされたことを確認するには、いずれかの K3s サーバーノードで次のコマンドを実行します：
+
+----
+sudo k3s kubectl get nodes
+----
+
+次に、マスターロールを持つ2つのノードが表示されるはずです。
+
+----
+ubuntu@ip-172-31-60-194:~$ sudo k3s kubectl get nodes
+NAME               STATUS   ROLES    AGE    VERSION
+ip-172-31-60-194   Ready    master   44m    v1.17.2+k3s1
+ip-172-31-63-88    Ready    master   6m8s   v1.17.2+k3s1
+----
+
+次に、クラスターのポッドの健康状態をテストします。
+
+----
+sudo k3s kubectl get pods --all-namespaces
+----
+
+*結果:*K3s Kubernetes クラスターを正常にセットアップしました。
+
+[#_3_save_and_start_using_the_kubeconfig_file]
+=== 3.kubeconfig ファイルを保存して使用を開始します。
+
+各 Rancher サーバーノードに K3s をインストールしたとき、ノードの `/etc/rancher/k3s/k3s.yaml` に `kubeconfig` ファイルが作成されました。このファイルには、クラスターへの完全なアクセス権のための資格情報が含まれており、このファイルは安全な場所に保存する必要があります。
+
+この `kubeconfig` ファイルを使用するには、
+
+. Kubernetes コマンドラインツール https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl,] をインストールします。
+. `/etc/rancher/k3s/k3s.yaml` にあるファイルをコピーし、ローカルマシンのディレクトリ `~/.kube/config` に保存します。
+. kubeconfig ファイルでは、`server` ディレクティブが localhost として定義されています。サーバーをロードバランサーの DNS として構成し、ポート 6443 を参照します。（Kubernetes API サーバーにはポート 6443 でアクセスされ、Rancher サーバーにはポート 80 および 443 でアクセスされます。）以下に`k3s.yaml`の例を示します。
+
+[,yml]
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*結果:*これで `kubectl` を使用して K3s クラスターを管理できます。複数の kubeconfig ファイルがある場合は、`kubectl` を使用する際にファイルへのパスを渡すことで、使用するファイルを指定できます。
+
+----
+kubectl --kubeconfig ~/.kube/config/k3s.yaml get pods --all-namespaces
+----
+
+`kubeconfig`ファイルに関する詳細については、 https://rancher.com/docs/k3s/latest/en/cluster-access/[K3sのドキュメント]または https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[公式Kubernetesドキュメント]を参照して、`kubeconfig`ファイルを使用してクラスターアクセスを整理してください。
+
+[#_4_check_the_health_of_your_cluster_pods]
+=== 4.クラスターのポッドの健康状態を確認してください。
+
+`kubeconfig`ファイルを設定したので、`kubectl`を使用してローカルマシンからクラスターにアクセスできます。
+
+すべての必要なポッドとコンテナが健康で、続行する準備ができていることを確認してください。
+
+----
+ubuntu@ip-172-31-60-194:~$ sudo kubectl get pods --all-namespaces
+NAMESPACE       NAME                                      READY   STATUS    RESTARTS   AGE
+kube-system     metrics-server-6d684c7b5-bw59k            1/1     Running   0          8d
+kube-system     local-path-provisioner-58fb86bdfd-fmkvd   1/1     Running   0          8d
+kube-system     coredns-d798c9dd-ljjnf                    1/1     Running   0          8d
+----
+
+*結果:*`kubectl`を使用してクラスターにアクセスできることを確認し、K3sクラスターが正常に実行されていることを確認しました。これで、Rancher管理サーバーをクラスターにインストールできます。

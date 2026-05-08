@@ -1,0 +1,142 @@
+= Reversiones
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-06
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc 
+:product-path: installation-and-upgrade/rollbacks.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/copia-de-seguridad-recuperación-y-desastre/configuración/ejemplos.adoc
+:xref-rancher-restore: xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rollback-docker-installed: xref:comenzando/instalación-y-actualizar-versión/otros-métodos-de-instalación/rancher-en-un-solo-nodo-con-docker/reversión-rancher-instalado-con-docker.adoc
+:xref-migrate-cluster: xref:instrucciones/nuevas-guías-de-usuario/copia-de-seguridad-recuperación-y-desastre/migrar-rancher-a-nuevo-cluster.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+:xref-rancher-restore-config: xref:guías-de-referencia/copia-de-seguridad-recuperación-configuración/restaurar-configuración.adoc
+:xref-back-restore-example-configs: xref:guías-de-referencia/copia-de-seguridad-recuperación-configuración/ejemplos.adoc
+:xref-rancher-restore: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc
+endif::[]
+
+Esta página describe cómo realizar una reversión de Rancher a una versión anterior después de una actualización.
+
+include::shared:ROOT:partial$en/rollback-warning.adoc[]
+
+Sigue las instrucciones de esta página cuando:
+
+* La instancia de Rancher en ejecución ha sido actualizada a una versión más reciente después de que se realizó la copia de seguridad.
+* El clúster local es el mismo en el que se realizó la copia de seguridad.
+
+[TIP]
+====
+* Sigue estos pasos para {xref-migrate-cluster}[migrar Rancher].
+* Si necesitas restaurar Rancher a su estado anterior en la misma versión de Rancher, consulta la {xref-rancher-restore}[documentación de restauración].
+====
+
+Para realizar una reversión de Rancher a una versión inferior/anterior, utiliza la aplicación *Rancher Backups* y restaura Rancher desde la copia de seguridad.
+
+Rancher debe iniciarse con la versión anterior después de una reversión.
+
+Una restauración se realiza creando un recurso personalizado de Restauración.
+
+[#_alternative_steps_for_special_scenarios]
+== Pasos alternativos para escenarios especiales
+
+Se deben realizar pasos alternativos para las reversiones en los siguientes escenarios:
+
+* Reversión de v2.14.0 y versiones posteriores a una versión anterior de v2.13.x.
+
+En Rancher v2.13.0, Rancher Turtles se convirtió en el gestor predeterminado para los recursos de CAPI, reemplazando a los controladores de cluster-api previamente integrados, y en Rancher v2.14.0 se eliminó por completo el cluster-api integrado. Como resultado, si revierte de Rancher v2.14.0 y versiones posteriores a una versión anterior de Rancher v2.13.x y no tiene la intención de seguir utilizando Rancher Turtles para gestionar los recursos de CAPI, pueden ser necesarios pasos manuales adicionales para utilizar los controladores de cluster-api integrados. Desde Rancher v2.14.0 en adelante, Rancher Turtles es el único gestor soportado para los recursos de CAPI.
+
+En Rancher v2.14.0, el módulo cluster-api se actualiza de v1.10.6 a v1.12.2. El cluster-api v1.12.2, a su vez, actualiza las apiVersions de sus definiciones de recursos personalizadas (CRDs) de `cluster.x-k8s.io/v1beta1` a `cluster.x-k8s.io/v1beta2`. Los archivos de copia de seguridad de Rancher incluyen CRDs de Cluster API. Al restaurar datos de copia de seguridad de Rancher v2.13.x a un clúster local después de actualizar a v2.14.0, la aplicación de copia de seguridad de Rancher primero restaura los CRDs v1beta1. Esto falla porque la versión v1beta2 no puede ser eliminada de los CRDs mientras los recursos personalizados v1beta2 estén presentes en el clúster.
+
+[NOTE]
+.Importante:
+====
+
+* Sigue las instrucciones de esta página para restaurar Rancher en el mismo clúster del que se realizó la copia de seguridad. Para migrar Rancher a un nuevo clúster, sigue los pasos para {xref-migrate-cluster}[migrar Rancher.]
+* Mientras se restaura Rancher en la misma configuración, la ampliación de Rancher se reduce manualmente antes de que comience la restauración, luego el operador la volverá a aumentar una vez que la restauración se complete. Como resultado, Rancher y su interfaz de usuario no estarán disponibles hasta que la restauración esté completa. Mientras la interfaz de usuario no esté disponible, utiliza el kubeconfig del clúster original con el archivo YAML de restauración: `kubectl create -f restore.yaml`.
+====
+
+[#_step_1_create_the_restore_custom_resource]
+== Paso 1: Crea el Recurso Personalizado de Restauración
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster local y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en menu:Copias de seguridad de Rancher[Restaurar].
+
+[NOTE]
+====
+Si la aplicación Copias de seguridad de Rancher no es visible, necesitarás instalarla desde la página de Charts en *Aplicaciones*. Consulta {xref-helm-charts-in-rancher}#_access_charts[aquí] para más información.
+====
+
+
+. Haga clic en *Crear*.
+. Crea la Restauración con el formulario o con YAML. Para obtener ayuda creando el recurso de Restauración utilizando el formulario en línea, consulta la {xref-rancher-restore-config}[referencia de configuración] y los {xref-back-restore-example-configs}[ejemplos.]
+. Para utilizar el editor de YAML, puedes hacer clic en menu:Crear[Crear desde YAML.] Ingresa el YAML de Restauración. El siguiente es un ejemplo de recurso personalizado de Restauración:
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Restore
+ metadata:
+   name: restore-migration
+ spec:
+   backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+   encryptionConfigSecretName: encryptionconfig
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+----
++
+Para obtener ayuda configurando la Restauración, consulta la {xref-rancher-restore-config}[referencia de configuración] y los {xref-back-restore-example-configs}[ejemplos.]
+
+. Haga clic en *Crear*.
+
+*Resultado:* El archivo de copia de seguridad se crea y se actualiza en la ubicación de almacenamiento objetivo. Los recursos se restauran en este orden:
+
+. Definiciones de Recursos Personalizados (CRDs)
+. Recursos de alcance de clúster
+. Recursos de espacio de nombres
+
+Para comprobar cómo está progresando la restauración, puedes revisar los registros del operador. Sigue estos pasos para obtener los registros:
+
+[,yaml]
+----
+kubectl get pods -n cattle-resources-system
+kubectl logs -n cattle-resources-system -f
+----
+
+[#_step_2_roll_back_to_a_previous_rancher_version]
+== Paso 2: Revertir a una versión anterior de Rancher
+
+Rancher se puede revertir utilizando la CLI de Helm. Para realizar una reversión a la versión anterior:
+
+[,yaml]
+----
+helm rollback rancher -n cattle-system
+----
+
+Si la revisión anterior no es el objetivo previsto, puedes especificar una revisión a la que realizar la reversión. Para ver el historial de ampliaciones:
+
+[,yaml]
+----
+helm history rancher -n cattle-system
+----
+
+Cuando se determine la revisión objetivo, realiza la reversión. Este ejemplo revertirá a la revisión `3`:
+
+[,yaml]
+----
+helm rollback rancher 3 -n cattle-system
+----

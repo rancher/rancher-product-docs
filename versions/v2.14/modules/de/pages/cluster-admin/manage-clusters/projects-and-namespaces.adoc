@@ -1,0 +1,248 @@
+= Projekte und Kubernetes Namespaces mit {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/projects-and-namespaces.adoc 
+:product-path: cluster-admin/manage-clusters/projects-and-namespaces.adoc
+:description: Rancher-Projekte erleichtern die administrative Belastung Ihres Clusters und unterstützen die Multi-Tenancy. Lernen Sie, Projekte zu erstellen und Projekte in Kubernetes Namespaces zu unterteilen
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-persistent-storage: xref:cluster-admin/manage-clusters/persistent-storage/manage-persistent-storage.adoc
+:xref-configmaps: xref:cluster-admin/kubernetes-resources/configmaps.adoc
+:xref-workloads-and-pods: xref:cluster-admin/kubernetes-resources/workloads-and-pods/workloads-and-pods.adoc
+:xref-project-resource-quotas: xref:cluster-admin/project-admin/project-resource-quotas/project-resource-quotas.adoc
+:xref-custom-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/custom-roles.adoc
+:xref-http-encrypt: xref:security/encrypting-http.adoc
+:xref-namespaces: xref:cluster-admin/namespaces.adoc
+:xref-k8s-docker-registries: xref:cluster-admin/kubernetes-resources/kubernetes-and-docker-registries.adoc
+:xref-create-services: xref:cluster-admin/kubernetes-resources/create-services.adoc
+:xref-lb-and-ingress-controller: xref:cluster-admin/kubernetes-resources/load-balancer-and-ingress-controller/load-balancer-and-ingress-controller.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-persistent-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/index.adoc
+:xref-configmaps: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/configmaps.adoc
+:xref-workloads-and-pods: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/workloads-and-pods/index.adoc
+:xref-project-resource-quotas: xref:how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/index.adoc
+:xref-custom-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/custom-roles.adoc
+:xref-http-encrypt: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/encrypt-http-communication.adoc
+:xref-namespaces: xref:how-to-guides/new-user-guides/manage-namespaces.adoc
+:xref-k8s-docker-registries: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/kubernetes-and-docker-registries.adoc
+:xref-create-services: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/create-services.adoc
+:xref-lb-and-ingress-controller: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/load-balancer-and-ingress-controller/index.adoc
+endif::[]
+
+Ein Namespace ist ein Kubernetes-Konzept, das einen virtuellen Cluster innerhalb eines Clusters ermöglicht, was nützlich ist, um den Cluster in separate "virtuelle Cluster" zu unterteilen, die jeweils ihre eigene Zugriffskontrolle und Ressourcenquoten haben.
+
+Ein Projekt ist eine Gruppe von Namespaces und ein Konzept, das von Rancher eingeführt wurde. Projekte ermöglichen es Ihnen, mehrere Namespaces als Gruppe zu verwalten und Kubernetes-Operationen in ihnen durchzuführen. Sie können Projekte nutzen, um die Multi-Tenancy zu unterstützen, sodass ein Team auf ein Projekt innerhalb eines Clusters zugreifen kann, ohne Zugriff auf andere Projekte im selben Cluster zu haben.
+
+[NOTE]
+====
+Projekte werden in der Benutzeroberfläche weniger betont, da es nicht erforderlich ist, Kubernetes-Ressourcen innerhalb eines Projektumfangs zu erstellen. Ressourcen wie {xref-secrets}#_creating_secrets_in_projects[Geheimnisse] können weiterhin im Projektumfang erstellt werden.
+====
+
+
+Dieser Abschnitt beschreibt, wie Projekte und Namespaces mit Rancher funktionieren.
+
+[#_about_namespaces]
+== Über Namespaces
+
+Ein Namespace ist ein Konzept, das von Kubernetes eingeführt wurde. Laut der https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/[offiziellen Kubernetes-Dokumentation zu Namespaces,]
+
+[NOTE]
+====
+
+Kubernetes unterstützt mehrere virtuelle Cluster, die demselben physischen Cluster zugrunde liegen. Diese virtuellen Cluster werden als Namespaces bezeichnet. [...] Namespaces sind für die Verwendung in Umgebungen mit vielen Benutzern gedacht, die über mehrere Teams oder Projekte verteilt sind. Für Cluster mit wenigen bis mehreren Dutzend Benutzern sollten Sie keine Namespaces erstellen oder darüber nachdenken müssen.
+====
+
+
+Namespaces bieten die folgende Funktionalität:
+
+* *Bereitstellung eines Geltungsbereichs für Namen:* Die Namen von Ressourcen müssen innerhalb eines Namespace eindeutig sein, jedoch nicht über verschiedene Namespaces hinweg. Namespaces können nicht ineinander geschachtelt werden, und jede Kubernetes-Ressource kann sich nur in einem Namespace befinden.
+* *Ressourcenkontingente:* Namespaces bieten eine Möglichkeit, Clusterressourcen zwischen mehreren Benutzern zu teilen.
+
+Sie können Ressourcen auf Projektebene zuweisen, sodass jeder Namespace im Projekt diese nutzen kann. Sie können diese Vererbung auch umgehen, indem Sie Ressourcen explizit einem Namespace zuweisen.
+
+Sie können die folgenden Ressourcen direkt einem Namespace zuweisen:
+
+* {xref-workloads-and-pods}[Workloads]
+* {xref-lb-and-ingress-controller}[Lastenausgleicher/Ingress]
+* {xref-create-services}[Service Discovery Records]
+* {xref-persistent-storage}[Persistente Volume Claims]
+* {xref-http-encrypt}[Zertifikate]
+* {xref-configmaps}[ConfigMaps]
+* {xref-k8s-docker-registries}[Registries]
+* {xref-secrets}[Secrets]
+
+Um Berechtigungen in einem Standard-Kubernetes-Cluster zu verwalten, konfigurieren Cluster-Administratoren rollenbasierte Zugriffskontrolle für jeden Namespace. Mit Rancher werden die Benutzerberechtigungen stattdessen auf Projektebene zugewiesen, und die Berechtigungen werden automatisch von jedem Namespace geerbt, der zu dem jeweiligen Projekt gehört.
+
+Für weitere Informationen zum Erstellen und Verschieben von Namespaces siehe {xref-namespaces}[Namespaces].
+
+[#_role_based_access_control_issues_with_namespaces_and_kubectl]
+=== Probleme mit der rollenbasierten Zugriffskontrolle bei Namespaces und kubectl
+
+Da Projekte ein Konzept sind, das von Rancher eingeführt wurde, hat kubectl nicht die Möglichkeit, die Erstellung von Namespaces auf ein Projekt zu beschränken, auf das der Ersteller Zugriff hat.
+
+Das bedeutet, dass, wenn Standardbenutzer mit projektbezogenen Berechtigungen einen Namespace mit `kubectl` erstellen, er unbrauchbar sein kann, da `kubectl` nicht erfordert, dass der neue Namespace innerhalb eines bestimmten Projekts eingegrenzt ist.
+
+Wenn Ihre Berechtigungen auf Projektebene beschränkt sind, ist es besser, {xref-namespaces}[einen Namespace über Rancher zu erstellen], um sicherzustellen, dass Sie die Berechtigung haben, auf den Namespace zuzugreifen.
+
+Wenn ein Standardbenutzer Projektinhaber ist, kann der Benutzer Namespaces innerhalb dieses Projekts erstellen. Die Rancher-Benutzeroberfläche wird verhindern, dass dieser Benutzer Namespaces außerhalb des Geltungsbereichs der Projekte erstellt, auf die er Zugriff hat.
+
+[#_about_projects]
+== Über Projekte
+
+In Bezug auf die Hierarchie:
+
+* Cluster enthalten Projekte
+* Projekte enthalten Namespaces
+
+Sie können Projekte nutzen, um die Multi-Tenancy zu unterstützen, sodass ein Team auf ein Projekt innerhalb eines Clusters zugreifen kann, ohne Zugriff auf andere Projekte im selben Cluster zu haben.
+
+In der Basisversion von Kubernetes werden Funktionen wie rollenbasierte Zugriffsrechte oder Clusterressourcen einzelnen Namespaces zugewiesen. Ein Projekt ermöglicht es Ihnen, Zeit zu sparen, indem es einer Einzelperson oder einem Team gleichzeitig Zugriff auf mehrere Namespaces gewährt.
+
+Sie können Projekte verwenden, um Aktionen wie Folgendes auszuführen:
+
+* Benutzer einer Gruppe von Namespaces zuweisen (d.h. {xref-cluster-project-roles}[Projektmitgliedschaft]).
+* Benutzern spezifische Rollen in einem Projekt zuweisen. Eine Rolle kann Eigentümer, Mitglied, nur lesen oder {xref-custom-roles}[benutzerdefiniert] sein.
+* Ressourcen dem Projekt zuweisen.
+
+Wenn Sie einen Cluster erstellen, werden automatisch zwei Projekte darin erstellt:
+
+* <<_the_clusters_default_project,Standardprojekt>>
+* <<_the_system_project,Systemprojekt>>
+
+[#_the_clusters_default_project]
+=== Das Standardprojekt des Clusters
+
+Wenn Sie einen Cluster mit Rancher bereitstellen, wird automatisch ein `default` Projekt für den Cluster erstellt. Dies ist ein Projekt, das Sie verwenden können, um mit Ihrem Cluster zu beginnen, aber Sie können es jederzeit löschen und durch Projekte mit beschreibenderen Namen ersetzen.
+
+Wenn Sie keinen Bedarf für mehr als den Standard-Namespace haben, benötigen Sie auch nicht mehr als das *Standard* Projekt in Rancher.
+
+Wenn Sie eine weitere Organisationsebene über das *Standard* Projekt hinaus benötigen, können Sie in Rancher weitere Projekte erstellen, um Namespaces, Anwendungen und Ressourcen zu isolieren.
+
+[#_the_system_project]
+=== Das Systemprojekt
+
+Bei der Fehlersuche können Sie das `system` Projekt anzeigen, um zu überprüfen, ob wichtige Namespaces im Kubernetes-System ordnungsgemäß funktionieren. Dieses leicht zugängliche Projekt erspart Ihnen die Fehlersuche in einzelnen Containern des System-Namespaces.
+
+Um es zu öffnen, öffnen Sie die Clusteransicht und klicken Sie auf menu:Cluster[Projekte/Namespaces]. Diese Ansicht zeigt alle Namespaces im `system` Projekt.
+
+Das `system` Projekt:
+
+* Wird automatisch erstellt, wenn Sie einen Cluster bereitstellen.
+* Listet alle Namespaces auf, die in `v3/settings/system-namespaces` existieren, falls sie existieren.
+* Erlaubt es Ihnen, weitere Namespaces hinzuzufügen oder deren Namespaces in andere Projekte zu verschieben.
+* Kann nicht gelöscht werden, da es für Clusteroperationen erforderlich ist.
+
+[NOTE]
+====
+
+In RKE2/K3s-Clustern, in denen die Option zur Netzwerkisolierung des Projekts aktiviert ist, überschreibt das `system` Projekt die Option zur Netzwerkisolierung des Projekts, sodass es mit anderen Projekten kommunizieren, Protokolle sammeln und den Gesundheitszustand überprüfen kann.
+====
+
+
+[#_project_authorization]
+== Projektberechtigung
+
+Standardbenutzer sind nur in zwei Situationen für den Projektzugriff autorisiert:
+
+* Ein Administrator, Clusterbesitzer oder Clustermitglied fügt den Standardbenutzer ausdrücklich zur Registerkarte *Mitglieder* des Projekts hinzu.
+* Standardbenutzer können auf Projekte zugreifen, die sie selbst erstellen.
+
+
+[#_creating_projects]
+== Projekte erstellen
+
+Dieser Abschnitt beschreibt, wie man ein neues Projekt mit einem Namen und optionaler Pod-Sicherheitsrichtlinie, Mitgliedern und Ressourcenkontingenten erstellt.
+
+. <<_name_a_new_project,Benennen Sie ein neues Projekt.>>
+. <<_recommended_add_project_members,Empfohlen: Fügen Sie Projektmitglieder hinzu.>>
+. <<_optional_add_resource_quotas,Optional: Fügen Sie Ressourcenkontingente hinzu.>>
+
+[#_name_a_new_project]
+=== Benennen Sie ein neues Projekt
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der Seite *Cluster* zu dem Cluster, in dem Sie ein Projekt erstellen möchten, und klicken Sie auf *Erforschen*.
+. Klicken Sie auf menu:Cluster[Projekte/Namespaces].
+. Klicken Sie auf *Projekt erstellen*.
+. Geben Sie einen *Projektnamen* ein.
+
+[#_recommended_add_project_members]
+=== Empfohlen: Projektmitglieder hinzufügen
+
+Verwenden Sie den Abschnitt *Mitglieder*, um anderen Benutzern Zugriff auf das Projekt und Rollen zu gewähren.
+
+Standardmäßig wird Ihr Benutzer als `Owner` des Projekts hinzugefügt.
+
+[NOTE]
+.Hinweise zu Berechtigungen:
+====
+
+* Benutzer, die die Rolle `Owner` oder `Member` für ein Projekt zugewiesen bekommen, erben automatisch die Rolle `namespace creation`. Diese Rolle ist jedoch eine https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole[Kubernetes ClusterRole], was bedeutet, dass ihr Geltungsbereich auf alle Projekte im Cluster ausgeweitet wird. Daher können Benutzer, denen ausdrücklich die Rolle `Owner` oder `Member` für ein Projekt zugewiesen wurde, in anderen Projekten Namespaces erstellen, selbst wenn ihnen nur die Rolle `Read Only` zugewiesen ist.
+* Standardmäßig erbt die Rancher-Rolle `project-member` von der Rolle `Kubernetes-edit`, und die Rolle `project-owner` erbt von der Rolle `Kubernetes-admin`. Daher ermöglichen sowohl die Rollen `project-member` als auch `project-owner` die Verwaltung von Namespaces, einschließlich der Möglichkeit, Namespaces zu erstellen und zu löschen.
+* Wählen Sie `Custom`, um eine benutzerdefinierte Rolle im Handumdrehen zu erstellen: {xref-cluster-project-roles}#_custom_project_roles[Benutzerdefinierte Projektrollen].
+====
+
+
+Um Mitglieder hinzuzufügen:
+
+. Klicken Sie im Tab *Mitglieder* auf *Hinzufügen*.
+. Suchen Sie im Feld *Mitglied auswählen* nach einem Benutzer oder einer Gruppe, die Sie mit Projektzugriff zuweisen möchten. Sie können nur nach Gruppen suchen, wenn die externe Authentifizierung aktiviert ist.
++
+[NOTE]
+.Anmerkungen
+====
+* Es müssen mindestens 2 Zeichen im Suchfeld eingegeben werden, damit Ergebnisse angezeigt werden.
+* Benutzer können anhand ihres Benutzernamens oder Anzeigenamens gesucht werden.
+* Die Suche basiert auf Präfixen (z. B. wird ein Benutzer mit dem Namen `Stan Dard` angezeigt, wenn nach `Sta` gesucht wird, jedoch nicht, wenn nach `Dar` gesucht wird) und ist groß-/kleinschreibungssensitiv.
+====
+
+. Wählen Sie im Abschnitt *Projektberechtigungen* eine Rolle aus. Für weitere Informationen siehe die {xref-cluster-project-roles}[Dokumentation zu Projektrollen.]
+
+[#_optional_add_resource_quotas]
+=== Optional: Ressourcenkontingente hinzufügen
+
+Ressourcenkontingente begrenzen die Ressourcen, die ein Projekt (und seine Namespaces) verbrauchen kann. Für weitere Informationen siehe {xref-project-resource-quotas}[Ressourcenkontingente].
+
+Um ein Ressourcenkontingent hinzuzufügen,
+
+. Klicken Sie im Tab *Ressourcenkontingente* auf *Ressource hinzufügen*.
+. Wählen Sie einen *Ressourcentyp* aus. Für weitere Informationen siehe {xref-project-resource-quotas}[Ressourcenkontingente.].
+. Geben Sie Werte für das *Projektlimit* und das *Namespace-Standardlimit* ein.
+. *Optional:* Geben Sie *Standardressourcengrenze für Container* an, die auf jeden im Projekt gestarteten Container angewendet wird. Der Parameter wird empfohlen, wenn Sie CPU- oder Speicherkontingente durch das Ressourcenkontingent festgelegt haben. Es kann auf Ebene eines einzelnen Namespace oder eines Containers überschrieben werden. Für weitere Informationen siehe {xref-project-resource-quotas}[Standardressourcengrenze für Container]
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Ihr Projekt wurde erstellt. Sie können es in der *Projekte/Namespaces*-Ansicht des Clusters anzeigen.
+
+|===
+| Feld | Beschreibung
+
+| Projektlimit
+| Das gesamte Ressourcenlimit für das Projekt.
+
+| Namespace-Standardlimit
+| Das standardmäßige Ressourcenlimit, das für jeden Namespace verfügbar ist. Dieses Limit wird auf jeden Namespace im Projekt angewendet, wenn er erstellt wird. Das kombinierte Limit aller Projekt-Namespaces sollte das Projektlimit nicht überschreiten.
+|===
+
+[#_deleting_projects]
+== Projekte löschen
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf die Seite *Cluster*, zu der das Projekt gehört, und klicken Sie auf *Erkunden*.
+. Klicken Sie auf menu:Cluster[Projekte/Namespaces].
+. Suchen Sie das Projekt, das Sie löschen möchten, und klicken Sie auf *⋮*.
+. Wählen Sie *Löschen* aus.
+
+Wenn Sie ein Projekt löschen, bleiben alle Namespaces, die zuvor mit dem Projekt verbunden waren, im Cluster erhalten. Diese Namespaces finden Sie in der Rancher-Benutzeroberfläche im Tab *Nicht in einem Projekt* der Seite *Projekte/Namespaces*. Sie können diese Namespaces einem Projekt zuweisen, indem Sie {xref-namespaces}#_moving_namespaces_to_another_project[verschieben] verwenden.
+
+[#_further_reading]
+== Weitere Dokumente
+
+Sie können Projekte und Projektmitglieder programmatischer über die xref:api/quickstart.adoc[Öffentliche API] erstellen. Siehe das xref:api/workflows/projects.adoc[Dokument zum Projektworkflow] für weitere Informationen.

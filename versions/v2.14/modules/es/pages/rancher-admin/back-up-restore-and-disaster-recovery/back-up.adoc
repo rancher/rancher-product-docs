@@ -1,0 +1,119 @@
+= Realizando copia de seguridad {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-backup-storage-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/storage.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/copia-de-seguridad-recuperación-y-desastre/configuración/ejemplos.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-rancher-backup-config: xref:referencia-guías/backup-restore-configuration/respaldo-configuración.adoc
+:xref-rancher-backup-storage-config: xref:guías-de-referencia/configuración-copia-de-seguridad-restauración/configuración-almacenamiento.adoc
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:xref-back-restore-example-configs: xref:guías-de-referencia/copia-de-seguridad-recuperación-configuración/ejemplos.adoc
+endif::[]
+
+En esta sección, aprenderás a hacer una copia de seguridad de Rancher que se ejecuta en cualquier clúster de Kubernetes. Para hacer una copia de seguridad de Rancher instalado con Docker, consulta las instrucciones para xref:[copias de seguridad de un solo nodo]
+
+El operador de copia de seguridad y restauración necesita ser instalado en el clúster local y solo realiza copias de seguridad de la aplicación Rancher. Las operaciones de copia de seguridad y restauración se realizan únicamente en el clúster local de Kubernetes.
+
+Ten en cuenta que la versión 2.x.x del operador rancher-backup es para Rancher v2.6.x.
+
+[CAUTION]
+====
+
+Al restaurar una copia de seguridad en una nueva configuración de Rancher, la versión de la nueva configuración debe ser la misma que la de donde se realizó la copia de seguridad. La versión de Kubernetes también debe ser considerada al restaurar una copia de seguridad, ya que la apiVersion soportada en el clúster y en el archivo de copia de seguridad podría ser diferente.
+====
+
+
+[#_prerequisites]
+== Requisitos previos
+
+La versión de Rancher debe ser v2.5.0 o superior.
+
+Consulta {xref-migrate-cluster}#_2_restore_from_backup_using_a_restore_custom_resource[aquí] para obtener ayuda sobre cómo restaurar un archivo de copia de seguridad existente en un clúster v1.22 en Rancher v2.6.3.
+
+[#_1_install_the_rancher_backup_operator]
+== 1. Instala el operador de copia de seguridad de Rancher
+
+La ubicación de almacenamiento de la copia de seguridad es una configuración a nivel de operador, por lo que debe ser configurada cuando se instala o actualiza la aplicación de Copias de seguridad de Rancher.
+
+Las copias de seguridad se crean como archivos .tar.gz. Estos archivos pueden ser enviados a S3 o Minio, o pueden ser almacenados en un volumen persistente.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clusters*, ve al cluster `local` y haz clic en *Explorar*. El cluster `local` ejecuta el servidor Rancher.
+. Haz clic en menu:Aplicaciones[Gráficos].
+. Haz clic en *Rancher Backups*.
+. Haz clic en *Instalar*.
+. Configura la ubicación de almacenamiento predeterminada. Para obtener ayuda, consulta la {xref-rancher-backup-storage-config}[sección de configuración de almacenamiento.]
+. Haz clic en *Instalar*.
+
+[NOTE]
+====
+
+Hay un problema conocido en Fleet que ocurre después de realizar una restauración utilizando el operador de copia de seguridad y restauración: Los secretos utilizados para clientSecretName y helmSecretName no están incluidos en los gitrepos de Fleet. Consulta {xref-fleet-overview}#_solución de problemas[aquí] para una solución alternativa.
+====
+
+
+[#_2_perform_a_backup]
+== 2. Realizar una copia de seguridad
+
+Para realizar una copia de seguridad, debe crearse un recurso personalizado de tipo Backup.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página *Clusters*, ve al cluster `local` y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en menu:Copias de seguridad de Rancher[Copias de seguridad].
+. Haga clic en *Crear*.
+. Crea la copia de seguridad con el formulario, o con el editor YAML.
+. Para configurar los detalles de la copia de seguridad utilizando el formulario, haz clic en *Crear* y consulta la {xref-rancher-backup-config}[referencia de configuración] y los {xref-back-restore-example-configs}#_ejemplos[ejemplos.]
+. Para usar el editor YAML, podemos hacer clic en menu:Crear[Crear desde YAML]. Introduce el YAML de la copia de seguridad. Este recurso personalizado de Backup crearía copias de seguridad recurrentes cifradas en S3. La aplicación utiliza el valor `credentialSecretNamespace` para determinar dónde buscar el secreto de la copia de seguridad de S3:
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Backup
+ metadata:
+   name: s3-recurring-backup
+ spec:
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+   resourceSetName: rancher-resource-set-full
+   encryptionConfigSecretName: encryptionconfig
+   schedule: "@every 1h"
+   retentionCount: 10
+----
++
+
+[NOTE]
+====
+Al crear el recurso Backup utilizando el editor YAML, el `resourceSetName` debe establecerse en `rancher-resource-set-full` o `rancher-resource-set-basic`.
+====
+
++
+Para obtener ayuda configurando el Backup, consulta la {xref-rancher-backup-config}[referencia de configuración] y los {xref-back-restore-example-configs}#_backup[ejemplos.]
++
+
+[CAUTION]
+====
+El operador `rancher-backup` no guarda el archivo EncryptionConfiguration. El contenido del archivo EncryptionConfiguration debe guardarse cuando se crea una copia de seguridad cifrada, y el mismo archivo debe utilizarse al restaurar desde esta copia de seguridad.
+====
+
+
+. Haga clic en *Crear*.
+
+*Resultado:* El archivo de copia de seguridad se crea en la ubicación de almacenamiento configurada en el recurso personalizado Backup. El nombre de este archivo se utiliza al realizar una restauración.

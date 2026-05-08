@@ -1,0 +1,136 @@
+= Selectores y Configuraciones de Scrape
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/istio/configuration-options/selectors-and-scrape-configurations.adoc 
+:product-path: observability/istio/configuration/selectors-and-scrape-configurations.adoc
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] ha quedado obsoleto desde Rancher v2.12.0; dirígete a la https://apps.rancher.io[SUSE Application Collection] build de Istio para una mayor seguridad (incluida en las suscripciones de SUSE Rancher Prime).
+Se puede encontrar información detallada en https://forums.suse.com/t/deprecation-of-rancher-istio/45043[este anuncio].
+====
+
+La aplicación de Monitoreo establece `prometheus.prometheusSpec.ignoreNamespaceSelectors=false`, lo que permite el monitoreo en todos los espacios de nombres por defecto.
+
+Esto asegura que puedas ver el tráfico, métricas y gráficos de los recursos desplegados en un espacio de nombres con la etiqueta `istio-injection=enabled`.
+
+Si deseas limitar Prometheus a espacios de nombres específicos, establece `prometheus.prometheusSpec.ignoreNamespaceSelectors=true`. Una vez que hagas esto, deberás realizar una configuración adicional para continuar monitoreando tus recursos.
+
+[#_limiting_monitoring_to_specific_namespaces_by_setting_ignorenamespaceselectors_to_true]
+== Limitando el Monitoreo a Espacios de Nombres Específicos al Establecer ignoreNamespaceSelectors en Verdadero
+
+Para limitar el monitoreo a espacios de nombres específicos, editarás la opción del gráfico Helm `ignoreNamespaceSelectors`. Configurarás esta opción al instalar o actualizar el gráfico Helm de Monitoreo:
+
+. Al instalar o actualizar el gráfico Helm de Monitoreo, edita el values.yml y establece ``prometheus.prometheusSpec.ignoreNamespaceSelectors=true``.
+. Completa la instalación o actualización.
+
+*Resultado:* Prometheus estará limitado a espacios de nombres específicos, lo que significa que una de las siguientes configuraciones deberá ser establecida para continuar viendo datos en varios paneles.
+
+[#_enabling_prometheus_to_detect_resources_in_other_namespaces]
+== Habilitando a Prometheus para Detectar Recursos en Otros Espacios de Nombres
+
+Hay dos formas diferentes de habilitar a Prometheus para detectar recursos en otros espacios de nombres cuando `prometheus.prometheusSpec.ignoreNamespaceSelectors=true`:
+
+* *Monitoreo de espacios de nombres específicos:* Añade un Monitor de Servicio o Monitor de Pod en el espacio de nombres con los objetivos que deseas raspar.
+* *Monitoreo entre espacios de nombres:* Añade un `additionalScrapeConfig` a tu instancia de rancher-monitoring para raspar todos los objetivos en todos los espacios de nombres.
+
+[#_monitoring_specific_namespaces_create_a_service_monitor_or_pod_monitor]
+== Monitoreo de Espacios de Nombres Específicos: Crea un Monitor de Servicio o un Monitor de Pod
+
+Esta opción te permite definir qué servicios o pods específicos deseas monitorizar en un espacio de nombres específico.
+
+La desventaja de usabilidad es que tienes que crear el monitor de servicio o el monitor de pod por cada espacio de nombres, ya que no puedes monitorizar entre espacios de nombres.
+
+[NOTE]
+.Requisito previo:
+====
+
+Define un ServiceMonitor o PodMonitor para `<your namespace>`. A continuación se proporciona un ejemplo de ServiceMonitor.
+====
+
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster que creaste y haz clic en *Explorar*.
+. En la barra de navegación superior, abre la shell de kubectl.
+. Si el archivo ServiceMonitor o PodMonitor está almacenado localmente en tu clúster, en `kubectl create -f <name of service/pod monitor file>.yaml`.
+. Si el ServiceMonitor o PodMonitor no está almacenado localmente, ejecuta \`cat<< EOF | kubectl apply -f -`, pega el contenido del archivo en la terminal y luego ejecuta `EOF` para completar el comando.
+. Ejecuta `kubectl label namespace <your namespace> istio-injection=enabled` para habilitar la inyección del sidecar de envoy.
+
+*Resultado:*  `<your namespace>` puede ser raspado por prometheus.
+
+.Ejemplo de Monitor de Servicio para Proxies de Istio
+[,yaml]
+----
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: envoy-stats-monitor
+  namespace: istio-system
+  labels:
+    monitoring: istio-proxies
+spec:
+  selector:
+    matchExpressions:
+    - {key: istio-prometheus-ignore, operator: DoesNotExist}
+  namespaceSelector:
+    any: true
+  jobLabel: envoy-stats
+  endpoints:
+  - path: /stats/prometheus
+    targetPort: 15090
+    interval: 15s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: '.*-envoy-prom'
+    - action: labeldrop
+      regex: "__meta_kubernetes_pod_label_(.+)"
+    - sourceLabels: [__meta_kubernetes_namespace]
+      action: replace
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      action: replace
+      targetLabel: pod_name
+----
+
+[#_monitoring_across_namespaces_set_ignorenamespaceselectors_to_false]
+== Monitoreo entre espacios de nombres: Establece ignoreNamespaceSelectors en Falso
+
+Esto permite la monitorización entre espacios de nombres al proporcionar a Prometheus configuraciones de raspado adicionales.
+
+La desventaja de usabilidad es que todos los `additionalScrapeConfigs` de Prometheus se mantienen en un único Secret. Esto podría dificultar la actualización si la monitorización ya está desplegada con additionalScrapeConfigs antes de instalar Istio.
+
+. Al instalar o actualizar el gráfico Helm de Monitoreo, edita el values.yml y establece el array `prometheus.prometheusSpec.additionalScrapeConfigs` en el *Configuración de Raspado Adicional* proporcionado a continuación.
+. Completa la instalación o actualización.
+
+*Resultado:* Todos los espacios de nombres con la etiqueta `istio-injection=enabled` serán raspados por prometheus.
+
+.Configuración de Raspado Adicional
+[,yaml]
+----
+- job_name: 'istio/envoy-stats'
+  scrape_interval: 15s
+  metrics_path: /stats/prometheus
+  kubernetes_sd_configs:
+    - role: pod
+  relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: '.*-envoy-prom'
+    - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+      action: replace
+      regex: ([^:]+)(?::\d+)?;(\d+)
+      replacement: $1:15090
+      target_label: __address__
+    - action: labelmap
+      regex: __meta_kubernetes_pod_label_(.+)
+    - source_labels: [__meta_kubernetes_namespace]
+      action: replace
+      target_label: namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      action: replace
+      target_label: pod_name
+----

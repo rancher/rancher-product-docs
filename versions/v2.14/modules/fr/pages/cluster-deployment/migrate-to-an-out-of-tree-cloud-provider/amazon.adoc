@@ -1,0 +1,222 @@
+= Migration d'Amazon du fournisseur intégré vers le fournisseur externe
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-amazon.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/amazon.adoc
+ifeval::["{build-type}" != "community"]
+:xref-cloud-provider-amazon: xref:cluster-deployment/set-up-cloud-providers/amazon.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cloud-provider-amazon: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/amazon.adoc
+endif::[]
+
+Kubernetes cesse de maintenir les fournisseurs de cloud intégrés. Dans Kubernetes v1.27 et versions ultérieures, les fournisseurs de cloud intégrés ont été supprimés. L'interface utilisateur de Rancher vous permet de mettre à niveau vers Kubernetes v1.27 lorsque vous migrez d'un fournisseur intégré à un fournisseur externe.
+
+Cependant, si vous effectuez une migration manuelle, les clusters existants doivent être mis à niveau vers Kubernetes v1.27 après la migration pour rester fonctionnels.
+
+Pour migrer du fournisseur de cloud intégré vers le fournisseur de cloud AWS externe, vous devez interrompre le gestionnaire de contrôleur kube du cluster existant et installer le gestionnaire de contrôleur cloud AWS. Il existe de nombreuses façons de procéder. Référez-vous à la documentation officielle d'AWS sur le https://cloud-provider-aws.sigs.k8s.io/getting_started/[cloud controller manager externe] pour plus de détails.
+
+S'il est acceptable d'avoir un certain temps d'arrêt pendant la migration, suivez les instructions pour {xref-cloud-provider-amazon}#_using_the_out_of_tree_aws_cloud_provider[configurer un fournisseur de cloud externe]. Ces instructions décrivent comment configurer le fournisseur de cloud externe pour un cluster nouvellement provisionné. Lors de la configuration, il y aura un certain temps d'arrêt, car il y a un écart de temps entre l'interruption de l'ancien fournisseur de cloud et le démarrage du nouveau fournisseur de cloud.
+
+Si votre configuration ne peut tolérer aucun temps d'arrêt du plan de contrôle, vous devez activer la migration du leader. Cela facilite une transition en douceur des contrôleurs dans le gestionnaire de contrôleur kube vers leurs homologues dans le cloud controller manager. Référez-vous à la documentation officielle d'AWS sur https://cloud-provider-aws.sigs.k8s.io/getting_started/[Utiliser la migration du leader] pour plus de détails.
+
+[NOTE]
+.Important :
+====
+La https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#before-you-begin[documentation de migration du cloud controller manager Kubernetes] indique qu'il est possible de migrer avec la même version de Kubernetes, mais suppose que la migration fait partie d'une mise à niveau de Kubernetes. Consultez la documentation Kubernetes sur https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/[la migration vers l'utilisation du cloud controller manager] pour voir si vous devez personnaliser votre configuration avant de migrer. Confirmez vos https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#default-configuration[valeurs de configuration de migration]. Si votre fournisseur de cloud propose une implémentation du contrôleur Node IPAM, vous devez également https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#node-ipam-controller-migration[migrer le contrôleur IPAM].
+====
+
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. Mettez à jour la configuration du cluster pour activer la migration du leader{nbsp}:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+Notez que le fournisseur de cloud est toujours `aws` à cette étape{nbsp}:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: aws
+----
+
+. Cordonnez les nœuds du plan de contrôle afin que les pods du contrôleur cloud AWS s'exécutent sur les nœuds uniquement après la mise à niveau vers le fournisseur de cloud externe{nbsp}:
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/control-plane=true"
+----
++
+. Pour installer le gestionnaire de contrôleur cloud AWS avec la migration du leader activée, suivez les étapes 1 à 3 pour {xref-cloud-provider-amazon}#_utiliser_le_fournisseur_de_cloud_aws_hors_arbre[déployer le chart du gestionnaire de contrôleur cloud]. À partir de Kubernetes 1.22, le kube-controller-manager utilisera une configuration par défaut qui satisfera la migration du contrôleur vers le gestionnaire. Mettez à jour les arguments du conteneur du `aws-cloud-controller-manager` sous `spec.rkeConfig.additionalManifest` pour activer la migration du leader{nbsp}:
++
+[,shell]
+----
+- '--enable-leader-migration=true'
+----
++
+. Installez le chart et confirmez que le Daemonset `aws-cloud-controller-manager` a été déployé avec succès :
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
++
+. Mettez à jour le cluster de provisionnement pour changer le fournisseur de cloud et supprimer les arguments de migration du leader du contrôleur kube.
+Si vous mettez à niveau la version de Kubernetes, définissez également la version de Kubernetes dans la section `spec.kubernetesVersion` du fichier YAML du cluster.
++
+[NOTE]
+.Important
+====
+Supprimez `cloud-provider-name: aws` uniquement si vous ne comptez pas sur le superviseur rke2 pour définir correctement le ProviderID.
+====
++
+Supprimez `enable-leader-migration` si vous ne souhaitez pas qu'il soit activé dans votre cluster{nbsp}:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: external
+----
++
+Supprimez `enable-leader-migration` de{nbsp}:
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+[TIP]
+====
+Vous pouvez également désactiver la migration du leader après la mise à niveau, car la migration du leader n'est plus requise en raison de l'existence d'un seul gestionnaire de contrôleur cloud et peut être supprimée.
+Mettez à niveau le chart et supprimez la section suivante des arguments du conteneur :
+
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+====
++
+Vérifiez que la mise à jour du gestionnaire de contrôleur cloud a été déployée avec succès avec la commande suivante{nbsp}:
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
++
+. Le fournisseur de cloud est responsable de la définition du ProviderID du nœud. Vérifiez si tous les nœuds sont initialisés avec le ProviderID{nbsp}:
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+--
+
+RKE::
++
+--
+. Mettez à jour la configuration du cluster pour activer la migration du leader dans `cluster.yml`{nbsp}:
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
++
+Notez que le fournisseur de cloud est toujours `aws` à cette étape{nbsp}:
++
+[,yaml]
+----
+cloud_provider:
+  name: aws
+----
+
+. Cordonnez les nœuds du plan de contrôle, afin que les pods du contrôleur de cloud AWS s'exécutent sur les nœuds uniquement après la mise à niveau vers le fournisseur de cloud externe{nbsp}:
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/controlplane=true"
+----
+
+. Pour installer le gestionnaire de contrôleur de cloud AWS, vous devez activer la migration du leader et suivre les mêmes étapes que lors de l'installation d'AWS sur un nouveau cluster. Pour activer la migration du leader, ajoutez ce qui suit aux arguments du conteneur à l'étape 7 tout en suivant les {xref-cloud-provider-amazon}#_helm_chart_installation_from_ui[étapes pour installer le chart] :
++
+[,yaml]
+----
+- '--enable-leader-migration=true'
+----
+
+. Confirmez que le chart est installé mais que les nouveaux pods ne s'exécutent pas encore en raison des nœuds du plan de contrôle cordonnés. Après avoir mis à jour le cluster à l'étape suivante, RKE mettra à niveau et décordonnera chaque nœud, et planifiera les pods `aws-controller-manager`.
+. Mettez à jour `cluster.yml` pour changer le fournisseur de cloud et supprimer les arguments de migration du leader du kube-controller.
++
+Sélectionner *Amazon externe* définit `--cloud-provider=external` et vous permet d'activer `useInstanceMetadataHostname`. Vous devez activer `useInstanceMetadataHostname` pour les clusters de pilotes de nœuds et pour les clusters personnalisés si vous ne fournissez pas de nom de nœud personnalisé via `--node-name`. L'activation de `useInstanceMetadataHostname` interrogera le service de métadonnées ec2 et définira `/hostname` comme `hostname-override` pour `kubelet` et `kube-proxy` :
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true/false
+----
++
+Supprimez `enable-leader-migration` si vous ne souhaitez pas qu'il soit activé dans votre cluster :
++
+[,yaml]
+----
+  services:
+    kube-controller:
+      extra_args:
+        enable-leader-migration: "true"
+----
++
+[TIP]
+====
+Vous pouvez également désactiver la migration du leader après avoir terminé la migration. Mettez à niveau le chart et supprimez la section suivante des arguments du conteneur :
+
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+====
+
+
+. Si vous mettez à niveau la version Kubernetes du cluster, définissez également la version Kubernetes.
+. Mettez à jour le cluster. Les pods `aws-cloud-controller-manager` devraient maintenant être en cours d'exécution.
+--
+======

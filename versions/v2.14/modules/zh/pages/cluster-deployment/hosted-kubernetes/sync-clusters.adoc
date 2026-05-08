@@ -1,41 +1,81 @@
-= 同步
+= 同步托管集群
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+endif::[]
+:revdate: 2025-10-21
 :page-revdate: {revdate}
+:community-path: reference-guides/cluster-configuration/rancher-server-configuration/sync-clusters.adoc 
+:product-path: cluster-deployment/hosted-kubernetes/sync-clusters.adoc
 
-同步允许 Rancher 更新集群值，以便与托管在 AKS、EKS 或 GKE 中的集群对象保持同步。这使得 Rancher 以外的来源能够获取托管集群的状态。这是 UI 中显示的内容。
+ifeval::["{build-type}" != "srfa"]
+同步允许Rancher更新集群值，以便与托管在AKS、EKS或GKE中的相应集群对象保持最新。这使得除了Rancher之外的其他来源可以拥有托管集群的状态。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+同步允许Rancher更新集群值，以便与托管在EKS中的相应集群对象保持最新。这使得除了Rancher之外的其他来源可以拥有托管集群的状态。
+endif::[]
 
 [CAUTION]
 ====
-如果你同时处理来自另一个来源的更新，你可能会不小心覆盖一个来源的状态。如果你在完成一个来源的更新后 5 分钟内处理另一个来源的更新，也可能会发生这种情况。
+如果您同时处理来自另一个来源的更新，您可能会不小心覆盖一个来源的状态。如果您在完成来自另一个来源的更新后5分钟内处理来自一个来源的更新，也可能会发生这种情况。
 ====
 
-
+[#_how_it_works]
 == 工作原理
 
-要理解同步是如何工作的，则必须理解 Rancher Cluster 对象上的两个字段：
+要理解同步如何工作，必须了解Rancher集群对象上的两个字段：
 
-. 集群的 config 对象，位于集群的规范上：
- ** 对于 AKS，该字段称为 AKSConfig
- ** 对于 EKS，该字段称为 EKSConfig
- ** 对于 GKE，该字段称为 GKEConfig
-. UpstreamSpec 对象
- ** 对于 AKS，它位于群集状态的 AKSStatus 字段中。
- ** 对于 EKS，它位于集群状态的 EKSStatus 字段中。
- ** 对于 GKE，它位于集群状态的 GKEStatus 字段中。
+. 集群的配置对象，位于集群的Spec上：
+ifeval::["{build-type}" != "srfa"]
+ ** 对于AKS，该字段称为AKSConfig
+ ** 对于EKS，该字段称为EKSConfig
+ ** 对于GKE，该字段称为GKEConfig
+. UpstreamSpec对象
+ ** 对于AKS，它位于集群状态的AKSStatus字段上。
+ ** 对于EKS，它位于集群状态的EKSStatus字段上。
+ ** 对于GKE，它位于集群状态的GKEStatus字段上。
 
-定义这些对象的结构类型可以在它们对应的 operator 项目中找到：
+定义这些对象的结构类型可在其对应的 operator 项目中找到：
 
 * https://github.com/rancher/aks-operator/blob/master/pkg/apis/aks.cattle.io/v1/types.go[aks-operator]
 * https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
 * https://github.com/rancher/gke-operator/blob/master/pkg/apis/gke.cattle.io/v1/types.go[gke-operator]
 
-除集群名称、位置（区域或地区）、导入和云凭证引用外，所有字段均可为空。
+所有字段都是可为空的，除了以下字段：集群名称、位置（区域或可用区）、导入和云凭证引用。
 
-AKSConfig、EKSConfig 或 GKEConfig 表示所需的状态。零值会被忽略。配置对象中非零的字段可以被认为是"`管理的`"。在 Rancher 中创建集群时，所有字段都是非零的，因此都是"`管理`"的。在把一个已存在的集群注册到 Rancher 时，所有可为空字段都是 nil 并且不是"`管理`"的。一旦 Rancher 更改了这些字段的值，这些字段就会被管理。
+AKSConfig、EKSConfig或GKEConfig表示期望状态。空值会被忽略。配置对象中非空的字段可以视为受管理的。当在Rancher中创建集群时，所有字段都是非空的，因此是受管理的。当在Rancher中注册一个已有的集群时，所有可为空的字段被设置为nil，并且不受管理。一旦这些字段的值被Rancher更改，它们就会变为受管理的。
 
-UpstreamSpec 代表集群在托管的 Kubernetes 提供商中的情况。它每 5 分钟刷新一次。刷新 UpstreamSpec 后，Rancher 会检查集群是否正在进行更新。如果它正在更新，则不做任何进一步处理。如果它目前没有更新，AKSConfig、EKSConfig 或 GKEConfig 上的任何 "管理" 字段都会被最近更新的 UpstreamSpec 上的相应值覆盖。
+UpstreamSpec表示集群在托管的Kubernetes提供者中的状态。它每5分钟刷新一次。在UpstreamSpec刷新后，Rancher会检查集群是否正在进行更新。如果当前更新中，则不再执行其他操作。如果当前没有更新，AKSConfig、EKSConfig或GKEConfig上的任何受管理字段将被最近更新的UpstreamSpec中的相应值覆盖。
 
-有效的期望状态可以被认为是 UpstreamSpec，加上 AKSConfig、EKSConfig 或 GKEConfig 中的所有非零字段。这是 UI 中显示的内容。
+[CAUTION]
+====
+当您从云提供商导入集群到Rancher时，UpstreamSpec表示集群状态，而Config为空。如果您通过Rancher UI更新导入的集群，则UpstreamSpec和Config都变为非空。对集群的任何进一步更新应通过Rancher应用。这是因为没有安全的方法来确定来自UpstreamSpec的更改是否代表期望状态，或者只是与Config的不匹配。如果您在通过 Rancher UI 应用任何更新后，通过云提供商控制台更新导入的集群，控制器将部署回滚，并且 Config 的内容将被视为期望状态。
+====
 
-如果 Rancher 和另一个来源试图在同一时间或在更新完成后的 5 分钟尝试更新集群，任何管理字段都可能陷入竞争状态。以 EKS 为例，集群可能将 PrivateAccess 作为管理字段。如果 PrivateAccess 为 false，在 11:01 在 EKS 控制台中启用，然后 Rancher 在 11:05 之前更新标签，那么该值很可能被覆盖。如果在集群处理更新时更新了标签，也会发生这种情况。如果集群已注册并且 PrivateAccess 字段为 nil，则不应发生此示例中描述的问题。
+
+有效的期望状态可以视为UpstreamSpec，加上AKSConfig、EKSConfig或GKEConfig中的所有非空字段。这就是在UI中显示的内容。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+ ** 对于EKS，该字段称为EKSConfig
+.  UpstreamSpec对象
+ ** 对于EKS，它位于集群状态的EKSStatus字段上。
+
+定义这些对象的结构类型可在其对应的 operator 项目中找到：
+
+* https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
+
+所有字段都是可为空的，除了以下字段：集群名称、位置（区域或可用区）、导入和云凭证引用。
+
+EKSConfig表示期望状态。空值会被忽略。配置对象中非空的字段可以视为受管理的。当在Rancher中创建集群时，所有字段都是非空的，因此是受管理的。当在Rancher中注册一个已有的集群时，所有可为空的字段被设置为nil，并且不受管理。一旦这些字段的值被Rancher更改，它们就会变为受管理的。
+
+UpstreamSpec表示集群在托管的Kubernetes提供者中的状态。它每5分钟刷新一次。在UpstreamSpec刷新后，Rancher会检查集群是否正在进行更新。如果当前正在更新，则不再执行其他操作。如果当前没有更新，EKSConfig上的任何受管理字段将被最近更新的UpstreamSpec中的相应值覆盖。
+
+[CAUTION]
+====
+当您从云提供商导入集群到Rancher时，UpstreamSpec表示集群状态，而Config为空。如果您通过Rancher UI更新导入的集群，则UpstreamSpec和Config都变为非空。对集群的任何进一步更新应通过Rancher应用。这是因为没有安全的方法来确定来自UpstreamSpec的更改是否代表期望状态，或者只是与Config的不匹配。如果您在通过 Rancher UI 应用任何更新后，通过云提供商控制台更新导入的集群，控制器将部署回滚，并且 Config 的内容将被视为期望状态。
+====
+
+
+有效的期望状态可以视为 UpstreamSpec，加上 EKSConfig 中的所有非空字段。这就是在UI中显示的内容。
+endif::[]
+
+如果 Rancher 和另一个来源同时尝试更新集群，或者在更新完成后的 5 分钟内，任何受管理的字段可能会陷入竞争条件。以 EKS 为例，集群可能将 PrivateAccess 作为一个受管理的字段。如果 PrivateAccess 为假，并在 11:01 在 EKS 控制台中启用，并且在 11:05 之前从 Rancher 更新了标签，那么该值可能会被覆盖。如果在集群仍在处理更新时对标签进行更新，也可能会发生这种情况。如果集群已注册且 PrivateAccess 字段为 nil，则此示例中描述的问题不应发生。

@@ -1,0 +1,267 @@
+= Keycloak (SAML) を設定する
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-keycloak-saml.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-keycloak-saml.adoc
+:description: Keycloak SAML クライアントを作成し、Rancher が Keycloak と連携するように設定します。最終的に、ユーザーは Keycloak のログイン情報を使用して Rancher にサインインできるようになります。
+
+組織がユーザー認証に Keycloak アイデンティティプロバイダー (IdP) を使用している場合、Rancher を設定してユーザーが IdP の資格情報を使用してログインできるようにすることができます。
+
+[#_prerequisites]
+== 前提条件
+
+* https://www.keycloak.org/guides#getting-started[Keycloak IdP サーバー] を設定する必要があります。
+* Keycloak で、以下の設定を持つ https://www.keycloak.org/docs/latest/server_admin/#saml-clients[新しい SAML クライアント] を作成します。ヘルプについては、 https://www.keycloak.org/docs/latest/server_admin/#saml-clients[Keycloak ドキュメント] を参照してください。
++
+|===
+| 設定 | 値
+
+| `Sign Documents`
+| `ON` ^1^
+
+| `Sign Assertions`
+| `ON` ^1^
+
+| その他の `ON/OFF` 設定
+| `OFF`
+
+| `Client ID`
+| `https://yourRancherHostURL/v1-saml/keycloak/saml/metadata` または Rancher Keycloak 設定の `Entry ID Field` に設定された値 ^2^
+
+| `Client Name`
+| +++<CLIENT_NAME>+++(e.g. `rancher`)+++</CLIENT_NAME>+++
+
+| `Client Protocol`
+| `SAML`
+
+| `Valid Redirect URI`
+| `https://yourRancherHostURL/v1-saml/keycloak/saml/acs`
+|===
++
+____
+^1^：オプションで、これらの設定のいずれか一方または両方を有効にすることができます。
+^2^:SAML プロバイダーが設定されて保存されるまで、Rancher SAML メタデータは生成されません。
+____
++
+image::keycloak/keycloak-saml-client-configuration.png[]
+
+* 新しい SAML クライアントで、ユーザーのフィールドを公開するためにマッパーを作成します。
+** すべての「ビルトインプロトコルマッパー」を追加します。
++
+image::keycloak/keycloak-saml-client-builtin-mappers.png[]
+** メンバー属性をユーザーのグループにマッピングする新しい「グループリスト」マッパーを作成します。
++
+image::keycloak/keycloak-saml-client-group-mapper.png[]
+
+[#_getting_the_idp_metadata]
+== IDP メタデータの取得
+
+[tabs]
+======
+Keycloak 5 およびそれ以前::
++
+--
+IDP メタデータを取得するには、Keycloak クライアントから `metadata.xml` ファイルをエクスポートします。
+*インストール* タブから、*SAML メタデータ IDPSSODescriptor* 形式オプションを選択し、ファイルをダウンロードします。
+--
+
+Keycloak 6-13::
++
+--
+. *設定*セクションから、*レルム設定*タブをクリックします。
+. *一般*タブをクリックします。
+. *エンドポイント*フィールドから、*SAML 2.0 アイデンティティプロバイダー メタデータ*をクリックします。
+
+IDPメタデータに以下の属性が含まれていることを確認してください：
+
+----
+xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+----
+
+Firefoxなどの一部のブラウザでは、ドキュメントが変更されたように表示されることがあり、一部の属性が欠落しているように見えることがあります。この場合、ブラウザを使用して見つけることができる生の応答データを使用してください。
+
+以下はFirefoxの例ですが、他のブラウザでは若干異なる場合があります：
+
+. 開発者コンソールにアクセスするには、*F12*を押してください。
+. *ネットワーク*タブをクリックします。
+. テーブルから、`descriptor`を含む行をクリックします。
+. 詳細ペインから、*応答*タブをクリックします。
+. 生の応答データをコピーします。
+
+取得したXMLには、`EntitiesDescriptor`がルート要素として含まれています。Rancherは、ルート要素が`EntityDescriptor`であることを期待しており、`EntitiesDescriptor`ではありません。したがって、このXMLをRancherに渡す前に、次の手順で調整してください：
+
+. `EntitiesDescriptor`から`EntityDescriptor`に存在しないすべての属性をコピーします。
+. 最初から`<EntitiesDescriptor>`タグを削除します。
+. XMLの最後から`</EntitiesDescriptor>`を削除します。
+
+以下の例のようなものが残ります。
+
+----
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:dsig="http://www.w3.org/2000/09/xmldsig#" entityID="https://{KEYCLOAK-URL}/auth/realms/{REALM-NAME}">
+....
+</EntityDescriptor>
+----
+--
+
+Keycloak 14+::
++
+--
+. *設定*セクションから、*レルム設定*タブをクリックします。
+. *一般*タブをクリックします。
+. *エンドポイント*フィールドから、*SAML 2.0 アイデンティティプロバイダー メタデータ*をクリックします。
+
+IDPメタデータに以下の属性が含まれていることを確認してください。
+
+----
+xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+----
+
+Firefoxなどの一部のブラウザでは、ドキュメントが変更されたように表示されることがあり、一部の属性が欠落しているように見えることがあります。この場合、ブラウザを使用して見つけることができる生の応答データを使用してください。
+
+以下はFirefoxの例ですが、他のブラウザでは若干異なる場合があります。
+
+. 開発者コンソールにアクセスするには、*F12*を押してください。
+. *ネットワーク*タブをクリックします。
+. テーブルから、`descriptor`を含む行をクリックします。
+. 詳細ペインから、*応答*タブをクリックします。
+. 生の応答データをコピーします。
+--
+======
+
+[#_configuring_keycloak_in_rancher]
+== RancherでのKeycloakの設定
+
+. 左上隅で、*☰ > ユーザーと認証*をクリックします。
+. 左側のナビゲーションメニューで、*認証プロバイダー*をクリックします。
+. *Keycloak SAML*をクリックします。
+. *Keycloakアカウントの設定*フォームを完成させてください。フォームの記入に関するヘルプは、<<_configuration_reference,設定リファレンス>>を参照してください。
+. *Keycloakアカウントの設定*フォームに入力した後、*有効化*をクリックします。
++
+RancherはIdPログインページにリダイレクトします。RancherのKeycloak設定を検証するために、Keycloak IdPで認証される資格情報を入力します。
++
+
+[NOTE]
+====
+IdPログインページを見るためにポップアップブロッカーを無効にする必要があるかもしれません。
+====
+
+
+*結果:*RancherはKeycloakと連携するように設定されています。ユーザーはKeycloakのログイン情報を使用してRancherにサインインできるようになりました。
+
+[NOTE]
+.SAMLプロバイダーの注意点
+====
+* Rancherで権限を割り当てる際、ユーザーとグループは検証されません。
+* ユーザーを追加する際、正確なユーザーID（つまり`UID Field`）を正しく入力する必要があります。ユーザーIDを入力すると、他の一致するユーザーIDの検索は行われません。
+* グループを追加する際は、テキストボックスの隣にあるドロップダウンからグループを選択する必要があります。Rancherは、テキストボックスからの入力がユーザーであると仮定します。
+* グループのドロップダウンには、あなたがメンバーであるグループのみが表示されます。ただし、管理者権限または制限された管理者権限を持っている場合、メンバーでないグループに参加することができます。
+====
+
+[#_configuration_reference]
+== 構成リファレンス
+
+|===
+| フィールド | 説明
+
+| 表示名フィールド
+| ユーザーの表示名を含む属性。 +
+ +
+例: `givenName`
+
+| ユーザー名フィールド
+| ユーザー名/名を含む属性。 +
+ +
+例: `email`
+
+| UIDフィールド
+| すべてのユーザーに固有の属性。 +
+ +
+例: `email`
+
+| グループフィールド
+| グループメンバーシップを管理するためのエントリを作成してください。 +
+ +
+例: `member`
+
+| エンティティIDフィールド
+| KeycloakクライアントでクライアントIDとして設定する必要があるID。 +
+ +
+デフォルト: `https://yourRancherHostURL/v1-saml/keycloak/saml/metadata`
+
+| Rancher APIホスト
+| あなたのRancherサーバーのURLです。
+
+| 秘密鍵 / 証明書
+| RancherとあなたのIdPの間に安全な接続を作成するための鍵/証明書ペアです。
+
+| IDP-metadata
+| あなたのIdPサーバーからエクスポートした`metadata.xml`ファイル。
+|===
+
+[TIP]
+====
+
+openssl コマンドを使用してキー/証明書ペアを生成できます。次に例を示します。
+
+openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -keyout myservice.key -out myservice.cert
+====
+
+
+[#_annex_troubleshooting]
+== 付録：トラブルシューティング
+
+Keycloakサーバーへの接続をテストしている際に問題が発生した場合は、まずSAMLクライアントの設定オプションを再確認してください。問題の原因を特定するために、Rancherのログを確認することもできます。デバッグログには、エラーに関するより詳細な情報が含まれている場合があります。このドキュメントのxref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[デバッグログを有効にする方法]を参照してください。
+
+[#_you_are_not_redirected_to_keycloak]
+=== Keycloakにリダイレクトされません
+
+*Keycloakで認証する*をクリックすると、IdPにリダイレクトされません。
+
+* Keycloakクライアントの設定を確認してください。
+* `Force Post Binding`が`OFF`に設定されていることを確認します。
+
+[#_forbidden_message_displayed_after_idp_login]
+=== IdPログイン後に表示される禁止メッセージ
+
+正しくIdPログインページにリダイレクトされ、資格情報を入力できますが、その後`Forbidden`メッセージが表示されます。
+
+* Rancherデバッグログを確認してください。
+* ログに`ERROR: either the Response or Assertion must be signed`が表示される場合は、Keycloakクライアントの`Sign Documents`または`Sign assertions`が`ON`に設定されていることを確認してください。
+
+[#_http_502_when_trying_to_access_v1_saml_keycloak_saml_metadata]
+=== /v1-saml/keycloak/saml/metadataにアクセスしようとしたときのHTTP 502
+
+これは通常、SAMLプロバイダーが設定されるまでメタデータが作成されないためです。
+KeycloakをSAMLプロバイダーとして構成して保存し、その後メタデータにアクセスしてみてください。
+
+[#_keycloak_error_were_sorry_failed_to_process_response]
+=== Keycloakエラー："申し訳ありませんが、応答の処理に失敗しました"
+
+* Keycloakログを確認してください。
+* ログに`failed: org.keycloak.common.VerificationException: Client does not have a public key`が表示される場合は、Keycloakクライアントの`Encrypt Assertions`を`OFF`に設定してください。
+
+[#_keycloak_error_were_sorry_invalid_requester]
+=== Keycloakエラー："申し訳ありませんが、無効なリクエスターです"
+
+* Keycloakログを確認してください。
+* ログに`request validation failed: org.keycloak.common.VerificationException: SigAlg was null`が表示される場合は、Keycloakクライアントの`Client Signature Required`を`OFF`に設定してください。
+
+[#_cni_community_popularity]
+== CNIコミュニティの人気
+
+[#_configuring_saml_single_logout_slo]
+== SAMLシングルログアウト（SLO）の設定
+
+include::shared:ROOT:partial$en/configure-slo.adoc[]
+
+[#_saml_and_openldap_group_permissions]
+== SAMLとOpenLDAPグループ権限
+
+include::shared:ROOT:partial$en/saml-openldap-group-permissions.adoc[]

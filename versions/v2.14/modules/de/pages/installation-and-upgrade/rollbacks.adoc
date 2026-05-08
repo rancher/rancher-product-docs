@@ -1,0 +1,142 @@
+= Rollbacks
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-06
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc 
+:product-path: installation-and-upgrade/rollbacks.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+:xref-rancher-restore: xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rollback-docker-installed: xref:getting-started/installation-and-upgrade/other-installation-methods/rancher-on-a-single-node-with-docker/roll-back-docker-installed-rancher.adoc
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-back-restore-example-configs: xref:reference-guides/backup-restore-configuration/examples.adoc
+:xref-rancher-restore: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc
+endif::[]
+
+Diese Seite beschreibt, wie man Rancher nach einem Upgrade auf eine frühere Version zurücksetzt.
+
+include::shared:ROOT:partial$en/rollback-warning.adoc[]
+
+Befolgen Sie die Anweisungen auf dieser Seite, wenn:
+
+* Die laufende Rancher-Instanz wurde nach der Erstellung der Sicherung auf eine neuere Version aktualisiert.
+* Der Upstream (lokaler) Cluster ist derselbe wie der, auf dem die Sicherung erstellt wurde.
+
+[TIP]
+====
+* Befolgen Sie diese Schritte, um {xref-migrate-cluster}[Rancher zu migrieren].
+* Wenn Sie Rancher auf denselben vorherigen Zustand bei derselben Rancher-Version wiederherstellen müssen, siehe die {xref-rancher-restore}[Wiederherstellungsdokumentation].
+====
+
+Um Rancher auf eine niedrigere/frühere Version zurückzusetzen, verwenden Sie die *Rancher Backups* Anwendung und stellen Sie Rancher aus der Sicherung wieder her.
+
+Rancher muss nach einem Rollback mit der niedrigeren/früheren Version gestartet werden.
+
+Eine Wiederherstellung erfolgt durch die Erstellung einer benutzerdefinierten Ressource für die Wiederherstellung.
+
+[#_alternative_steps_for_special_scenarios]
+== Alternative Schritte für spezielle Szenarien
+
+Alternative Schritte müssen für Rollbacks in den folgenden Szenarien durchgeführt werden:
+
+* Rollback von v2.14.0 und später auf eine frühere Version von v2.13.x.
+
+In Rancher v2.13.0 wurden Rancher Turtles zum Standardmanager für CAPI-Ressourcen und ersetzten die zuvor eingebetteten Cluster-API-Controller. In Rancher v2.14.0 wurde die eingebettete Cluster-API vollständig entfernt. Wenn Sie also von Rancher v2.14.0 und später auf eine frühere Version von Rancher v2.13.x zurückrollen und nicht beabsichtigen, Rancher Turtles weiterhin zur Verwaltung von CAPI-Ressourcen zu verwenden, sind möglicherweise zusätzliche manuelle Schritte erforderlich, um die eingebetteten Cluster-API-Controller zu verwenden. Ab Rancher v2.14.0 ist Rancher Turtles der einzige unterstützte Manager für CAPI-Ressourcen.
+
+In Rancher v2.14.0 wird das Cluster-API-Modul von v1.10.6 auf v1.12.2 aktualisiert. Das Cluster-API v1.12.2 aktualisiert seinerseits die apiVersions seiner benutzerdefinierten Ressourcenbeschreibungen (CRDs) von `cluster.x-k8s.io/v1beta1` auf `cluster.x-k8s.io/v1beta2`. Rancher-Sicherungsdateien enthalten Cluster-API-CRDs. Beim Wiederherstellen von Sicherungsdaten von Rancher v2.13.x auf einen lokalen Cluster nach dem Upgrade auf v2.14.0 stellt die Rancher Backups-Anwendung zuerst die v1beta1-CRDs wieder her. Dies schlägt fehl, da die v1beta2-Version nicht von den CRDs entfernt werden kann, solange v1beta2 benutzerdefinierte Ressourcen im Cluster vorhanden sind.
+
+[NOTE]
+.Wichtig:
+====
+
+* Befolgen Sie die Anweisungen auf dieser Seite, um Rancher im selben Cluster wiederherzustellen, von dem es gesichert wurde. Um Rancher in einen neuen Cluster zu migrieren, befolgen Sie die Schritte, um {xref-migrate-cluster}[Rancher zu migrieren.]
+* Beim Wiederherstellen von Rancher im selben Setup wird die Rancher-Implementierung manuell heruntergefahren, bevor die Wiederherstellung beginnt. Anschließend wird der Operator sie wieder hochfahren, sobald die Wiederherstellung abgeschlossen ist. Infolgedessen sind Rancher und seine Benutzeroberfläche nicht verfügbar, bis die Wiederherstellung abgeschlossen ist. Während die Benutzeroberfläche nicht verfügbar ist, verwenden Sie die ursprüngliche Cluster-Kubeconfig mit der Wiederherstellungs-YAML-Datei: `kubectl create -f restore.yaml`.
+====
+
+[#_step_1_create_the_restore_custom_resource]
+== Schritt 1: Erstellen Sie die benutzerdefinierte Ressource 'Restore'.
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zum lokalen Cluster und klicken Sie auf *Erkunden*.
+. Klicken Sie in der linken Navigationsleiste auf menu:Rancher Backups[Wiederherstellen].
+
+[NOTE]
+====
+Wenn die Rancher Backups-App nicht sichtbar ist, müssen Sie sie von der Charts-Seite in *Apps* installieren. Weitere Informationen finden Sie {xref-helm-charts-in-rancher}#_access_charts[hier].
+====
+
+
+. Klicken Sie auf *Erstellen*.
+. Erstellen Sie das Restore über das Formular oder per YAML. Für Hilfe bei der Erstellung der Restore-Ressource über das Online-Formular, siehe die {xref-rancher-restore-config}[Konfigurationsreferenz] und die {xref-back-restore-example-configs}[Beispiele.]
+. Um den YAML-Editor zu verwenden, können Sie auf menu:Erstellen[Aus YAML erstellen.] klicken. Geben Sie das Restore-YAML ein. Das folgende Beispiel zeigt eine Restore-Custom-Ressource:
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Restore
+ metadata:
+   name: restore-migration
+ spec:
+   backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+   encryptionConfigSecretName: encryptionconfig
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+----
++
+Für Hilfe bei der Konfiguration des Restore, siehe die {xref-rancher-restore-config}[Konfigurationsreferenz] und die {xref-back-restore-example-configs}[Beispiele.]
+
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Die Sicherungsdatei wird erstellt und im Zielspeicherort aktualisiert. Die Ressourcen werden in dieser Reihenfolge wiederhergestellt:
+
+. Benutzerdefinierte Ressourcenbeschreibungen (CRDs)
+. Cluster-spezifische Ressourcen
+. Namensraum-spezifische Ressourcen
+
+Um zu überprüfen, wie die Wiederherstellung voranschreitet, können Sie die Protokolle des Operators überprüfen. Führen Sie die folgenden Schritte aus, um die Protokolle zu erhalten:
+
+[,yaml]
+----
+kubectl get pods -n cattle-resources-system
+kubectl logs -n cattle-resources-system -f
+----
+
+[#_step_2_roll_back_to_a_previous_rancher_version]
+== 2. Schritt: Auf eine frühere Rancher-Version zurücksetzen
+
+Rancher kann mit der Helm-Kommandozeilenschnittstelle zurückgesetzt werden. Um auf die vorherige Version zurückzusetzen:
+
+[,yaml]
+----
+helm rollback rancher -n cattle-system
+----
+
+Wenn die vorherige Revision nicht das beabsichtigte Ziel ist, können Sie eine Revision angeben, auf die zurückgesetzt werden soll. Um die Implementierungshistorie anzuzeigen:
+
+[,yaml]
+----
+helm history rancher -n cattle-system
+----
+
+Wenn die Zielrevision bestimmt ist, führen Sie das Rollback durch. Dieses Beispiel wird auf die Revision `3` zurückrollen:
+
+[,yaml]
+----
+helm rollback rancher 3 -n cattle-system
+----

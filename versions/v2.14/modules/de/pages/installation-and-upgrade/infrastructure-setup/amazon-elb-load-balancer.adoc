@@ -1,0 +1,227 @@
+= Einrichten des Amazon ELB Network Load Balancer
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+
+Diese Anleitung beschreibt, wie man einen Netzwerk-Load-Balancer (NLB) im EC2-Dienst von Amazon einrichtet, der den Datenverkehr zu mehreren Instanzen auf EC2 leitet.
+
+Diese Beispiele zeigen, wie der Lastausgleich konfiguriert wird, um den Datenverkehr an drei Rancher-Serverknoten zu leiten. Wenn Rancher auf einem K3s Kubernetes-Cluster installiert ist, sind nur zwei Knoten erforderlich.
+
+Dieses Tutorial behandelt eine mögliche Methode zur Einrichtung Ihres Load-Balancers, nicht die einzige Methode. Andere Arten von Load-Balancern, wie ein Classic Load Balancer oder Application Load Balancer, könnten ebenfalls den Datenverkehr zu den Rancher-Serverknoten leiten.
+
+Rancher unterstützt nur die Verwendung des Amazon NLB, wenn der Datenverkehr im `tcp` Modus für Port 443 und nicht im `tls` Modus terminiert wird. Das liegt daran, dass der NLB die richtigen Header in Anfragen nicht einfügt, wenn sie am NLB terminiert werden. Das bedeutet, dass Sie, wenn Sie von Amazon Certificate Manager (ACM) verwaltete Zertifikate verwenden möchten, einen ALB verwenden sollten.
+
+[#_requirements]
+== Anforderungen
+
+Diese Anweisungen setzen voraus, dass Sie bereits Linux-Instanzen in EC2 erstellt haben. Der Load-Balancer leitet den Datenverkehr zu diesen Knoten.
+
+[#_1_create_target_groups]
+== 1. Zielgruppen erstellen
+
+Beginnen Sie mit der Erstellung von zwei Zielgruppen für das *TCP*-Protokoll, eine mit TCP-Port 443 und eine für TCP-Port 80 (die eine Umleitung zu TCP-Port 443 bereitstellt). Sie fügen Ihre Linux-Knoten zu diesen Gruppen hinzu.
+
+Ihr erster NLB-Konfigurationsschritt besteht darin, zwei Zielgruppen zu erstellen. Technisch gesehen ist nur Port 443 erforderlich, um auf Rancher zuzugreifen, aber es ist praktisch einen Listener für Port 80 hinzuzufügen, da der Datenverkehr zu Port 80 automatisch auf Port 443 umgeleitet wird.
+
+Der Traefik Ingress sollte den Datenverkehr von Port 80 auf Port 443 umleiten.
+
+. Melden Sie sich bei der https://console.aws.amazon.com/ec2/[Amazon AWS-Konsole] an, um zu beginnen. Stellen Sie sicher, dass Sie die *Region* auswählen, in der Ihre EC2-Instanzen (Linux-Knoten) erstellt werden.
+. Wählen Sie *Services* und wählen Sie *EC2*, finden Sie den Abschnitt *Load Balancing* und öffnen Sie *Zielgruppen*.
+. Klicken Sie auf *Create target group*, um die erste Zielgruppe für TCP-Port 443 zu erstellen.
+
+[NOTE]
+====
+Für Details zu den Gesundheitsprüfungen des Traefik Ingress verweisen Sie auf <<_health_check_paths_for_traefik_ingresses,diesen Abschnitt.>>
+====
+
+[discrete]
+[#_target_group_tcp_port_443]
+==== Zielgruppe (TCP-Port 443)
+
+Konfigurieren Sie die erste Zielgruppe gemäß der Tabelle unten.
+
+|===
+| Option | Einstellung
+
+| Name der Zielgruppe
+| `rancher-tcp-443`
+
+| Zieltyp
+| `instance`
+
+| Protokoll
+| `TCP`
+
+| Port
+| `443`
+
+| VPC
+| Wählen Sie Ihre VPC
+|===
+
+Einstellungen für die Zustandsprüfung:
+
+|===
+| Option | Einstellung
+
+| Protokoll
+| TCP
+
+| Port
+| `override`,`80`
+
+| Gesunder Schwellenwert
+| `3`
+
+| Ungesunder Schwellenwert
+| `3`
+
+| Wartezeit
+| `6 seconds`
+
+| Intervall
+| `10 seconds`
+|===
+
+Klicken Sie auf *Create target group*, um die zweite Zielgruppe für TCP-Port 80 zu erstellen.
+
+[discrete]
+[#_target_group_tcp_port_80]
+==== Zielgruppe (TCP-Port 80)
+
+Konfigurieren Sie die zweite Zielgruppe gemäß der Tabelle unten.
+
+|===
+| Option | Einstellung
+
+| Name der Zielgruppe
+| `rancher-tcp-80`
+
+| Zieltyp
+| `instance`
+
+| Protokoll
+| `TCP`
+
+| Port
+| `80`
+
+| VPC
+| Wählen Sie Ihre VPC
+|===
+
+Einstellungen für die Zustandsprüfung:
+
+|===
+| Option | Einstellung
+
+| Protokoll
+| TCP
+
+| Port
+| `traffic port`
+
+| Gesunder Schwellenwert
+| `3`
+
+| Ungesunder Schwellenwert
+| `3`
+
+| Wartezeit
+| `6 seconds`
+
+| Intervall
+| `10 seconds`
+|===
+
+[#_2_register_targets]
+== 2. Ziele registrieren
+
+Fügen Sie als Nächstes Ihre Linux-Knoten zu beiden Zielgruppen hinzu.
+
+Wählen Sie die Zielgruppe mit dem Namen *rancher-tcp-443*, klicken Sie auf die Registerkarte *Ziele* und wählen Sie *Bearbeiten*.
+
+image::ha/nlb/edit-targetgroup-443.png[]
+
+Wählen Sie die Instanzen (Linux-Knoten) aus, die Sie hinzufügen möchten, und klicken Sie auf *Zu registrierten hinzufügen*.
+
+'''
+
+.Screenshot Ziele zur Zielgruppe TCP-Port 443 hinzufügen
+image::ha/nlb/add-targets-targetgroup-443.png[]
+
+'''
+
+.Screenshot Ziele zur Zielgruppe TCP-Port 443 hinzugefügt
+image::ha/nlb/added-targets-targetgroup-443.png[]
+
+Wenn die Instanzen hinzugefügt sind, klicken Sie auf *Speichern* unten rechts auf dem Bildschirm.
+
+Wiederholen Sie diese Schritte und ersetzen Sie *rancher-tcp-443* durch *rancher-tcp-80*. Die gleichen Instanzen müssen als Ziele zu dieser Zielgruppe hinzugefügt werden.
+
+[#_3_create_your_nlb]
+== 3. Erstellen Sie Ihr NLB
+
+Verwenden Sie den Amazon-Assistenten, um einen Netzwerk-Lastausgleich zu erstellen. Im Rahmen dieses Prozesses fügen Sie die Zielgruppen hinzu, die Sie in <<_1_create_target_groups,1 erstellt haben. Zielgruppen erstellen>>.
+
+. Navigieren Sie von Ihrem Webbrowser zur https://console.aws.amazon.com/ec2/[Amazon EC2-Konsole].
+. Wählen Sie im Navigationsbereich *Lastausgleich* > *Load Balancer*.
+. Klicken Sie auf *Load Balancer erstellen*.
+. Wählen Sie *Netzwerk-Lastausgleich* und klicken Sie auf *Erstellen*. Vervollständigen Sie dann jedes Formular.
+
+* <<_step_1_configure_load_balancer,Schritt 1: Load Balancer konfigurieren>>
+* <<_step_2_configure_routing,Schritt 2: Routing konfigurieren>>
+* <<_step_3_register_targets,Schritt 3: Ziele registrieren>>
+* <<_step_4_review,Schritt 4: Überprüfen>>
+
+[#_step_1_configure_load_balancer]
+=== Schritt 1: Konfigurieren Sie den Lastausgleich
+
+Füllen Sie die folgenden Felder im Formular aus:
+
+* *Name:* `rancher`
+* *Schema:* `internal` oder `internet-facing`. Das Schema, das Sie für Ihren NLB wählen, hängt von der Konfiguration Ihrer Instanzen und VPC ab. Wenn Ihre Instanzen keine öffentlichen IPs haben oder Sie Rancher nur intern aufrufen, sollten Sie Ihr NLB-Schema auf `internal` anstelle von `internet-facing` setzen.
+* *Listener:* Das Load Balancer-Protokoll sollte `TCP` sein und der entsprechende Load Balancer-Port sollte auf `443` gesetzt werden.
+* *Verfügbarkeitszonen:* Wählen Sie Ihr *VPC* und *Verfügbarkeitszonen* aus.
+
+[#_step_2_configure_routing]
+=== 2. Schritt: Routing konfigurieren
+
+. Wählen Sie aus dem *Zielgruppe*-Dropdown *Bestehende Zielgruppe* aus.
+. Wählen Sie aus dem *Namen*-Dropdown `rancher-tcp-443` aus.
+. Öffnen Sie *Erweiterte Einstellungen zur Gesundheitsüberprüfung* und konfigurieren Sie *Intervall* auf `10 seconds`.
+
+[#_step_3_register_targets]
+=== Schritt 3: Ziele registrieren
+
+Da Sie Ihre Ziele zuvor registriert haben, müssen Sie nur auf *Nächster: klicken. Überprüfen*.
+
+[#_step_4_review]
+=== 4. Schritt: Rückblick
+
+Überprüfen Sie die Details des Load Balancers und klicken Sie auf *Erstellen*, wenn Sie zufrieden sind.
+
+Nachdem AWS das NLB erstellt hat, klicken Sie auf *Schließen*.
+
+[#_4_add_listener_to_nlb_for_tcp_port_80]
+== 4. Listener zum NLB für TCP-Port 80 hinzufügen
+
+. Wählen Sie Ihr neu erstelltes NLB aus und wählen Sie die Registerkarte *Listener* aus.
+. Klicken Sie auf *Listener hinzufügen*.
+. Verwenden Sie `TCP`:``80`` als *Protokoll* : *Port*
+. Klicken Sie auf *Aktion hinzufügen* und wählen Sie *Weiterleiten zu..* aus.
+. Wählen Sie aus dem *Weiterleiten zu*-Dropdown `rancher-tcp-80` aus.
+. Klicken Sie oben rechts auf dem Bildschirm auf *Speichern*.
+
+[#_health_check_paths_for_traefik_ingresses]
+== Gesundheitsprüfpfade für Traefik Ingresses
+
+K3s Kubernetes-Cluster verwenden Traefik als den Standard-Ingress.
+
+Der Gesundheitsprüfpfad ist `/ping`. Standardmäßig wird `/ping` immer abgeglichen (unabhängig vom Host), und eine Antwort von https://docs.traefik.io/operations/ping/[Traefik selbst] wird immer bereitgestellt.
+
+Um eine genaue Gesundheitsprüfung zu simulieren, ist es eine bewährte Praxis, den Host-Header (Rancher-Hostname) in Kombination mit `/ping` oder `/healthz` zu verwenden, wo immer dies möglich ist, um eine Antwort von den Rancher-Pods und nicht vom Ingress zu erhalten.

@@ -1,0 +1,129 @@
+= Utilisation des dépôts de graphiques Helm basés sur OCI
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/helm-charts-in-rancher/oci-repositories.adoc 
+:product-path: cluster-admin/helm-charts-in-rancher/oci-repositories.adoc
+ifeval::["{build-type}" != "community"]
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-logging-troubleshooting: xref:observability/logging/troubleshooting.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-logging-troubleshooting: xref:troubleshooting/other-troubleshooting-tips/logging.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+endif::[]
+
+Helm v3 a introduit le stockage des charts Helm en tant qu'artefacts https://opencontainers.org/about/overview/[Open Container Initiative (OCI)] dans des registres de conteneur. Avec Rancher v2.9.0, vous pouvez ajouter https://helm.sh/docs/topics/registries/[des dépôts de chart Helm basés sur OCI] aux dépôts basés sur HTTP et Git. Cela signifie que vous pouvez déployer des applis qui sont stockées en tant qu'artefacts OCI.
+
+[#_add_an_oci_based_helm_chart_repository]
+== Ajouter un dépôt de graphiques Helm basé sur OCI
+
+Pour ajouter un dépôt de graphiques Helm basé sur OCI via l'interface utilisateur de Rancher{nbsp}:
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Trouvez le nom du cluster dont vous souhaitez accéder aux dépôts. Cliquez sur *Explorer* à la fin de la ligne du cluster.
+. Dans la barre de navigation à gauche, sélectionnez menu:Apps[Repositories].
+. Cliquez sur *Create*.
+. Entrez un *Nom* pour le registre. Sélectionnez *Dépôt OCI* comme cible.
+. Entrez l'*URL de l'hôte du dépôt OCI* pour le registre. Le point de terminaison du registre ne doit contenir rien d'autre que des artefacts de graphiques Helm OCI. Les artefacts doivent tous avoir des noms uniques. Si vous essayez d'ajouter un point de terminaison qui contient d'autres types de fichiers ou d'artefacts, le dépôt OCI ne sera pas ajouté.
+
+[NOTE]
+====
+Vous pouvez utiliser le champ *URL OCI* pour affiner le nombre de graphiques disponibles à l'installation sur Rancher. Des points de terminaison plus génériques ciblent plus de graphiques, comme le démontrent les exemples suivants{nbsp}:
+
+....
+- `oci://<registry-host>`: Every chart in the registry becomes available for installation, regardless of namespace or tag.
+- `oci://<registry-host>/<namespace>`: Every chart in the specified namespace within the registry becomes available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>`: Only the specified chart and any associated tags or versions of that chart become available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>:<tag>`: Only the chart with the specified tag becomes available for installation.
+....
+====
+
+
+. Configurer l'authentification. Sélectionnez *Basicauth* dans le champ d'authentification et entrez un nom d'utilisateur et un mot de passe si nécessaire. Sinon, créez ou sélectionnez un secret *Authentication*. Voir <<_authentication_for_oci_based_helm_chart_repositories,Authentication>> pour une description complète.
+. (optionnel) Entrez un certificat DER encodé en base64 dans le champ *CA Cert Bundle*. Ce champ est destiné aux cas où vous avez un dépôt de graphiques Helm basé sur OCI privé et que vous avez besoin que Rancher fasse confiance à ses certificats.
+. (optionnel) Pour autoriser les connexions non sécurisées sans effectuer de vérification SSL, sélectionnez *Skip TLS Verification*. Pour forcer Rancher à utiliser HTTP au lieu de HTTPS pour envoyer des requêtes au dépôt, sélectionnez *Insecure Plain Http*.
+. (facultatif) Si votre dépôt a une stratégie de limitation de taux et peut répondre avec le code d'état `429 Too Many Requests`, vous voudrez peut-être remplir les champs sous *Exponential Back Off*{nbsp}:
+ ** *Temps d'attente minimum*{nbsp}: La durée minimale en secondes que Rancher doit attendre avant de réessayer. La valeur par défaut est de 1 seconde.
+ ** *Temps d'attente maximum*{nbsp}: La durée maximale en secondes que Rancher doit attendre avant de réessayer. La valeur par défaut est de 5 secondes.
+ ** *Nombre maximum de réessais*{nbsp}: La valeur par défaut est de 5 réessais.
+
++
+Une fois ces valeurs définies, Rancher répond au code d'état `429` en échelonnant les demandes en fonction des valeurs d'attente minimale et maximale. Le temps d'attente entre les réessais augmente de manière exponentielle, jusqu'à ce que Rancher ait envoyé le nombre maximum de réessais défini. Voir <<_rate_limiting_of_oci_based_helm_chart_repositories,Limitation de taux>> pour plus de détails.
+. Ajoutez toutes les étiquettes et annotations.
+. Cliquez sur *Create*.
+
+Il peut falloir un certain temps pour que le dépôt OCI s'active. C'est particulièrement vrai si le point de terminaison OCI contient plusieurs espaces de noms.
+
+[#_authentication_for_oci_based_helm_chart_repositories]
+== Authentification pour les dépôts de graphiques Helm basés sur OCI
+
+Rancher prend en charge BasicAuth pour les registres OCI. Vous devez créer un https://kubernetes.io/docs/concepts/configuration/secret/#basic-authentication-secret[*BasicAuth* secret Kubernetes]. Vous pouvez également {xref-secrets}[créer le secret via l'interface utilisateur de Rancher].
+
+Le CRD qui est lié au dépôt de graphiques Helm basé sur OCI est `ClusterRepo`.
+
+[#_view_helm_charts_in_oci_based_helm_chart_repositories]
+== Afficher les graphiques Helm dans les dépôts de graphiques Helm basés sur OCI
+
+Pour afficher les graphiques Helm dans le dépôt Helm basé sur OCI après qu'il ait atteint un état `Active` :
+
+. Click *☰*. Sous *Explorer le Cluster* dans le menu de navigation à gauche, sélectionnez un cluster.
+. Cliquez sur menu:Apps[Charts].
+. Sélectionnez le dépôt de graphiques Helm basé sur OCI dans le menu déroulant.
+
+[#_refresh_an_oci_based_helm_chart_repository]
+== Actualiser un dépôt de graphiques Helm basé sur OCI
+
+Rancher actualise automatiquement le dépôt de graphiques Helm basé sur OCI toutes les 6 heures.
+
+Si vous avez besoin de mettre à jour immédiatement, vous pouvez {xref-helm-charts-in-rancher}#_refresh_chart_repositories[effectuer une mise à jour manuelle].
+
+[#_update_an_oci_based_helm_chart_repository_configuration]
+== Mettre à jour la configuration d'un dépôt de graphiques Helm basé sur OCI
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Trouvez le nom du cluster dont vous souhaitez accéder aux dépôts. Cliquez sur *Explorer* à la fin de la ligne du cluster.
+. Dans la barre de navigation à gauche, sélectionnez menu:Apps[Repositories].
+. Trouvez la ligne associée au dépôt de graphiques Helm basé sur OCI, et cliquez sur *⋮*.
+. Dans le sous-menu, sélectionnez *Modifier la configuration*.
+
+[#_delete_an_oci_based_helm_chart_repository]
+== Supprimer un dépôt de graphiques Helm basé sur OCI
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Trouvez le nom du cluster dont vous souhaitez accéder aux dépôts. Cliquez sur *Explorer* à la fin de la ligne du cluster.
+. Dans la barre de navigation à gauche, sélectionnez menu:Apps[Repositories].
+. Sélectionnez la ligne associée au dépôt de graphiques Helm basé sur OCI, et cliquez sur *Supprimer*.
+
+[#_size_limitations_of_oci_based_helm_chart_repositories_in_rancher]
+== Limitations de taille des dépôts de graphiques Helm basés sur OCI dans Rancher
+
+En raison de préoccupations de sécurité, il existe des limitations sur la taille des graphiques Helm que vous pouvez déployer via un dépôt basé sur OCI, ainsi que sur la quantité de métadonnées que vous pouvez utiliser pour décrire les graphiques Helm dans un seul point de terminaison OCI.
+
+Rancher peut déployer des graphiques Helm OCI jusqu'à 20 Mo de taille.
+
+[#_rate_limiting_of_oci_based_helm_chart_repositories]
+== Limitation de taux des dépôts de graphiques Helm basés sur OCI
+
+Différents registres OCI mettent en œuvre la limitation de taux de différentes manières.
+
+La plupart des serveurs renvoient un en-tête `Retry-After`, indiquant combien de temps attendre avant que la limitation de taux ne soit levée.
+
+Docker Hub renvoie un code d'état `429` lorsqu'il a terminé toutes les demandes allouées. Il renvoie également un en-tête `RateLimit-Remaining` qui décrit la stratégie de limitation de taux.
+
+Rancher vérifie actuellement l'en-tête `Retry-After`. Il gère également les réponses de style Docker Hub (code d'état `429` et l'en-tête `RateLimit-Remaining`) et attend automatiquement avant de faire une nouvelle demande. Lors du traitement des réponses `Retry-After` ou de style Docker Hub, Rancher ignore les valeurs `ExponentialBackOff`.
+
+Si vous avez un dépôt de graphiques Helm basé sur OCI qui n'implémente pas les en-têtes `Retry-After` ou `RateLimit-Remaining`, et que vous pensez pouvoir être limité en termes de taux à un moment donné, remplissez les champs sous *Exponential Back Off* lorsque vous ajoutez le dépôt.
+
+Par exemple, si vous avez un dépôt de graphiques Helm basé sur OCI qui ne renvoie pas un en-tête `Retry-After`, mais que vous savez que le serveur autorise 50 demandes en 24 heures, vous pouvez fournir à Rancher une valeur *Min Wait* de *86400* secondes, une valeur *Max Wait* de *90000* secondes, et une valeur *Max Number of Retries* de *1*. Ensuite, si Rancher est limité par le serveur, Rancher attendra 24 heures avant de réessayer. La demande devrait réussir car Rancher n'a pas envoyé d'autres demandes dans les 24 heures précédentes.
+
+[#_troubleshooting_oci_based_helm_registries]
+== Dépannage des registres Helm basés sur OCI
+
+* Pour améliorer les informations de journalisation, {xref-logging-troubleshooting}#_kubernetes_install[activez l'option de débogage] lors du déploiement de Rancher.
+* S'il y a une quelconque divergence entre le contenu du dépôt et Rancher, vous devriez rafraîchir le dépôt du cluster en premier recours. Si la divergence persiste, supprimez le dépôt de graphiques Helm basé sur OCI de Rancher et ajoutez-le à nouveau. La suppression du dépôt ne supprimera aucun graphique Helm déjà installé.
+* Les applis installées via des dépôts de graphiques Helm basés sur OCI sont soumises à un problème connu concernant la façon dont Rancher affiche les informations sur les versions pouvant être mises à niveau. Consultez la section {xref-helm-charts-in-rancher}#_limitations[Limitations] de *Helm Charts and Apps* pour plus de détails.

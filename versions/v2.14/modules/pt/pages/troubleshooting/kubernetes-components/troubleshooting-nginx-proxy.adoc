@@ -1,0 +1,84 @@
+= Solução de Problemas de nginx-proxy
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc 
+:product-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc
+
+[CAUTION]
+====
+O `nginx-proxy` container é um componente específico do RKE1. Se você estiver usando RKE2 ou K3s, este container não é implantado, pois o balanceamento de carga para os servidores API é gerenciado internamente por um balanceador de carga do lado do cliente dentro do próprio processo do agente.
+
+Além disso, observe que o RKE1 atingiu seu https://support.scc.suse.com/s/kb/RKE-EOL-what-when-why?[fim do serviço (EOL)]. Portanto, as informações nesta página são consideradas descontinuadas.
+====
+
+O `nginx-proxy` contêiner é implantado em cada nó que não possui o papel `controlplane`. Ele fornece acesso a todos os nós com o papel `controlplane` gerando dinamicamente a configuração do NGINX com base nos nós disponíveis com o papel `controlplane`.
+
+[#_check_if_the_container_is_running]
+== Verifique se o contêiner está em execução
+
+O contêiner é chamado `nginx-proxy` e deve ter o status `Up`. A duração mostrada após `Up` é o tempo que o contêiner está em execução.
+
+----
+docker ps -a -f=name=nginx-proxy
+----
+
+Saída de exemplo:
+
+----
+docker ps -a -f=name=nginx-proxy
+CONTAINER ID        IMAGE                       COMMAND                  CREATED             STATUS              PORTS               NAMES
+c3e933687c0e        rancher/rke-tools:v0.1.15   "nginx-proxy CP_HO..."   3 hours ago         Up 3 hours                              nginx-proxy
+----
+
+[#_check_generated_nginx_configuration]
+== Verifique a Configuração do NGINX Gerada
+
+A configuração gerada deve incluir os endereços IP dos nós com o papel `controlplane`. A configuração pode ser verificada usando o seguinte comando:
+
+----
+docker exec nginx-proxy cat /etc/nginx/nginx.conf
+----
+
+Saída de exemplo:
+
+----
+error_log stderr notice;
+
+worker_processes auto;
+events {
+  multi_accept on;
+  use epoll;
+  worker_connections 1024;
+}
+
+stream {
+        upstream kube_apiserver {
+
+            server ip_of_controlplane_node1:6443;
+
+            server ip_of_controlplane_node2:6443;
+
+        }
+
+        server {
+            listen        6443;
+            proxy_pass    kube_apiserver;
+            proxy_timeout 30;
+            proxy_connect_timeout 2s;
+
+        }
+
+}
+----
+
+[#_nginx_proxy_container_logging]
+== Registro do contêiner nginx-proxy
+
+O registro dos contêineres pode conter informações sobre qual poderia ser o problema.
+
+----
+docker logs nginx-proxy
+----

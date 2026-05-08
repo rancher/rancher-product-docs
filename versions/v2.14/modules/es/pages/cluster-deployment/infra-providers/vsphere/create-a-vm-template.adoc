@@ -1,0 +1,172 @@
+= Creando una plantilla de máquina virtual de VMware vSphere
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+:community-path: instrucciones/nuevas_guías_de_usuario/lanzar-kubernetes-con-rancher/utilizar-nodos-nuevos-en-un-proveedor-infra/vsphere/crear-una-plantilla-de-vm.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/create-a-vm-template.adoc
+
+Crear máquinas virtuales de manera repetible y fiable puede ser a menudo difícil. VMware vSphere ofrece la capacidad de construir una VM que luego puede ser convertida en una plantilla. La plantilla puede ser utilizada para crear VMs configuradas de manera idéntica. Rancher aprovecha esta capacidad para crear nodos RKE/K3s idénticos.
+
+Para aprovechar la plantilla y crear nuevas VMs, Rancher tiene algunos <<_requirements,requisitos específicos>> que la VM debe tener preinstalada. Después de configurar la VM con estos requisitos, necesitas <<_preparing_your_vm,preparar la VM>> antes de <<_creating_a_template,crear la plantilla>>. Finalmente, una vez que la preparación esté completa, la VM puede ser <<_converting_to_a_template,convertida en una plantilla>> y <<_moving_to_a_content_library,movida a una biblioteca de contenido>>.
+
+[#_requirements]
+== Requisitos
+
+Se requieren herramientas específicas tanto para las VMs de Linux como para las de Windows para que sean utilizables por el controlador de nodo vSphere. La dependencia más crítica es https://cloud-init.io/[cloud-init] para Linux y https://cloudbase.it/cloudbase-init/[cloudbase-init] para Windows. Ambos se utilizan para aprovisionar las VMs configurando el nombre de host y estableciendo el acceso SSH y el usuario predeterminado de Rancher. Los usuarios pueden añadir más contenido a estos según sea necesario si se requiere otra configuración. Además, otros requisitos se enumeran a continuación para referencia.
+
+[NOTE]
+====
+
+Si tienes alguna regla o configuración específica de firewall, necesitarás añadir esto a la VM antes de crear una plantilla.
+====
+
+
+[#_linux_dependencies]
+== Dependencias de Linux
+
+Los paquetes que deben ser instalados en la plantilla se enumeran a continuación. Estos tendrán nombres ligeramente diferentes según la distribución; por ejemplo, algunas distribuciones incluyen estas dependencias por defecto. El aprovisionador de clúster instalará automáticamente las dependencias requeridas para Kubernetes. Las dependencias enumeradas a continuación son necesarias para el funcionamiento del aprovisionador de clúster de Rancher (no para Kubernetes):
+
+* curl
+* wget
+* git
+* net-tools
+* unzip
+* apparmor-parser
+* ca-certificates
+* cloud-init
+* cloud-guest-utils
+* cloud-image-utils
+* growpart (parte de cloud-guest-utils)
+* cloud-initramfs-growroot
+* open-iscsi
+* openssh-server
+* https://docs.vmware.com/en/VMware-Tools/11.3.0/com.vmware.vsphere.vmwaretools.doc/GUID-8B6EA5B7-453B-48AA-92E5-DB7F061341D1.html[open-vm-tools]
+
+[#_windows_dependencies]
+== Dependencias de Windows
+
+La lista de paquetes que deben instalarse en la plantilla es la siguiente:
+
+* Función de Contenedor de Windows
+* https://cloudbase.it/cloudbase-init/#download[cloudbase-init]
+
+[#_creating_a_template]
+== Creación de plantillas
+
+Puedes crear tu VM manualmente o puedes utilizar <<_alternatives_to_manual_creation,otras alternativas>> para crear tu VM.
+
+[#_manual_creation]
+=== Creación Manual
+
+. Crea tu VM manualmente siguiendo https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AE8AFBF1-75D1-4172-988C-378C35C9FAF2.html[estas instrucciones] de VMware. Una vez que tengas una VM en funcionamiento, puedes instalar manualmente las dependencias listadas arriba para configurar la VM correctamente para el controlador de nodo vSphere.
+. Personaliza según sea necesario en función de tu entorno y requisitos específicos.
+. Procede con la preparación final antes de crear tu plantilla.
+
+[#_alternatives_to_manual_creation]
+=== Alternativas a la Creación Manual
+
+Otras opciones alternativas para crear VMs se enumeran a continuación:
+
+* https://developer.vmware.com/powercli[VMware PowerCLI]
+* https://www.packer.io/[Packer]
+* https://saltproject.io/[SaltStack]
+* https://www.ansible.com/[Ansible]
+
+Packer es una alternativa de uso frecuente. Consulta esta https://github.com/vmware-samples/packer-examples-for-vsphere[referencia] para ejemplos de su uso con vSphere.
+
+[#_preparing_your_vm]
+== Preparando tu VM
+
+Después de crear una VM con todas las dependencias requeridas (y cualquier elemento adicional necesario), debes realizar el paso más crítico a continuación: preparar la VM para convertirla en una plantilla. Esta preparación restablecerá datos críticos como el nombre de host de la VM, las IPs, etc., para evitar que esa información se transfiera a una nueva VM. Si no realizas este paso, podrías crear una VM con el mismo nombre de host, dirección IP, etc.
+
+Ten en cuenta que estos pasos preparatorios difieren entre Linux y Windows.
+
+[#_linux_preparation]
+=== Preparación de Linux
+
+Los comandos a continuación restablecerán tu VM en Linux:
+
+[,bash]
+----
+# Cleaning logs.
+if [ -f /var/log/audit/audit.log ]; then
+  cat /dev/null > /var/log/audit/audit.log
+fi
+if [ -f /var/log/wtmp ]; then
+  cat /dev/null > /var/log/wtmp
+fi
+if [ -f /var/log/lastlog ]; then
+  cat /dev/null > /var/log/lastlog
+fi
+
+# Cleaning udev rules.
+if [ -f /etc/udev/rules.d/70-persistent-net.rules ]; then
+  rm /etc/udev/rules.d/70-persistent-net.rules
+fi
+
+# Cleaning the /tmp directories
+rm -rf /tmp/*
+rm -rf /var/tmp/*
+
+# Cleaning the SSH host keys
+rm -f /etc/ssh/ssh_host_*
+
+# Cleaning the machine-id
+truncate -s 0 /etc/machine-id
+rm /var/lib/dbus/machine-id
+ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# Cleaning the shell history
+unset HISTFILE
+history -cw
+echo > ~/.bash_history
+rm -fr /root/.bash_history
+
+# Truncating hostname, hosts, resolv.conf and setting hostname to localhost
+truncate -s 0 /etc/{hostname,hosts,resolv.conf}
+hostnamectl set-hostname localhost
+
+# Clean cloud-init
+cloud-init clean -s -l
+----
+
+[#_windows_preparation]
+=== Preparación de Windows
+
+Windows tiene una utilidad llamada https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep\--generalize\--a-windows-installation?view=windows-11[sysprep] que se utiliza para generalizar una imagen y restablecer los mismos elementos mencionados anteriormente para Linux. El comando es el siguiente:
+
+[,PowerShell]
+----
+sysprep.exe /generalize /shutdown /oobe
+----
+
+[#_converting_to_a_template]
+== Convirtiendo a una plantilla
+
+. Apaga y detén la VM.
+. Haz clic derecho en la VM en la lista de inventario y selecciona *Plantilla*.
+. Haz clic en *Convertir a Plantilla*.
+
+*Resultado:* Una vez que el proceso haya finalizado, estará disponible una plantilla para su uso.
+
+Para obtener información adicional sobre cómo convertir una máquina virtual en una plantilla, consulta la https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-5B3737CC-28DB-4334-BD18-6E12011CDC9F.html[guía de VMware].
+
+[#_moving_to_a_content_library]
+== Moviendo a una biblioteca de contenido
+
+Rancher tiene la capacidad de utilizar plantillas proporcionadas por una biblioteca de contenido. Las bibliotecas de contenido almacenan y gestionan contenido dentro de vSphere, y también ofrecen la posibilidad de publicar y compartir ese contenido.
+
+A continuación se presentan algunos enlaces útiles sobre bibliotecas de contenido:
+
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-2A0F1C13-7336-45CE-B211-610D39A6E1F4.html[Crear una biblioteca de contenido]
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AC1545F0-F8BA-4CD2-96EB-21B3DFAA1DC1.html[Clonar la plantilla a la biblioteca de contenido]
+
+[#_other_resources]
+== Otros recursos
+
+Aquí hay una lista de recursos adicionales que pueden ser útiles:
+
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-ubuntu-template[Tutorial para crear una plantilla de Linux]
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-windows-template[Tutorial para crear una plantilla de Windows]

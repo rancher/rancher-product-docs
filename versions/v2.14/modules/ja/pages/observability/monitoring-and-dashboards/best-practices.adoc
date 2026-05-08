@@ -1,0 +1,141 @@
+= 監視のベストプラクティス
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-18
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/monitoring-best-practices.adoc 
+:product-path: observability/monitoring-and-dashboards/best-practices.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio: xref:observability/istio/istio.adoc
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-compliance-scans-howto: xref:security/compliance-scans/how-to.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio: xref:integrations-in-rancher/istio/index.adoc
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-compliance-scans-howto: xref:how-to-guides/advanced-user-guides/compliance-scan-guides/index.adoc
+endif::[]
+
+適切な監視とアラートルールの設定は、プロダクションワークロードを安全かつ信頼性高く運用するために重要です。KubernetesやRancherを使用する場合も同様です。幸いなことに、統合された監視とアラート機能により、このプロセス全体が大幅に簡素化されます。
+
+{xref-monitoring-and-dashboards}[Rancher監視ドキュメント]は、完全なPrometheusおよびGrafanaスタックのセットアップ方法を説明しています。これにより、クラスター内のすべてのシステムおよびKubernetesコンポーネントから監視データを収集し、開始するための適切なダッシュボードとアラートを提供します。しかし、信頼性の高いセットアップを実現するためには、自分のワークロードを監視し、PrometheusとGrafanaを自分の特定のユースケースやクラスターサイズに適応させる必要があります。この文書は、そのためのベストプラクティスを提供することを目的としています。
+
+[#_what_to_monitor]
+== 何を監視するか
+
+Kubernetes自体と、その内部で実行されているアプリケーションは、異なるコンポーネントが相互に作用する分散システムを形成します。システム全体および各個別のコンポーネントについて、パフォーマンス、可用性、信頼性、スケーラビリティを確保する必要があります。詳細な情報を提供する良いリソースは、Googleの無料の https://sre.google/sre-book/table-of-contents/[サイト信頼性エンジニアリングブック]であり、特に https://sre.google/sre-book/monitoring-distributed-systems/[分散システムの監視]に関する章が参考になります。
+
+[#_configuring_prometheus_resource_usage]
+== Prometheusリソース使用量の設定
+
+統合監視スタックをインストールする際、Rancherはクラスターのサイズやその中で実行されているワークロードに依存するいくつかの設定を構成することを許可します。この章では、これらについてより詳細に説明します。
+
+[#_storage_and_data_retention]
+=== ストレージとデータ保持
+
+Prometheusに必要なストレージの量は、保存する時系列とラベルの量、および設定したデータ保持に直接関連しています。Prometheusは長期的なメトリクスストレージとして使用されることを意図していないことに注意することが重要です。データ保持期間は通常数日であり、数週間や数ヶ月ではありません。その理由は、Prometheusが保存されたメトリクスに対して集約を行わないためです。これは素晴らしいことです。なぜなら、集約はデータを希薄化する可能性がありますが、必要なストレージが時間とともに直線的に増加することも意味するからです。
+
+必要なストレージを計算する一つの方法は、このクエリを使用してPrometheusのストレージチャンクの平均サイズを見ることです。
+
+----
+rate(prometheus_tsdb_compaction_chunk_size_bytes_sum[1h]) / rate(prometheus_tsdb_compaction_chunk_samples_sum[1h])
+----
+
+次に、1秒あたりのデータ取り込み率を確認してください。
+
+----
+rate(prometheus_tsdb_head_samples_appended_total[1h])
+----
+
+その後、これを保持時間で掛け算し、バッファとして数パーセントを追加します。
+
+----
+average chunk size in bytes * ingestion rate per second * retention time in seconds * 1.1 = necessary storage in bytes
+----
+
+必要なストレージを計算する方法についての詳細は、この https://www.robustperception.io/how-much-disk-space-do-prometheus-blocks-use[ブログ記事]で確認できます。
+
+Prometheusのストレージ概念についての詳細は、 https://prometheus.io/docs/prometheus/latest/storage[Prometheusのドキュメント]で読むことができます。
+
+[#_cpu_and_memory_requests_and_limits]
+=== CPUおよびメモリのリクエストと制限
+
+大規模なKubernetesクラスターでは、Prometheusはかなりのメモリを消費する可能性があります。Prometheusが必要とするメモリの量は、保存する時系列の数とラベルの数、そしてそれらが記録されるスクレイプ間隔に直接関連しています。
+
+必要なメモリを計算する方法についての詳細は、この https://www.robustperception.io/how-much-ram-does-prometheus-2-x-need-for-cardinality-and-ingestion[ブログ記事]で確認できます。
+
+必要なCPUの量は、実行しているクエリの数に関連しています。
+
+[#_federation_and_long_term_storage]
+=== フェデレーションと長期ストレージ
+
+Prometheusは長期間メトリクスを保存することを目的としていませんが、短期間のストレージのためにのみ使用されるべきです。
+
+いくつか、またはすべてのメトリクスを長期間保存するためには、Prometheusの https://prometheus.io/docs/prometheus/latest/storage/#remote-storage-integrations[リモート読み取り/書き込み]機能を活用して、 https://thanos.io/[Thanos]、 https://www.influxdata.com/[InfluxDB]、 https://www.m3db.io/[M3DB]などのストレージシステムに接続できます。この https://rancher.com/blog/2020/prometheus-metric-federation[ブログ記事]に例のセットアップがあります。
+
+[#_scraping_custom_workloads]
+== カスタムワークロードのスクレイピング
+
+統合されたRancher Monitoringは、クラスターのノードやシステムコンポーネントからシステムメトリクスをすでにスクレイピングしていますが、Kubernetesにデプロイしたカスタムワークロードもデータのためにスクレイピングされるべきです。そのためには、Prometheusを設定して、特定の間隔でアプリケーションのエンドポイントにHTTPリクエストを行うことができます。これらのエンドポイントは、その後、Prometheus形式でメトリクスを返す必要があります。
+
+一般的に、クラスター内で実行されているすべてのワークロードからデータをスクレイピングしたいので、アラートや問題のデバッグに使用できます。インシデント発生時に初めて、実際に必要なメトリクスが求められることに気づくことがよくあります。すでにスクレイピングされて保存されているのであれば、それは良いことです。Prometheusは短期的なメトリクスストレージを目的としているため、大量のデータをスクレイピングして保持することは通常それほど高価ではありません。Prometheusを使用して長期的なストレージソリューションを利用している場合、実際にどのデータを永続化し保持するかを決定することができます。
+
+[#_about_prometheus_exporters]
+=== Prometheusエクスポーターについて
+
+データベース、キュー、ウェブサーバーなどの多くのサードパーティのワークロードは、すでにPrometheus形式でメトリクスを公開することをサポートしているか、ツールのメトリクスとPrometheusが理解できる形式との間で変換するエクスポーターを提供しています。通常、これらのエクスポーターをワークロードのPodに追加のサイドカーコンテナとして追加できます。多くのHelmチャートには、正しいエクスポーターをデプロイするオプションがすでに含まれています。エクスポーターの厳選されたリストは https://exporterhub.io/[ExporterHub]で見つけることができます。
+
+[#_prometheus_support_in_programming_languages_and_frameworks]
+=== プログラミング言語とフレームワークにおけるPrometheusのサポート
+
+独自のカスタムアプリケーションメトリクスをPrometheusに取り込むには、アプリケーションのコードからこれらのメトリクスを直接収集して公開する必要があります。幸いなことに、ほとんどの人気のあるプログラミング言語とフレームワークに対して、これを支援するためのライブラリや統合がすでに利用可能です。その一例が、 https://docs.spring.io/spring-metrics/docs/current/public/prometheus[Spring Framework]におけるPrometheusのサポートです。
+
+[#_servicemonitors_and_podmonitors]
+=== ServiceMonitors and PodMonitors
+
+すべてのワークロードがPrometheus形式でメトリクスを公開したら、Prometheusを構成してそれらをスクレイピングする必要があります。内部では、Rancherは https://github.com/prometheus-operator/prometheus-operator[prometheus-operator]を使用しています。これにより、ServiceMonitorsとPodMonitorsを使用してスクレイピングターゲットを簡単に追加できます。多くのHelmチャートには、これらのServiceMonitorやPodMonitorを直接作成するオプションがすでに含まれています。Rancherのドキュメントでもさらに情報を見つけることができます。
+
+[#_prometheus_push_gateway]
+=== Prometheus Push Gateway
+
+Prometheusによってスクレイプするのが伝統的に難しいワークロードがいくつかあります。これらの例としては、ジョブやCronJobのような短命のワークロードや、PHPアプリケーションのように個別に処理されるリクエスト間でデータを共有できないアプリケーションがあります。
+
+これらのユースケースのメトリクスを取得するために、 https://github.com/prometheus/pushgateway[prometheus-pushgateways]を設定することができます。CronJobまたはPHPアプリケーションは、プッシュゲートウェイにメトリクスの更新をプッシュします。プッシュゲートウェイはそれらを集約し、HTTPエンドポイントを通じて公開し、その後Prometheusによってスクレイプされることができます。
+
+[#_prometheus_blackbox_monitor]
+=== Prometheusブラックボックスモニター
+
+時には、外部からワークロードを監視することが有用です。そのために、HTTP、HTTPS、DNS、TCP、ICMPを介して任意のエンドポイントをプローブできる https://github.com/prometheus/blackbox_exporter[Prometheus blackbox-exporter]を使用できます。
+
+[#_monitoring_in_a_micro_service_architecture]
+== （マイクロ）サービスアーキテクチャにおける監視
+
+クラスター内の複数の個別のワークロードが相互に通信している（マイクロ）サービスアーキテクチャを持っている場合、これらのワークロードがどのように相互に通信しているか、またどこに問題やボトルネックがあるかを理解するために、詳細なメトリクスとトレースを持つことが非常に重要です。
+
+もちろん、すべてのワークロード内の内部トラフィックを監視し、これらのメトリクスをPrometheusに公開することができます。しかし、これはすぐにかなりの作業負担になる可能性があります。Rancherで{xref-istio}[ワンクリック]でインストールできるIstioのようなサービスメッシュは、これを自動的に行い、すべてのサービス間のトラフィックに関する豊富なテレメトリを提供できます。
+
+[#_real_user_monitoring]
+== リアルユーザーモニタリング
+
+すべての内部ワークロードの可用性とパフォーマンスを監視することは、安定して信頼性が高く迅速なアプリケーションを運営するために非常に重要です。しかし、これらのメトリクスは全体の一部しか示しません。完全なビューを得るためには、エンドユーザーが実際にどのようにそれを認識しているかを知ることも必要です。そのために、さまざまな https://en.wikipedia.org/wiki/Real_user_monitoring[リアルユーザーモニタリングソリューション]を調べることができます。
+
+[#_security_monitoring]
+== セキュリティモニタリング
+
+パフォーマンス、可用性、またはスケーラビリティの問題を検出するためにワークロードを監視することに加えて、クラスターとその中で実行されているワークロードも潜在的なセキュリティ問題について監視する必要があります。良い出発点は、クラスターがセキュリティのベストプラクティスに従って構成されているかどうかを確認する{xref-compliance-scans-howto}[コンプライアンススキャン]を頻繁に実行し、アラートを出すことです。
+
+ワークロードについては、Kubernetesや https://www.suse.com/products/neuvector/[NeuVector]、 https://falco.org/[Falco]、 https://www.aquasec.com/solutions/kubernetes-container-security/[Aqua Kubernetes Security]、 https://sysdig.com/[SysDig]のようなコンテナセキュリティソリューションを確認できます。
+
+[#_setting_up_alerts]
+== アラートの設定
+
+すべてのメトリクスを監視システムに取り込み、ダッシュボードで可視化することは素晴らしいですが、何か問題が発生した場合には、積極的にアラートを受け取りたいと思います。
+
+統合されたRancherの監視は、どのKubernetesクラスターでも意味のある適切なアラートのセットを自動的に構成します。これらを拡張して、特定のワークロードやユースケースをカバーする必要があります。
+
+アラートを設定する際は、アプリケーションの可用性にとって重要なすべてのワークロードに対して構成してください。ただし、アラートがあまりにも騒がしくならないようにしてください。理想的には、受信するすべてのアラートは、注意を要する問題があるためであり、修正が必要です。常に発生しているが、それほど重要でないアラートがある場合、アラートを完全に無視し始めて、本当に重要なアラートを見逃す危険があります。ここでは、少ない方が多いかもしれません。まずは本当に重要なメトリクスに焦点を当ててください。例えば、アプリケーションがオフラインの場合にアラートを出すことです。発生するすべての問題を修正し、その後、より詳細なアラートの作成を開始してください。
+
+アラートが発生し始めたが、現時点で何もできない場合は、一定の時間アラートを一時的に停止して、後で確認できるようにするのも問題ありません。
+
+アラートと通知チャネルの設定方法についての詳細は、{xref-monitoring-and-dashboards}[Rancher Documentation]で確認できます。

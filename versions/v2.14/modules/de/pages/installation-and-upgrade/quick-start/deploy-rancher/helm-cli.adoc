@@ -1,0 +1,182 @@
+= Helm CLI Kurzanleitung
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-16
+:page-revdate: {revdate}
+:community-path: getting-started/quick-start-guides/deploy-rancher-manager/helm-cli.adoc 
+:product-path: installation-and-upgrade/quick-start/deploy-rancher/helm-cli.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-bootstrap-password: xref:installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-bootstrap-password: xref:getting-started/installation-and-upgrade/resources/bootstrap-password.adoc 
+endif::[]
+
+Diese Anweisungen beschreiben eine schnelle Möglichkeit, eine Proof-of-Concept Rancher-Installation einzurichten.
+
+Diese Anweisungen setzen voraus, dass Sie über eine Linux-virtuelle Maschine verfügen, mit der Sie von Ihrem lokalen Arbeitsplatz aus kommunizieren werden. Rancher wird auf der Linux-Maschine installiert. Sie müssen die IP-Adresse dieser Maschine abrufen, damit Sie Rancher von Ihrem lokalen Arbeitsplatz aus erreichen können. Rancher ist so konzipiert, dass es Kubernetes-Cluster aus der Ferne verwaltet, daher muss auch jeder Kubernetes-Cluster, den Rancher in Zukunft verwaltet, in der Lage sein, diese IP-Adresse zu erreichen.
+
+Wir empfehlen nicht, Rancher lokal zu installieren, da dies ein Netzwerkproblem verursacht. Die Installation von Rancher auf localhost ermöglicht es nicht, mit nachgelagerten Kubernetes-Clustern zu kommunizieren, sodass Sie auf localhost die Clusterbereitstellung oder die Clusterverwaltungsfunktionen von Rancher nicht testen können.
+
+Ihre Linux-Maschine kann überall sein. Es könnte sich um eine Amazon EC2-Instanz, einen Digital Ocean-Droplet oder eine Azure-virtuelle Maschine handeln, um nur einige Beispiele zu nennen. Andere Rancher-Dokumente verwenden oft 'Node' als allgemeinen Begriff für all diese. Eine mögliche Möglichkeit, eine Linux-Maschine bereitzustellen, besteht darin, eine Amazon EC2-Instanz einzurichten, wie in {xref-setup-ec2-nodes}[diesem Tutorial] gezeigt.
+
+Die vollständigen Installationsanforderungen finden Sie {xref-install-reqs}[hier].
+
+[#_install_k3s_product_name_on_linux]
+== Installieren Sie {k3s-product-name} auf Linux
+
+Rancher muss auf einer unterstützten Kubernetes-Version installiert werden. Um herauszufinden, welche Kubernetes-Versionen für Ihre Rancher-Version unterstützt werden, konsultieren Sie die https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher Support Matrix].
+
+Um die K3s (Kubernetes)-Version anzugeben, verwenden Sie die Umgebungsvariable INSTALL_K3S_VERSION (z. B. `INSTALL_K3S_VERSION="v1.24.10+k3s1"`), wenn Sie das K3s-Installationsskript ausführen.
+
+Installieren Sie einen K3s-Cluster, indem Sie diesen Befehl auf der Linux-Maschine ausführen:
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> sh -s - server --cluster-init
+----
+
+Die Verwendung von `--cluster-init` ermöglicht es K3s, das eingebettete etcd als Datenspeicher zu verwenden und in ein Setup mit hoher Verfügbarkeit überzugehen. Verweisen Sie auf https://rancher.com/docs/k3s/latest/en/installation/ha-embedded/[hohe Verfügbarkeit mit eingebetteter DB].
+
+Speichern Sie die IP der Linux-Maschine.
+
+[#_save_the_kubeconfig_to_your_workstation]
+== Speichern Sie die kubeconfig auf Ihrem lokalen Arbeitsplatz.
+
+Die kubeconfig-Datei ist wichtig für den Zugriff auf den Kubernetes-Cluster. Kopieren Sie die Datei unter `/etc/rancher/k3s/k3s.yaml` von der Linux-Maschine und speichern Sie sie auf Ihrem lokalen Arbeitsplatz im Verzeichnis `~/.kube/config`. Eine Möglichkeit, dies zu tun, besteht darin, das `scp`-Tool zu verwenden und diesen Befehl auf Ihrem lokalen Arbeitsplatz auszuführen:
+
+[tabs]
+======
+Mac und Linux::
++
+--
+----
+scp root@<IP_OF_LINUX_MACHINE>:/etc/rancher/k3s/k3s.yaml ~/.kube/config
+----
+
+In einigen Fällen muss sichergestellt werden, dass Ihre Shell die Umgebungsvariable `KUBECONFIG=~/.kube/config` definiert hat, zum Beispiel kann sie in Ihren Profil- oder rc-Dateien exportiert werden.
+--
+
+Windows::
++
+--
+Standardmäßig ist "scp" kein anerkannter Befehl, daher müssen wir zuerst ein Modul installieren.
+
+In Windows Powershell:
+
+----
+Find-Module Posh-SSH
+Install-Module Posh-SSH
+
+## Get the remote kubeconfig file
+scp root@<IP_OF_LINUX_MACHINE>:/etc/rancher/k3s/k3s.yaml $env:USERPROFILE\.kube\config
+----
+--
+====== 
+
+[#_edit_the_rancher_server_url_in_the_kubeconfig]
+== Bearbeiten Sie die Rancher-Server-URL in der kubeconfig.
+
+In der kubeconfig-Datei müssen Sie den Wert des Feldes `server` auf `<IP_OF_LINUX_NODE>:6443` ändern. Der Kubernetes API-Server wird über Port 6443 erreicht, während der Rancher-Server über die Ports 80 und 443 erreicht wird. Diese Bearbeitung ist erforderlich, damit Sie beim Ausführen von Helm- oder kubectl-Befehlen von Ihrem lokalen Arbeitsplatz aus mit dem Kubernetes-Cluster kommunizieren können, auf dem Rancher installiert wird.
+
+[tabs]
+======
+Mac und Linux::
++
+--
+Eine Möglichkeit, die kubeconfig-Datei zum Bearbeiten zu öffnen, besteht darin, Vim zu verwenden:
+
+----
+vi ~/.kube/config
+----
+
+Drücken Sie `i`, um Vim in den Einfügemodus zu versetzen. Um Ihre Arbeit zu speichern, drücken Sie `Esc`. Drücken Sie dann `:wq` und drücken Sie `Enter`.
+--
+
+Windows::
++
+--
+In Windows Powershell können Sie `notepad.exe` zum Bearbeiten der kubeconfig-Datei verwenden:
+
+----
+notepad.exe $env:USERPROFILE\.kube\config
+----
+
+Nach der Bearbeitung drücken Sie entweder `ctrl+s` oder gehen Sie zu `File > Save`, um Ihre Arbeit zu speichern.
+--
+====== 
+
+[#_install_rancher_with_helm]
+== Installieren Sie Rancher mit Helm.
+
+Führen Sie dann von Ihrem lokalen Arbeitsplatz die folgenden Befehle aus. Sie müssen https://kubernetes.io/docs/tasks/tools/#kubectl[kubectl] und https://helm.sh/docs/intro/install/[helm] installiert haben.
+
+[NOTE]
+====
+
+Um Optionen zur Anpassung der Installation des cert-managers zu sehen (einschließlich für Fälle, in denen Ihr Cluster PodSecurityPolicies verwendet), siehe die https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[cert-manager-Dokumentation].
+====
+
+
+----
+helm repo add rancher-prime <helm-chart-repo-url>
+----
+
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
+
+----
+kubectl create namespace cattle-system
+
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/<VERSION>/cert-manager.crds.yaml
+
+helm repo add jetstack https://charts.jetstack.io
+
+helm repo update
+
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace
+
+# Windows Powershell
+helm install cert-manager jetstack/cert-manager `
+  --namespace cert-manager `
+  --create-namespace
+----
+
+Der letzte Befehl zur Installation von Rancher ist unten aufgeführt. Der Befehl benötigt einen Domainnamen, der den Datenverkehr an die Linux-Maschine weiterleitet. Um die Dinge in diesem Tutorial einfach zu halten, können Sie einen fiktiven Domainnamen verwenden, um Ihren Proof-of-Concept zu erstellen. Ein Beispiel für einen fiktiven Domainnamen wäre `<IP_OF_LINUX_NODE>.sslip.io`.
+
+Um eine bestimmte Rancher-Version zu installieren, verwenden Sie das `--version` Flag (z. B. `--version 2.6.6`). Andernfalls wird standardmäßig die neueste Rancher-Version installiert.
+
+Siehe {xref-bootstrap-password}#_password_requirements[Einrichten des Bootstrap-Passworts] für die Passwortanforderungen.
+
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set hostname=<IP_OF_LINUX_NODE>.sslip.io \
+  --set replicas=1 \
+  --set bootstrapPassword=<PASSWORD_FOR_RANCHER_ADMIN>
+
+# Windows Powershell
+
+helm install rancher rancher-prime/rancher `
+  --namespace cattle-system `
+  --set hostname=<IP_OF_LINUX_NODE>.sslip.io `
+  --set replicas=1 `
+  --set bootstrapPassword=<PASSWORD_FOR_RANCHER_ADMIN>
+----
+
+Wenn Sie jetzt zu `<IP_OF_LINUX_NODE>.sslip.io` in einem Webbrowser navigieren, sollten Sie die Rancher-Benutzeroberfläche sehen.
+
+Um diese Anweisungen einfach zu gestalten, haben wir einen fiktiven Domainnamen und selbstsignierte Zertifikate verwendet, um diese Installation durchzuführen. Daher müssen Sie wahrscheinlich eine Sicherheitsausnahme in Ihrem Webbrowser hinzufügen, um die Rancher-Benutzeroberfläche zu sehen. Beachten Sie, dass Sie für Produktionsinstallationen ein Setup mit hoher Verfügbarkeit mit einem Load Balancer, einem echten Domainnamen und echten Zertifikaten benötigen würden.
+
+Diese Anweisungen haben auch die vollständigen Installationsanforderungen und andere Installationsoptionen weggelassen. Wenn Sie Probleme mit diesen Schritten haben, beziehen Sie sich auf die vollständige {xref-install-rancher}[Helm CLI-Installationsdokumentation].
+
+Um neue Kubernetes-Cluster mit Ihrem neuen Rancher-Server zu starten, müssen Sie möglicherweise Cloud-Anmeldeinformationen in Rancher einrichten. Für weitere Informationen siehe {xref-launch-k8s-with-rancher}[Starten von Kubernetes-Clustern mit Rancher.]

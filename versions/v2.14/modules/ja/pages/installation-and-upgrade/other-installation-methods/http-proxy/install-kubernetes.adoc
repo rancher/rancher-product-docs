@@ -1,0 +1,129 @@
+= 2.Kubernetesをインストールする
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-16
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/rancher-behind-an-http-proxy/install-kubernetes.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/http-proxy/install-kubernetes.adoc
+ifeval::["{build-type}" != "community"]
+:url-k3s-installation: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/installation.html
+:url-rke2-install-ha: https://documentation.suse.com/cloudnative/rke2/latest/en/install/ha.html
+:url-rke2-introduction: https://documentation.suse.com/cloudnative/rke2/latest/en/introduction.html
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-installation: https://docs.k3s.io/installation
+:url-rke2-install-ha: https://docs.rke2.io/install/ha
+:url-rke2-introduction: https://docs.rke2.io/
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+endif::[]
+
+インフラストラクチャが準備できたら、RancherをインストールするためのKubernetesクラスターの設定を続行できます。
+
+RKE2またはK3sを設定する手順は以下の通りです。
+
+便利のために、プロキシのIPアドレスとポートを環境変数にエクスポートし、すべてのノードの現在のシェルに`HTTP_PROXY`変数を設定してください。
+
+[CAUTION]
+====
+`NO_PROXY`環境変数は標準化されておらず、値の受け入れられる形式はアプリケーションによって異なる場合があります。Rancherの`NO_PROXY`変数を構成する際、値はGolangが期待する形式に従う必要があります。
+
+具体的には、値はIPアドレス、CIDR表記、ドメイン名、または特別なDNSラベル（例：`*`）のみを含むカンマ区切りの文字列である必要があります。期待される値の形式の完全な説明については、 https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config[**上流のGolangドキュメント**]を参照してください。
+====
+
+----
+export proxy_host="10.0.0.5:8888"
+export HTTP_PROXY=http://${proxy_host}
+export HTTPS_PROXY=http://${proxy_host}
+export NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16
+----
+
+[tabs]
+======
+K3s::
++
+--
+まず、K3sのsystemdサービスでHTTPプロキシ設定を構成し、K3sのcontainerdがプロキシを通じてイメージをプルできるようにします。
+
+----
+cat <<'EOF' | sudo tee /etc/default/k3s > /dev/null
+HTTP_PROXY=http://${proxy_host}
+HTTPS_PROXY=http://${proxy_host}
+NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+EOF
+----
+
+Rancherは、サポートされているKubernetesバージョンにインストールする必要があります。ご利用の Rancher バージョンに対してサポートされている Kubernetes のバージョンを確認するには、 https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher サポートマトリックス] を参照してください。
+
+K3s（Kubernetes）バージョンを指定するには、K3sインストールスクリプトを実行する際にINSTALL_K3S_VERSION（例：`INSTALL_K3S_VERSION="v1.24.10+k3s1"`）環境変数を使用します。
+
+最初のノードで新しいクラスターを作成します。
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> K3S_TOKEN=<TOKEN> sh -s - server --cluster-init
+----
+
+次に、他のノードをクラスターに参加させます。
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> K3S_TOKEN=<TOKEN> sh -s - server --server https://<SERVER>:6443
+----
+
+ここで`<SERVER>`はサーバーのIPまたは有効なDNS名、`<TOKEN>`は`/var/lib/rancher/k3s/server/node-token`に記載されているサーバーのノードトークンです。
+
+K3sのインストールに関する詳細は、{url-k3s-installation}[K3sインストールドキュメント]を参照してください。
+
+クラスターを確認するには、次のコマンドを実行します。
+
+----
+kubectl cluster-info
+kubectl get pods --all-namespaces
+----
+--
+
+RKE2::
++
+--
+すべてのノードでRKE2インストールスクリプトを実行します。インストールしているRKE2のバージョンが https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancherにサポートされている]ことを確認してください。
+
+----
+curl -sfL https://get.rke2.io | INSTALL_RKE2_CHANNEL=v1.xx sh -
+----
+
+次に、RKE2のsystemdサービスでHTTPプロキシ設定を構成し、RKE2のcontainerdがプロキシを通じてイメージをプルできるようにします。
+
+----
+cat <<'EOF' | sudo tee /etc/default/rke2-server > /dev/null
+HTTP_PROXY=http://${proxy_host}
+HTTPS_PROXY=http://${proxy_host}
+NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+EOF
+----
+
+次に、すべてのノードで{url-rke2-install-ha}[RKE2高可用性ドキュメント]に従ってRKE2設定ファイルを作成します。
+
+その後、`rke2-server` サービスを開始して有効にします。
+
+----
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+----
+
+RKE2のインストールに関する詳細は、{url-rke2-introduction}[RKE2ドキュメント]を参照してください。
+
+クラスターを確認するには、次のコマンドを実行します。
+
+----
+export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+alias kubectl=/var/lib/rancher/rke2/bin/kubectl
+kubectl cluster-info
+kubectl get pods --all-namespaces
+----
+--
+======
+
+[#_issues_or_errors]
+== 問題やエラーはありますか？
+
+{xref-install-upgrade-troubleshooting}[トラブルシューティング]ページを参照してください。

@@ -1,0 +1,78 @@
+= Cómo funcionan las cuotas de recursos en {rancher-product-name} los proyectos
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/acerca-de-las-cuotas-de-recursos-del-proyecto.adoc 
+:product-path: cluster-admin/project-admin/project-resource-quotas/resource-quotas-in-projects.adoc
+
+Las cuotas de recursos en Rancher incluyen la misma funcionalidad que la https://kubernetes.io/docs/concepts/policy/resource-quotas/[versión nativa de Kubernetes]. Sin embargo, en Rancher, las cuotas de recursos se han extendido para que se puedan aplicar a los proyectos.
+
+En una implementación estándar de Kubernetes, las cuotas de recursos se aplican a espacios de nombres individuales. Sin embargo, no se puede aplicar la cuota a los espacios de nombres simultáneamente con una sola acción. En su lugar, la cuota de recursos debe aplicarse varias veces.
+
+En el siguiente diagrama, un administrador de Kubernetes está intentando hacer cumplir una cuota de recursos sin Rancher. El administrador quiere aplicar una cuota de recursos que establezca el mismo límite de CPU y memoria para cada espacio de nombres en su clúster (`Namespace 1-4`). Sin embargo, en la versión base de Kubernetes, cada espacio de nombres requiere una cuota de recursos única. El administrador tiene que crear cuatro cuotas de recursos diferentes que tengan las mismas especificaciones configuradas (`Resource Quota 1-4`) y aplicarlas individualmente.
+
+^Base Kubernetes: Cuotas de recursos únicas aplicadas a cada espacio de nombres^
+
+image::kubernetes-resource-quota.svg[Implementación nativa de la cuota de recursos de Kubernetes]
+
+Las cuotas de recursos son un poco diferentes en Rancher. En Rancher, se aplica una cuota de recursos al proyecto, y luego la cuota se propaga a cada espacio de nombres, tras lo cual Kubernetes hace cumplir los límites utilizando la versión nativa de las cuotas de recursos. Si deseas cambiar la cuota para un espacio de nombres específico, puedes sobrescribirla.
+
+La cuota de recursos incluye dos límites, que se establecen al crear o editar un proyecto:
++++<a id="project-limits">++++++</a>+++
+
+* *Límites del proyecto:*
++
+Este conjunto de valores configura un límite total para cada recurso especificado compartido entre todos los espacios de nombres en el proyecto.
+
+* *Límites por defecto del espacio de nombres:*
++
+Este conjunto de valores configura el límite de cuota predeterminado disponible para cada espacio de nombres para cada recurso especificado.
+  Cuando se crea un espacio de nombres en el proyecto sin sobrescrituras, este límite se vincula automáticamente al espacio de nombres y se aplica.
+
+En el siguiente diagrama, un administrador de Rancher quiere aplicar una cuota de recursos que establece el mismo límite de CPU y memoria para cada espacio de nombres en su proyecto (`Namespace 1-4`). Sin embargo, en Rancher, el administrador puede establecer una cuota de recursos para el proyecto (`Project Resource Quota`) en lugar de espacios de nombres individuales. Esta cuota incluye límites de recursos tanto para todo el proyecto (`Project Limit`) como para espacios de nombres individuales (`Namespace Default Limit`). Rancher luego propaga las cuotas de `Namespace Default Limit` a cada espacio de nombres (`Namespace Resource Quota`) cuando se crean.
+
+^Rancher: Cuotas de Recursos Propagándose a Cada Espacio de Nombres^
+
+image::rancher-resource-quota.png[Implementación de Cuota de Recursos de Rancher]
+
+Destacamos algunas funcionalidades más matizadas para los espacios de nombres creados *_dentro_* de la interfaz de usuario de Rancher. Si se elimina una cuota a nivel de proyecto, también se eliminará de todos los espacios de nombres contenidos dentro de ese proyecto, a pesar de cualquier anulación que pueda existir. Además, actualizar un límite predeterminado de espacio de nombres para una cuota a nivel de proyecto no resultará en que ese valor se propague a los espacios de nombres existentes en el proyecto; el valor actualizado solo se aplicará a los espacios de nombres recién creados en ese proyecto. Para actualizar un límite predeterminado de espacio de nombres para espacios de nombres existentes, puedes eliminar y posteriormente recrear la cuota a nivel de proyecto con el nuevo valor predeterminado. Esto resultará en que el nuevo valor predeterminado se aplique a todos los espacios de nombres existentes en el proyecto.
+
+Antes de crear un espacio de nombres en un proyecto, Rancher compara las cantidades de los recursos disponibles del proyecto y los recursos solicitados, independientemente de si provienen de los límites predeterminados o sobrescritos.
+Si los recursos solicitados superan la capacidad restante en el proyecto para esos recursos, Rancher asignará al espacio de nombres la capacidad restante para ese recurso.
+
+Sin embargo, este no es el caso de los espacios de nombres creados *_fuera_* de la interfaz de usuario de Rancher. Para los espacios de nombres creados a través de `kubectl`, Rancher asignará una cuota de recursos que tiene una cantidad de *cero* para cualquier recurso que solicitó más capacidad de la que queda en el proyecto.
+
+Para crear un espacio de nombres en un proyecto existente a través de `kubectl`, utiliza la anotación `field.cattle.io/projectId`. Para sobrescribir el límite de cuota solicitado predeterminado, utiliza la anotación `field.cattle.io/resourceQuota`.
+
+Ten en cuenta que Rancher solo sobrescribirá los límites para los recursos que estén definidos en la cuota del proyecto.
+
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    field.cattle.io/projectId: [your-cluster-ID]:[your-project-ID]
+    field.cattle.io/resourceQuota: '{"limit":{"limitsCpu":"100m", "configMaps": "50"}}'
+  name: my-ns
+----
+
+En este ejemplo, si la cuota del proyecto no incluye configMaps en su lista de recursos, entonces Rancher ignorará `configMaps` en esta sobrescritura.
+
+Se aconseja a los usuarios que utilicen el mapa `extended` para configurar límites personalizados adicionales para recursos que no están integrados en el proyecto, para todos los espacios de nombres en el proyecto, o que creen objetos `ResourceQuota` dedicados en espacios de nombres específicos para lo mismo, solo para estos espacios de nombres. Las cuotas de recursos son objetos nativos de Kubernetes, y Rancher ignorará las cuotas definidas por el usuario en los espacios de nombres que pertenecen a un proyecto con una cuota, otorgando así más control a los usuarios.
+
+La siguiente tabla explica las principales diferencias entre los dos tipos de cuota.
+
+|===
+| Cuotas de Recursos de Rancher | Cuotas de Recursos de Kubernetes
+
+| Se aplica a proyectos y espacios de nombres.
+| Se aplica solo a espacios de nombres.
+
+| Crea un grupo de recursos para todos los espacios de nombres en un proyecto.
+| Aplica límites de recursos estáticos a espacios de nombres individuales.
+
+| Aplica cuotas de recursos a espacios de nombres a través de propagación.
+| Se aplica solo al espacio de nombres asignado.
+|===

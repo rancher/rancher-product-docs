@@ -1,0 +1,59 @@
+= Cómo funciona el Punto de Acceso Autorizado del Clúster
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc 
+:product-path: cluster-admin/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-cli: xref:rancher-admin/cli/rancher-cli.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/communicating-with-downstream-clusters.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-cli: xref:reference-guides/cli-with-rancher/rancher-cli.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+
+Esta sección describe cómo la CLI de kubectl, el archivo kubeconfig y el punto de acceso autorizado del clúster trabajan juntos para permitirte acceder directamente a un clúster de Kubernetes en sentido descendente, sin autenticarte a través del servidor Rancher. Se pretende proporcionar información de fondo y contexto a las instrucciones para {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[configurar kubectl para acceder directamente a un clúster.]
+
+[#_about_the_kubeconfig_file]
+== Acerca del Archivo Kubeconfig
+
+El archivo kubeconfig se utiliza para configurar el acceso a Kubernetes cuando se usa en conjunto con la herramienta de línea de comandos kubectl (u otros clientes).
+
+El archivo kubeconfig y su contenido son específicos para cada clúster. Se puede descargar desde la página *Clusters* en Rancher:
+
+. Haz clic en *☰* en la esquina superior izquierda.
+. Selecciona *Gestión de Clústeres*.
+. Encuentra el clúster cuyo kubeconfig deseas descargar y selecciona *⁝* al final de la fila.
+. Selecciona *Descargar KubeConfig* del submenú.
+
+Necesitas un archivo kubeconfig separado para cada clúster al que tengas acceso en Rancher.
+
+Después de descargar el archivo kubeconfig, puedes utilizar el archivo kubeconfig y sus https://kubernetes.io/docs/reference/kubectl/cheatsheet/#kubectl-context-and-configuration[contextos] de Kubernetes para acceder a tu clúster en sentido descendente.
+
+Si los administradores tienen xref:api/api-tokens.adoc#_disable_tokens_in_generated_kubeconfigs[desactivada la generación de tokens kubeconfig], el archivo kubeconfig requiere que el {xref-rancher-cli}[CLI de Rancher] esté presente en tu PATH.
+
+[#_about_the_kube_api_auth_authentication_webhook]
+== Acerca del Webhook de Autenticación kube-api-auth
+
+El microservicio `kube-api-auth` se despliega para proporcionar la funcionalidad de autenticación de usuario para el {xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[punto de acceso autorizado del clúster]. Cuando accedes al clúster de usuario utilizando `kubectl`, el servidor API de Kubernetes del clúster te autentica utilizando el servicio `kube-api-auth` como un webhook.
+
+Durante la provisión del clúster, se despliega el archivo `/etc/kubernetes/kube-api-authn-webhook.yaml` y se configura `kube-apiserver` con `--authentication-token-webhook-config-file=/etc/kubernetes/kube-api-authn-webhook.yaml`. Esto configura el `kube-apiserver` para consultar `http://127.0.0.1:6440/v1/authenticate` para determinar la autenticación de los tokens portadores.
+
+Las reglas de programación para `kube-api-auth` se enumeran a continuación:
+
+|===
+| Componente | nodeAffinity nodeSelectorTerms | nodeSelector | Tolerancias
+
+| kube-api-auth
+| `beta.kubernetes.io/os:NotIn:windows`
+`node-role.kubernetes.io/controlplane:In:"true"`
+| ninguno
+| `operator:Exists`
+|===

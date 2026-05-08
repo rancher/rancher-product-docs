@@ -1,0 +1,172 @@
+= Erstellen einer VMware vSphere-Vorlage für virtuelle Maschinen
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+:community-path: how-to-guides/neue-benutzeranleitungen/starten-von-kubernetes-mit-rancher/neue-knoten-in-einem-infrastrukturanbieter/vsphere/create-a-vm-template.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/create-a-vm-template.adoc
+
+Das Erstellen von virtuellen Maschinen auf wiederholbare und zuverlässige Weise kann oft schwierig sein. VMware vSphere bietet die Möglichkeit, eine VM zu erstellen, die dann in eine Vorlage umgewandelt werden kann. Die Vorlage kann dann verwendet werden, um identisch konfigurierte VMs zu erstellen. Rancher nutzt diese Fähigkeit, um identische RKE/K3s-Knoten zu erstellen.
+
+Um die Vorlage zur Erstellung neuer VMs zu nutzen, hat Rancher einige <<_requirements,besondere Anforderungen>>, die auf der VM vorinstalliert sein müssen. Nachdem Sie die VM mit diesen Anforderungen konfiguriert haben, müssen Sie die VM <<_preparing_your_vm,vorbereiten>>, bevor Sie <<_creating_a_template,die Vorlage erstellen>>. Schließlich kann die VM, sobald die Vorbereitung abgeschlossen ist, <<_converting_to_a_template,in eine Vorlage umgewandelt>> und <<_moving_to_a_content_library,in eine Inhaltsbibliothek verschoben>> werden.
+
+[#_requirements]
+== Anforderungen
+
+Es sind spezifische Werkzeuge erforderlich, damit sowohl Linux- als auch Windows-VMs vom vSphere-Knotentreiber verwendet werden können. Die kritischste Abhängigkeit ist https://cloud-init.io/[cloud-init] für Linux und https://cloudbase.it/cloudbase-init/[cloudbase-init] für Windows. Beide werden verwendet, um die VMs bereitzustellen, indem der Hostname konfiguriert und der SSH-Zugang sowie der Standardbenutzer von Rancher eingerichtet werden. Benutzer können nach Bedarf weiteren Inhalt hinzufügen, wenn andere Konfigurationen erforderlich sind. Darüber hinaus sind weitere Anforderungen unten zur Referenz aufgeführt.
+
+[NOTE]
+====
+
+Wenn Sie spezifische Firewall-Regeln oder Konfiguration haben, müssen Sie diese der VM hinzufügen, bevor Sie eine Vorlage erstellen.
+====
+
+
+[#_linux_dependencies]
+== Linux-Abhängigkeiten
+
+Die Pakete, die auf der Vorlage installiert werden müssen, sind unten aufgeführt. Diese haben je nach Distribution leicht unterschiedliche Namen; einige Distributionen liefern diese Abhängigkeiten beispielsweise standardmäßig mit. Der Cluster-Provisionierer installiert automatisch die für Kubernetes erforderlichen Abhängigkeiten. Die unten aufgeführten Abhängigkeiten sind für die Funktion des Rancher-Cluster-Provisionierers erforderlich (nicht für Kubernetes):
+
+* curl
+* wget
+* git
+* net-tools
+* unzip
+* apparmor-parser
+* ca-certificates
+* cloud-init
+* cloud-guest-utils
+* cloud-image-utils
+* growpart (Teil von cloud-guest-utils)
+* cloud-initramfs-growroot
+* open-iscsi
+* openssh-server
+* https://docs.vmware.com/en/VMware-Tools/11.3.0/com.vmware.vsphere.vmwaretools.doc/GUID-8B6EA5B7-453B-48AA-92E5-DB7F061341D1.html[open-vm-tools]
+
+[#_windows_dependencies]
+== Windows-Abhängigkeiten
+
+Die Liste der Pakete, die auf der Vorlage installiert werden müssen, ist wie folgt:
+
+* Windows-Containerfunktion
+* https://cloudbase.it/cloudbase-init/#download[cloudbase-init]
+
+[#_creating_a_template]
+== Erstellen von Vorlagen
+
+Sie können entweder Ihre VM manuell erstellen oder <<_alternatives_to_manual_creation,andere Alternativen>> nutzen, um Ihre VM zu erstellen.
+
+[#_manual_creation]
+=== Manuelle Erstellung
+
+. Erstellen Sie Ihre VM manuell, indem Sie https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AE8AFBF1-75D1-4172-988C-378C35C9FAF2.html[diese Anweisungen] von VMware befolgen. Sobald Sie eine laufende VM haben, können Sie die oben aufgeführten Abhängigkeiten manuell installieren, um die VM korrekt für den vSphere-Knotentreiber zu konfigurieren.
+. Passen Sie diese nach Bedarf an Ihre spezifische Umgebung und Anforderungen an.
+. Fahren Sie mit der endgültigen Vorbereitung fort, bevor Sie Ihre Vorlage erstellen.
+
+[#_alternatives_to_manual_creation]
+=== Alternativen zur manuellen Erstellung
+
+Weitere alternative Optionen zur Erstellung von VMs sind unten aufgeführt:
+
+* https://developer.vmware.com/powercli[VMware PowerCLI]
+* https://www.packer.io/[Packer]
+* https://saltproject.io/[SaltStack]
+* https://www.ansible.com/[Ansible]
+
+Packer ist eine häufig verwendete Alternative. Siehe diese https://github.com/vmware-samples/packer-examples-for-vsphere[Referenz] für Beispiele ihrer Verwendung mit vSphere.
+
+[#_preparing_your_vm]
+== Vorbereitung Ihrer VM
+
+Nachdem Sie eine VM mit allen erforderlichen Abhängigkeiten (und allen zusätzlichen erforderlichen Elementen) erstellt haben, müssen Sie den nächsten, kritischsten Schritt durchführen: die VM vorzubereiten, um in eine Vorlage umgewandelt zu werden. Diese Vorbereitung setzt kritische Daten wie den VM-Hostnamen, IPs usw. zurück, um zu verhindern, dass diese Informationen in eine neue VM übernommen werden. Wenn Sie diesen Schritt nicht ausführen, könnten Sie eine VM mit demselben Hostnamen, derselben IP-Adresse usw. erstellen.
+
+Beachten Sie, dass sich diese Vorbereitungsschritte zwischen Linux und Windows unterscheiden.
+
+[#_linux_preparation]
+=== Linux-Vorbereitung
+
+Die folgenden Befehle setzen Ihre VM in Linux zurück:
+
+[,bash]
+----
+# Cleaning logs.
+if [ -f /var/log/audit/audit.log ]; then
+  cat /dev/null > /var/log/audit/audit.log
+fi
+if [ -f /var/log/wtmp ]; then
+  cat /dev/null > /var/log/wtmp
+fi
+if [ -f /var/log/lastlog ]; then
+  cat /dev/null > /var/log/lastlog
+fi
+
+# Cleaning udev rules.
+if [ -f /etc/udev/rules.d/70-persistent-net.rules ]; then
+  rm /etc/udev/rules.d/70-persistent-net.rules
+fi
+
+# Cleaning the /tmp directories
+rm -rf /tmp/*
+rm -rf /var/tmp/*
+
+# Cleaning the SSH host keys
+rm -f /etc/ssh/ssh_host_*
+
+# Cleaning the machine-id
+truncate -s 0 /etc/machine-id
+rm /var/lib/dbus/machine-id
+ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# Cleaning the shell history
+unset HISTFILE
+history -cw
+echo > ~/.bash_history
+rm -fr /root/.bash_history
+
+# Truncating hostname, hosts, resolv.conf and setting hostname to localhost
+truncate -s 0 /etc/{hostname,hosts,resolv.conf}
+hostnamectl set-hostname localhost
+
+# Clean cloud-init
+cloud-init clean -s -l
+----
+
+[#_windows_preparation]
+=== Windows-Vorbereitung
+
+Windows hat ein Dienstprogramm namens https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep\--generalize\--a-windows-installation?view=windows-11[sysprep], das verwendet wird, um ein Image zu verallgemeinern und die oben genannten Elemente für Linux zurückzusetzen. Der Befehl lautet wie folgt:
+
+[,PowerShell]
+----
+sysprep.exe /generalize /shutdown /oobe
+----
+
+[#_converting_to_a_template]
+== Umwandlung in eine Vorlage
+
+. Fahren Sie die VM herunter und stoppen Sie sie.
+. Klicken Sie mit der rechten Maustaste auf die VM in der Inventarliste und wählen Sie *Vorlage*.
+. Klicken Sie auf *In Vorlage umwandeln*.
+
+*Ergebnis:* Sobald der Prozess abgeschlossen ist, steht eine Vorlage zur Verfügung.
+
+Für weitere Informationen zur Umwandlung einer VM in eine Vorlage siehe den https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-5B3737CC-28DB-4334-BD18-6E12011CDC9F.html[VMware-Leitfaden].
+
+[#_moving_to_a_content_library]
+== Wechsel zu einer Inhaltsbibliothek
+
+Rancher hat die Fähigkeit, Vorlagen zu verwenden, die von einer Inhaltsbibliothek bereitgestellt werden. Inhaltsbibliotheken speichern und verwalten Inhalte innerhalb von vSphere und bieten zudem die Möglichkeit, diese Inhalte zu veröffentlichen und zu teilen.
+
+Im Folgenden finden Sie einige hilfreiche Links zu Inhaltsbibliotheken:
+
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-2A0F1C13-7336-45CE-B211-610D39A6E1F4.html[Erstellen Sie eine Inhaltsbibliothek]
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AC1545F0-F8BA-4CD2-96EB-21B3DFAA1DC1.html[Klonen Sie die Vorlage in die Inhaltsbibliothek]
+
+[#_other_resources]
+== Weitere Ressourcen
+
+Hier ist eine Liste zusätzlicher Ressourcen, die nützlich sein könnten:
+
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-ubuntu-template[Tutorial zur Erstellung einer Linux-Vorlage]
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-windows-template[Tutorial zur Erstellung einer Windows-Vorlage]

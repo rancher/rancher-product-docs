@@ -1,0 +1,59 @@
+= Como o endpoint de cluster autorizado funciona
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc 
+:product-path: cluster-admin/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-cli: xref:rancher-admin/cli/rancher-cli.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/communicating-with-downstream-clusters.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-cli: xref:reference-guides/cli-with-rancher/rancher-cli.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+endif::[]
+
+Esta seção descreve como o CLI do kubectl, o arquivo kubeconfig e o endpoint de cluster autorizado funcionam juntos para permitir que você acesse diretamente um cluster Kubernetes downstream, sem autenticar através do servidor Rancher. É destinado a fornecer informações de fundo e contexto às instruções para {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[como configurar o kubectl para acessar diretamente um cluster.]
+
+[#_about_the_kubeconfig_file]
+== Sobre o Arquivo Kubeconfig
+
+O arquivo kubeconfig é usado para configurar o acesso ao Kubernetes quando utilizado em conjunto com a ferramenta de linha de comando kubectl (ou outros clientes).
+
+O arquivo kubeconfig e seu conteúdo são específicos para cada cluster. Ele pode ser baixado na página *Clusters* no Rancher:
+
+. Clique em *☰* no canto superior esquerdo.
+. Selecione *Gerenciamento de Cluster*.
+. Encontre o cluster cujo kubeconfig você deseja baixar e selecione *⁝* no final da linha.
+. Selecione *Baixar KubeConfig* no submenu.
+
+Você precisa de um arquivo kubeconfig separado para cada cluster ao qual você tem acesso no Rancher.
+
+Após baixar o arquivo kubeconfig, você poderá usar o arquivo kubeconfig e seus https://kubernetes.io/docs/reference/kubectl/cheatsheet/#kubectl-context-and-configuration[contextos] do Kubernetes para acessar seu cluster downstream.
+
+Se os administradores tiverem xref:api/api-tokens.adoc#_disable_tokens_in_generated_kubeconfigs[desativado a geração de token do kubeconfig], o arquivo kubeconfig requer que o {xref-rancher-cli}[Rancher CLI] esteja presente no seu PATH.
+
+[#_about_the_kube_api_auth_authentication_webhook]
+== Sobre o Webhook de Autenticação kube-api-auth
+
+O microserviço `kube-api-auth` é implantado para fornecer a funcionalidade de autenticação do usuário para o {xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[endpoint de cluster autorizado]. Quando você acessa o cluster de usuário usando `kubectl`, o servidor da API do Kubernetes do cluster autentica você usando o serviço `kube-api-auth` como um webhook.
+
+Durante a provisão do cluster, o arquivo `/etc/kubernetes/kube-api-authn-webhook.yaml` é implantado e `kube-apiserver` é configurado com `--authentication-token-webhook-config-file=/etc/kubernetes/kube-api-authn-webhook.yaml`. Isso configura o `kube-apiserver` para consultar `http://127.0.0.1:6440/v1/authenticate` para determinar a autenticação para tokens bearer.
+
+As regras de agendamento para `kube-api-auth` estão listadas abaixo:
+
+|===
+| Componente | nodeAffinity nodeSelectorTerms | nodeSelector | Tolerâncias
+
+| kube-api-auth
+| `beta.kubernetes.io/os:NotIn:windows`
+`node-role.kubernetes.io/controlplane:In:"true"`
+| none
+| `operator:Exists`
+|===

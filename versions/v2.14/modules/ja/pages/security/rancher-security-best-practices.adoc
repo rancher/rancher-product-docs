@@ -1,0 +1,172 @@
+= {rancher-product-name} セキュリティのベストプラクティス
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-15
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-security/rancher-security-best-practices.adoc 
+:product-path: security/rancher-security-best-practices.adoc
+ifeval::["{build-type}" != "community"]
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+:xref-project-resource-quotas: xref:cluster-admin/project-admin/project-resource-quotas/project-resource-quotas.adoc
+:xref-users-and-groups: xref:rancher-admin/users/authn-and-authz/manage-users-and-groups.adoc
+:xref-l4-l7-lb: xref:cluster-admin/kubernetes-resources/load-balancer-and-ingress-controller/layer-4-and-layer-7-load-balancing.adoc
+:xref-bootstrap-password: xref:installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+:xref-project-resource-quotas: xref:how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/index.adoc
+:xref-users-and-groups: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/manage-users-and-groups.adoc
+:xref-l4-l7-lb: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/load-balancer-and-ingress-controller/layer-4-and-layer-7-load-balancing.adoc
+:xref-bootstrap-password: xref:getting-started/installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+
+[#_restrict_public_access_to_version_and_rancherversion_path]
+== /version および /rancherversion パスへの公開アクセスを制限する
+
+アップストリーム（ローカル）Rancher インスタンスは、実行中の Rancher バージョンと、それを構築するために使用された Go バージョンに関する情報を提供します。その情報は `/version` パスを介してアクセス可能で、バージョンの自動更新やデプロイメントの成功確認などのタスクに使用されます。アップストリームのインスタンスは、`/rancherversion` パスを介してアクセス可能な Rancher バージョン情報も提供します。
+
+敵対者はこの情報を悪用して、実行中の Rancher バージョンを特定し、潜在的なバグと関連付けて悪用することができます。アップストリームの Rancher インスタンスがウェブ上で公開されている場合は、`/version` および `/rancherversion` をブロックするために Layer 7 ファイアウォールを使用してください。
+
+サーバーを保護するための詳細については、 https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/05-Enumerate_Infrastructure_and_Application_Admin_Interfaces.html[OWASP Web Application Security Testing - インフラストラクチャおよびアプリケーション管理インターフェースの列挙]を参照してください。
+
+[#_session_management]
+== セッション管理
+
+一部の環境では、セッション管理のために追加のセキュリティ制御が必要な場合があります。たとえば、ユーザーの同時アクティブセッションを制限したり、セッションを開始できる地理的位置を制限したりすることを検討するかもしれません。そのような機能は、Rancher では標準でサポートされていません。
+
+そのような機能が必要な場合は、Layer 7 ファイアウォールと {xref-authn-authz}#_external_vs_local_authentication[外部認証プロバイダー]を組み合わせて使用してください。
+
+[#_use_external_load_balancers_to_protect_vulnerable_ports]
+== 脆弱なポートを保護するために外部ロードバランサーを使用する
+
+次のポートは、SSL オフロードが有効な {xref-l4-l7-lb}#_layer_4_load_balancer[外部ロードバランサー]の背後で保護する必要があります：
+
+* *K3s:*Kubernetes API に使用されるポート 6443。
+* *RKE2:*Kubernetes API に使用されるポート 6443 と、ノード登録に使用されるポート 9345。
+
+これらのポートには、ノードのパブリック IP アドレスをリストした TLS SAN 証明書があります。攻撃者はその情報を使用して、不正アクセスを得たり、クラスター上の活動を監視したりすることができます。これらのポートを保護することで、ノードのパブリック IP アドレスが潜在的な攻撃者に開示されるのを軽減できます。
+
+[#_rancher_username_policy]
+=== Rancher ユーザー名ポリシー
+
+デフォルトでは、Kubernetesは基本的なユーザー名ポリシーの強制メカニズムを提供していません。Rancherでは、ユーザー名の形式、命名規則、または基本ポリシーの強制は、外部アイデンティティプロバイダーのポリシーによって処理されることが期待されています。
+
+Rancherでは、`admin`が管理者ユーザーのデフォルトのユーザー名であり、{xref-bootstrap-password}[こちら]で強調されています。
+
+潜在的な基本ポリシーの例には、次のようなものがあります:
+
+* ユーザー名が組織の規則に従うことを要求する（例：`firstname.lastname`）
+* 最小または最大の長さ要件を強制する
+* 特定の特殊文字を禁止する
+* 予約された名前（例：`admin`、`root`）を禁止することでなりすましを防ぐ
+
+アイデンティティプロバイダー層でこれらの制御がない場合、一貫性のないまたは安全でないユーザー名の慣行のリスクがあり、アクセス監査を複雑にし、特権昇格の試みにつながる可能性があります。
+
+[IMPORTANT]
+====
+Rancherは現在、{xref-users-and-groups}#_minimum_password_length[最小パスワードの長さ]のみを強制しています。
+====
+
+*推奨:*私たちは顧客に対して強く推奨します:
+
+* 外部アイデンティティプロバイダー（例：LDAP、Active Directory、SAML、またはOIDC）でユーザー名の基本ポリシーを直接レビューおよび構成すること。
+* それらのポリシーが組織のセキュリティおよびコンプライアンス要件に合致していることを確認すること。
+* ユーザーアカウントを定期的に監査し、命名の不一致やポリシー違反を検出すること。
+
+詳細については、以下を参照してください。
+
+* https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html[OWASP チートシート：認証]
+* https://owasp.org/www-project-top-ten/2017/A2_2017-Broken_Authentication[OWASP アイデンティティ管理]
+
+[#_waf_rules]
+=== WAFルール
+
+Rancherは、顧客がプログラム的に多数のクラスターの作成またはプロビジョニングを自動化する可能性のある環境を含む、幅広いデプロイメントシナリオをサポートするように設計されています。Rancher自体内で厳格なアプリケーションレベルの制限を課すことは、動的スケーリングを必要とする正当なワークロードに干渉する可能性があります。
+
+次に例を示します。
+
+* CI/CDパイプラインは、クラスターを頻繁に作成および削除することがあります。
+* セルフサービスポータルは、開発者のためにクラスターをオンデマンドでプロビジョニングできます。
+* テスト環境は、高いボリュームのAPIコールを生成する可能性があります。
+
+*リスク:*適切なレート制限がない場合、攻撃者は認証されていないまたは認証されたエンドポイントを悪用して：
+
+* リソースを枯渇させる（サービス拒否）。
+* ストレージコストを膨らませる。
+* 正当なユーザーのパフォーマンスを低下させる。
+
+*推奨:*このリスクを軽減する最も効果的な方法は、インフラストラクチャまたはWebアプリケーションファイアウォール（WAF）レイヤーでレート制限と悪用防止を実装することです。このアプローチにより、各環境の予想使用量とスケーリング特性に応じて閾値を調整できます。コントロールのいくつかの例は次のとおりです:
+
+* クラスターの作成やプロビジョニングなどの重要な操作に対してレート制限を強制するために、WebアプリケーションファイアウォールまたはAPIゲートウェイを設定する。
+* ベースラインの作業負荷の期待に基づいて閾値を定義する（例：クライアントごとの最大リクエスト数）。
+* ログを監視し、異常を警告して潜在的な悪用を検出する。
+* リソースクォータを適用する。これは、プロジェクトまたはネームスペースに利用可能なリソースを制限するRancherの機能です。
+
+詳細については、以下を参照してください。
+
+* {xref-project-resource-quotas}[プロジェクトリソースクォータ]
+* https://owasp.org/API-Security/editions/2023/en/0xa4-lack-of-resources-rate-limiting/[OWASP APIセキュリティトップ10 - API4:2019 - リソースとレート制限の欠如]
+* https://cheatsheetseries.owasp.org/cheatsheets/Rate_Limiting_Cheat_Sheet.html[OWASP チートシート：レート制限]
+
+[#_rancher_username_policy_1]
+=== Rancher ユーザー名ポリシー
+
+デフォルトでは、Kubernetesは基本的なユーザー名ポリシーの強制メカニズムを提供していません。Rancherでは、ユーザー名の形式、命名規則、または基本ポリシーの強制は、外部アイデンティティプロバイダーのポリシーによって処理されることが期待されています。
+
+Rancherでは、`admin`が管理者ユーザーのデフォルトのユーザー名であり、{xref-bootstrap-password}[こちら]で強調されています。
+
+潜在的な基本ポリシーの例には、次のようなものがあります：
+
+* ユーザー名が組織の規則に従うことを要求する（例：`firstname.lastname`）
+* 最小または最大の長さ要件を強制する
+* 特定の特殊文字を禁止する
+* 予約された名前（例：`admin`、`root`）を禁止することでなりすましを防ぐ
+
+アイデンティティプロバイダー層でこれらの制御がない場合、一貫性のないまたは安全でないユーザー名の慣行のリスクがあり、アクセス監査を複雑にし、特権昇格の試みにつながる可能性があります。
+
+[IMPORTANT]
+====
+Rancherは現在、{xref-users-and-groups}#_minimum_password_length[最小パスワードの長さ]のみを強制しています。
+====
+
+*推奨:*私たちは顧客に対して強く推奨します：
+
+* 外部アイデンティティプロバイダー（例：LDAP、Active Directory、SAML、またはOIDC）でユーザー名の基本ポリシーを直接レビューおよび構成すること。
+* それらのポリシーが組織のセキュリティおよびコンプライアンス要件に合致していることを確認すること。
+* ユーザーアカウントを定期的に監査し、命名の不一致やポリシー違反を検出すること。
+
+詳細については、以下を参照してください。
+
+* https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html[OWASP チートシート：認証]
+* https://owasp.org/www-project-top-ten/2017/A2_2017-Broken_Authentication[OWASP アイデンティティ管理]
+
+[#_waf_rules_1]
+=== WAFルール
+
+Rancherは、顧客がプログラム的に多数のクラスターの作成またはプロビジョニングを自動化する可能性のある環境を含む、幅広いデプロイメントシナリオをサポートするように設計されています.Rancher自体内で厳格なアプリケーションレベルの制限を課すことは、動的スケーリングを必要とする正当なワークロードに干渉する可能性があります。
+
+次に例を示します。
+
+* CI/CDパイプラインは、クラスターを頻繁に作成および削除することがあります。
+* セルフサービスポータルは、開発者のためにクラスターをオンデマンドでプロビジョニングできます。
+* テスト環境は、大量のAPIコールを生成する可能性があります。
+
+*リスク:*適切なレート制限がない場合、攻撃者は認証されていないまたは認証されたエンドポイントを悪用して：
+
+* リソースを枯渇させる（サービス拒否）。
+* ストレージコストを膨らませる。
+* 正当なユーザーのパフォーマンスを低下させる。
+
+*推奨:*このリスクを軽減する最も効果的な方法は、インフラストラクチャまたはWebアプリケーションファイアウォール（WAF）のレイヤーにおいて、レート制限と悪用防止を実装することです。このアプローチにより、各環境の予想使用量とスケーリング特性に応じて閾値を調整できます。コントロールのいくつかの例は次のとおりです：
+
+* クラスターの作成やプロビジョニングなどの重要な操作に対してレート制限を強制するために、WebアプリケーションファイアウォールまたはAPIゲートウェイを設定する。
+* ベースラインの作業負荷の期待に基づいて閾値を定義する（例：クライアントごとの最大リクエスト数）。
+* ログを監視し、異常を警告して潜在的な悪用を検出する。
+* リソースクォータを適用する。これは、プロジェクトまたはネームスペースに利用可能なリソースを制限するRancherの機能です。
+
+詳細については、以下を参照してください。
+
+* {xref-project-resource-quotas}[プロジェクトリソースクォータ]
+* https://owasp.org/API-Security/editions/2023/en/0xa4-lack-of-resources-rate-limiting/[OWASP APIセキュリティトップ10 - API4:2019 - リソースとレート制限の欠如]
+* https://cheatsheetseries.owasp.org/cheatsheets/Rate_Limiting_Cheat_Sheet.html[OWASPチートシート：レート制限]

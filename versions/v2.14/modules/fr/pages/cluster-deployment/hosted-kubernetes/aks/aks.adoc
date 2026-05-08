@@ -1,0 +1,285 @@
+= Création d'un cluster AKS
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-clusters-from-hosted-kubernetes-providers/aks.adoc 
+:product-path: cluster-deployment/hosted-kubernetes/aks/aks.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-sync-hosted-clusters: xref:cluster-deployment/hosted-kubernetes/sync-clusters.adoc
+:xref-gke-config: xref:cluster-deployment/hosted-kubernetes/gke/configuration.adoc
+:xref-deploy-aks-config: xref:cluster-deployment/hosted-kubernetes/aks/configuration.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-sync-hosted-clusters: xref:reference-guides/cluster-configuration/rancher-server-configuration/sync-clusters.adoc
+:xref-gke-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/gke-cluster-configuration/index.adoc
+:xref-deploy-aks-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/aks-cluster-configuration.adoc
+endif::[]
+
+Vous pouvez utiliser Rancher pour créer un cluster hébergé dans Microsoft Azure Kubernetes Service (AKS).
+
+[#_prerequisites_in_microsoft_azure]
+== Conditions préalables dans Microsoft Azure
+
+[CAUTION]
+====
+
+Le déploiement sur AKS entraînera des frais.
+====
+
+
+Pour interagir avec les API Azure, un cluster AKS nécessite un principal de service Azure Active Directory (AD). Le principal de service est nécessaire pour créer et gérer dynamiquement d'autres ressources Azure, et il fournit des identifiants pour que votre cluster puisse communiquer avec AKS. Pour plus d'informations sur le principal de service, consultez la https://docs.microsoft.com/en-us/azure/aks/kubernetes-service-principal[documentation AKS].
+
+Avant de créer le principal de service, vous devez obtenir les informations suivantes depuis le https://portal.azure.com[Portail Microsoft Azure]{nbsp}:
+
+* ID d'abonnement
+* ID client (également connu sous le nom d'ID d'application)
+* Secret du client
+
+Les sections ci-dessous décrivent comment configurer ces conditions préalables en utilisant soit l'outil de ligne de commande Azure, soit le portail Azure.
+
+[#_setting_up_the_service_principal_with_the_azure_command_line_tool]
+=== Configuration du principal de service avec l'outil de ligne de commande Azure
+
+Vous devez attribuer des rôles au principal de service afin qu'il dispose des privilèges de communication avec l'API AKS. Il a également besoin d'un accès pour créer et lister des réseaux virtuels.
+
+Dans l'exemple suivant, la commande crée le principal de service et lui attribue le rôle de Contributeur. Le rôle de Contributeur peut gérer tout sur AKS mais ne peut pas donner accès à d'autres. Notez que vous devez fournir `scopes` un chemin complet vers au moins une ressource Azure{nbsp}:
+
+----
+az ad sp create-for-rbac --role Contributor --scopes /subscriptions/<subscription-id>/resourceGroups/<resource-group-name>
+----
+
+Le résultat doit afficher des informations sur le nouveau principal de service{nbsp}:
+
+----
+{
+  "appId": "xxxx--xxx",
+  "displayName": "<service-principal-name>",
+  "name": "http://<service-principal-name>",
+  "password": "<secret>",
+  "tenant": "<tenant-name>"
+}
+----
+
+Ce qui suit crée un https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-cli[Groupe de ressources] pour contenir vos ressources Azure{nbsp}:
+
+----
+az group create --location <azure-location-name> --resource-group <resource-group-name>
+----
+
+[#_setting_up_the_service_principal_from_the_azure_portal]
+=== Configuration du principal de service depuis le portail Azure
+
+Suivez ces instructions pour configurer un principal de service et lui donner un accès basé sur les rôles depuis le portail Azure.
+
+. Allez sur le portail Microsoft Azure https://portal.azure.com[page d'accueil].
+. Cliquez sur *Azure Active Directory*.
+. Cliquez sur *Inscriptions d'applications*.
+. Cliquez sur *Nouvelle inscription*.
+. Entrez un nom pour votre principal de service.
+. Facultatives : Choisissez quels comptes peuvent utiliser le principal de service.
+. Cliquez sur *Enregistrer*.
+. Vous devriez maintenant voir le nom de votre principal de service sous menu:Azure Active Directory[Inscriptions d'applications].
+. Cliquez sur le nom de votre principal de service. Prenez note de l’ID d’application (également appelé app ID ou ID client) afin de pouvoir l’utiliser lors de la création de votre cluster AKS. Puis cliquez sur *Certificats et secrets*.
+. Cliquez sur *Nouveau secret client*.
+. Entrez une courte description, choisissez une durée d'expiration et cliquez sur *Ajouter*. Prenez note du secret client afin de pouvoir l'utiliser lors de la provision du cluster AKS.
+
+*Résultat :* Vous avez créé un principal de service et vous devriez pouvoir le voir listé dans la section *Azure Active Directory* sous *Inscriptions d'applications*. Vous devez encore donner au principal de service un accès à AKS.
+
+Pour donner un accès basé sur les rôles à votre principal de service,
+
+. Cliquez sur *Tous les services* dans la barre de navigation à gauche. Puis cliquez sur *Abonnements*.
+. Cliquez sur le nom de l'abonnement que vous souhaitez associer à votre cluster Kubernetes. Notez l'ID de l'abonnement afin de pouvoir l'utiliser lors de la création de votre cluster AKS.
+. Cliquez sur *Contrôle d'accès (IAM)*.
+. Dans la section *Ajouter une attribution de rôle*, cliquez sur *Ajouter*.
+. Dans le champ *Rôle*, sélectionnez un rôle qui aura accès à AKS. Par exemple, vous pouvez utiliser le rôle *Contributeur*, qui a la permission de gérer tout sauf de donner accès à d'autres utilisateurs.
+. Dans le champ *Attribuer l'accès à*, sélectionnez *utilisateur Azure AD, groupe ou principal de service*.
+. Dans le champ *Sélectionner*, sélectionnez le nom de votre principal de service et cliquez sur *Enregistrer*.
+
+*Résultat :* Votre principal de service a maintenant accès à AKS.
+
+[#_create_the_aks_cloud_credentials]
+== Créez les identifiants Cloud AKS
+
+. Dans l'interface utilisateur de Rancher, cliquez sur *☰ > Gestion des clusters*.
+. Cliquez sur *Identifiants Cloud*.
+. Cliquez sur *Create*.
+. Click *Azure*.
+. Remplissez le formulaire. Pour obtenir de l'aide pour remplir le formulaire, consultez la {xref-deploy-aks-config}#_cloud_credentials[référence de configuration.]
+. Cliquez sur *Create*.
+
+[#_create_the_aks_cluster]
+== Créez le cluster AKS
+
+Utilisez Rancher pour configurer et paramétrer votre cluster Kubernetes.
+
+. Cliquez sur *☰ > Gestion des clusters*.
+. Dans la section *Clusters*, cliquez sur *Créer*.
+. Click *Azure AKS*.
+. Remplissez le formulaire. Pour obtenir de l'aide sur le remplissage du formulaire, consultez la référence de configuration.
+. Cliquez sur *Create*.
+
+*Résultat :* Votre cluster est créé et a un état de *Provisionnement*. Rancher est en train de mettre en place votre cluster.
+
+Vous pouvez accéder à votre cluster après que son état soit mis à jour à *Actif*.
+
+[#_configure_role_based_access_control]
+== Configurer le contrôle d'accès en fonction du rôle
+
+Lors de la création d'un cluster AKS dans l'interface utilisateur de Rancher, le RBAC n'est pas configurable car il doit être activé.
+
+Le RBAC est requis pour les clusters AKS qui sont enregistrés ou importés dans Rancher.
+
+[#_setting_up_the_role_assignment_to_service_principal_with_the_azure_command_line_tool]
+=== Configuration de l'attribution de rôle au principal de service avec l'outil en ligne de commande Azure
+
+Attribuez le rôle Rancher AKSv2 au principal de service avec l'outil en ligne de commande Azure{nbsp}:
+
+----
+az role assignment create \
+--assignee <client-id> \
+--scope "/subscriptions/<subscription-id>/resourceGroups/<resource-group-name>" \
+--role "Rancher AKSv2"
+----
+
+[#_aks_cluster_configuration_reference]
+== Référence de configuration du cluster AKS
+
+Pour plus d'informations sur la configuration des clusters AKS depuis l'interface utilisateur de Rancher, consultez la référence de configuration.
+
+[#_private_clusters]
+== Clusters privés
+
+En général, les nœuds de travail AKS n'obtiennent pas d'IP publiques, peu importe si le cluster est privé. Dans un cluster privé, le plan de contrôle n'a pas de point de terminaison public.
+
+Rancher peut se connecter à un cluster AKS privé de deux manières.
+
+La première façon de s'assurer que Rancher fonctionne sur le même https://docs.microsoft.com/en-us/azure/virtual-network/nat-overview[NAT] que les nœuds AKS.
+
+La deuxième façon est d'exécuter une commande pour enregistrer le cluster avec Rancher. Une fois le cluster provisionné, vous pouvez exécuter la commande affichée depuis n'importe où où vous pouvez vous connecter à l'API Kubernetes du cluster. Cette commande est affichée dans une fenêtre contextuelle lorsque vous provisionnez un cluster AKS avec un point de terminaison API privé activé.
+
+[NOTE]
+====
+
+Veuillez noter que lors de l'enregistrement d'un cluster AKS existant, le cluster peut prendre un certain temps, éventuellement des heures, pour apparaître dans la `Cluster To register`liste déroulante. Ce résultat sera basé sur la région.
+====
+
+
+Pour plus d'informations sur la connexion à un cluster privé AKS, consultez la https://docs.microsoft.com/en-us/azure/aks/private-clusters#options-for-connecting-to-the-private-cluster[documentation AKS.]
+
+[#_setting_up_the_minimum_permission_role_with_the_azure_command_line_tool]
+== Configuration du rôle de permission minimum avec l'outil de ligne de commande Azure
+
+. Créez le rôle de permission minimum Rancher AKSv2 en exécutant cette commande{nbsp}:
+
+----
+  cat >> rancher-azure.json << EOF
+
+  {
+      "Name": "Rancher AKSv2",
+      "IsCustom": true,
+      "Description": "Everything needed by Rancher AKSv2 operator",
+      "Actions": [
+          "Microsoft.Compute/disks/delete",
+          "Microsoft.Compute/disks/read",
+          "Microsoft.Compute/disks/write",
+          "Microsoft.Compute/diskEncryptionSets/read",
+          "Microsoft.Compute/locations/DiskOperations/read",
+          "Microsoft.Compute/locations/vmSizes/read",
+          "Microsoft.Compute/locations/operations/read",
+          "Microsoft.Compute/proximityPlacementGroups/write",
+          "Microsoft.Compute/snapshots/delete",
+          "Microsoft.Compute/snapshots/read",
+          "Microsoft.Compute/snapshots/write",
+          "Microsoft.Compute/virtualMachineScaleSets/manualUpgrade/action",
+          "Microsoft.Compute/virtualMachineScaleSets/delete",
+          "Microsoft.Compute/virtualMachineScaleSets/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/networkInterfaces/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/networkInterfaces/ipconfigurations/publicipaddresses/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualmachines/instanceView/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write",
+          "Microsoft.Compute/virtualMachineScaleSets/write",
+          "Microsoft.Compute/virtualMachines/read",
+          "Microsoft.Compute/virtualMachines/write",
+          "Microsoft.ContainerService/managedClusters/read",
+          "Microsoft.ContainerService/managedClusters/write",
+          "Microsoft.ContainerService/managedClusters/delete",
+          "Microsoft.ContainerService/managedClusters/accessProfiles/listCredential/action",
+          "Microsoft.ContainerService/managedClusters/agentPools/read",
+          "Microsoft.ContainerService/managedClusters/agentPools/write",
+          "Microsoft.ContainerService/managedClusters/agentPools/delete",
+          "Microsoft.ManagedIdentity/userAssignedIdentities/assign/action",
+          "Microsoft.Network/applicationGateways/read",
+          "Microsoft.Network/applicationGateways/write",
+          "Microsoft.Network/loadBalancers/write",
+          "Microsoft.Network/loadBalancers/backendAddressPools/join/action",
+          "Microsoft.Network/loadBalancers/delete",
+          "Microsoft.Network/loadBalancers/read",
+          "Microsoft.Network/networkInterfaces/join/action",
+          "Microsoft.Network/networkInterfaces/read",
+          "Microsoft.Network/networkInterfaces/write",
+          "Microsoft.Network/networkSecurityGroups/read",
+          "Microsoft.Network/networkSecurityGroups/write",
+          "Microsoft.Network/publicIPAddresses/delete",
+          "Microsoft.Network/publicIPAddresses/join/action",
+          "Microsoft.Network/publicIPAddresses/read",
+          "Microsoft.Network/publicIPAddresses/write",
+          "Microsoft.Network/publicIPPrefixes/join/action",
+          "Microsoft.Network/privatednszones/*",
+          "Microsoft.Network/routeTables/read",
+          "Microsoft.Network/routeTables/routes/delete",
+          "Microsoft.Network/routeTables/routes/read",
+          "Microsoft.Network/routeTables/routes/write",
+          "Microsoft.Network/routeTables/write",
+          "Microsoft.Network/virtualNetworks/read",
+          "Microsoft.Network/virtualNetworks/subnets/join/action",
+          "Microsoft.Network/virtualNetworks/subnets/read",
+          "Microsoft.Network/virtualNetworks/joinLoadBalancer/action",
+          "Microsoft.OperationalInsights/workspaces/sharedkeys/read",
+          "Microsoft.OperationalInsights/workspaces/read",
+          "Microsoft.OperationsManagement/solutions/write",
+          "Microsoft.OperationsManagement/solutions/read",
+          "Microsoft.Resources/subscriptions/resourcegroups/read",
+          "Microsoft.Resources/subscriptions/resourcegroups/write",
+          "Microsoft.Storage/operations/read",
+          "Microsoft.Storage/storageAccounts/listKeys/action",
+          "Microsoft.Storage/storageAccounts/delete",
+          "Microsoft.Storage/storageAccounts/read",
+          "Microsoft.Storage/storageAccounts/write"
+      ],
+      "NotActions": [],
+      "DataActions": [],
+      "NotDataActions": [],
+      "AssignableScopes": [
+          "/subscriptions/SUBSCRIPTION_ID"
+      ]
+  }
+  EOF
+----
+
+. Appliquez le rôle Rancher AKSv2{nbsp}:
+
+----
+  az role definition create --role-definition rancher-azure.json
+----
+
+. Vérifiez si le rôle Rancher AKSv2 a été créé{nbsp}:
+
+----
+  az role definition list | grep "Rancher AKSv2"
+----
+
+[#_syncing]
+== Synchronisation
+
+Le provisionneur AKS peut synchroniser l'état d'un cluster AKS entre Rancher et le fournisseur. Pour une explication technique approfondie de son fonctionnement, consultez {xref-sync-hosted-clusters}[Synchronisation.]
+
+Pour des informations sur la configuration de l'intervalle de rafraîchissement, consultez {xref-gke-config}#_configuring_the_refresh_interval[cette section.]
+
+[#_programmatically_creating_aks_clusters]
+== Création programmatique de clusters AKS
+
+La manière la plus courante de déployer des clusters AKS de manière programmatique via Rancher est d'utiliser le fournisseur Terraform Rancher2. La documentation pour la création de clusters avec Terraform est https://registry.terraform.io/providers/rancher/rancher2/latest/docs/resources/cluster[ici].

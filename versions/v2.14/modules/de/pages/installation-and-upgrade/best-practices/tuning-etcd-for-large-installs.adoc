@@ -1,0 +1,45 @@
+= Tuning von etcd für große Installationen
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-06
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/tune-etcd-for-large-installs.adoc 
+:product-path: installation-and-upgrade/best-practices/tuning-etcd-for-large-installs.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+Wenn Rancher verwendet wird, um {xref-install-reqs}[eine große Infrastruktur] zu verwalten, wird empfohlen, den Standard-Keyspace für etcd von den standardmäßigen 2 GB zu erhöhen. Die maximale Einstellung beträgt 8 GB und der Host sollte über genügend RAM verfügen, um den gesamten Datensatz im Speicher zu halten. Wenn Sie diesen Wert erhöhen, sollten Sie auch die Größe des Hosts erhöhen. Die Größe des Keyspaces kann auch in kleineren Installationen angepasst werden, wenn Sie mit einer hohen Änderungsrate von Pods während des Garbage-Collection-Intervalls rechnen.
+
+Der etcd-Datensatz wird automatisch alle fünf Minuten von Kubernetes bereinigt. Es gibt Situationen, beispielsweise beim Deployment-Thrashing, in denen so viele Ereignisse in etcd geschrieben und wieder gelöscht werden, dass die Garbage Collection möglicherweise nicht rechtzeitig eingreift und alles bereinigt, wodurch sich der Keyspace füllt. Wenn Sie `mvcc: database space exceeded` Fehler in den etcd-Protokollen oder den Protokollen des Kubernetes-API-Servers sehen, sollten Sie in Betracht ziehen, die Größe des Keyspaces zu erhöhen. Dies kann erreicht werden, indem die Einstellung https://etcd.io/docs/v3.5/op-guide/maintenance/#space-quota[quota-backend-bytes] auf den etcd-Servern gesetzt wird.
+
+[#_example_this_snippet_of_the_rke2_k3s_config_yaml_file_increases_the_keyspace_size_to_5gb]
+== Beispiel: Dieser Ausschnitt der RKE2/K3s config.yaml-Datei erhöht die Größe des Keyspaces auf 5 GB.
+
+[,yaml]
+.RKE2/K3s config.yaml
+----
+etcd-arg:
+  - "quota-backend-bytes=5368709120"
+----
+
+[#_scaling_etcd_disk_performance]
+== Skalierung der etcd-Festplattenleistung
+
+Sie können den Empfehlungen in https://etcd.io/docs/v3.5/tuning/#disk[den etcd-Dokumenten] folgen, um die Priorität der Festplatte auf dem Host anzupassen.
+
+Zusätzlich können Sie zur Reduzierung von I/O-Konkurrenz auf den Festplatten für etcd ein dediziertes Gerät für das Daten- und WAL-Verzeichnis verwenden. Basierend auf den Best Practices von etcd sind spiegelnde RAID-Konfigurationen nicht erforderlich, da etcd Daten zwischen den Knoten im Cluster repliziert. Sie können Striping-RAID-Konfigurationen verwenden, um die verfügbaren IOPS zu erhöhen.
+
+Um diese Lösung in einem RKE2/K3s-Cluster zu implementieren, müssen die Verzeichnisse `/var/lib/etcd/data` und `/var/lib/etcd/wal` mit Datenträgern auf dem zugrunde liegenden Host gemountet und formatiert werden. In der `extra_args`-Direktive des `etcd`-Dienstes müssen Sie das Verzeichnis `wal_dir` angeben. Ohne die Angabe von `wal_dir` wird der etcd-Prozess versuchen, den zugrunde liegenden `wal`-Mount mit unzureichenden Berechtigungen zu manipulieren.
+
+[,yaml]
+.RKE2/K3s config.yaml
+----
+etcd-arg:
+  - "data-dir=/var/lib/etcd/data"
+  - "wal-dir=/var/lib/etcd/wal"
+----

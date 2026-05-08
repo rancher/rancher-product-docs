@@ -1,0 +1,81 @@
+= Synchronisation des clusters hébergés
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-21
+:page-revdate: {revdate}
+:community-path: reference-guides/cluster-configuration/rancher-server-configuration/sync-clusters.adoc 
+:product-path: cluster-deployment/hosted-kubernetes/sync-clusters.adoc
+
+ifeval::["{build-type}" != "srfa"]
+La synchronisation permet à Rancher de mettre à jour les valeurs des clusters afin qu'elles soient à jour avec l'objet de cluster correspondant hébergé dans AKS, EKS ou GKE. Cela permet à des sources autres que Rancher de posséder l'état d'un cluster hébergé.
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+La synchronisation permet à Rancher de mettre à jour les valeurs des clusters afin qu'elles soient à jour avec l'objet de cluster correspondant hébergé dans EKS. Cela permet à des sources autres que Rancher de posséder l'état d'un cluster hébergé.
+endif::[]
+
+[CAUTION]
+====
+Vous pourriez accidentellement écraser l'état d'une source si vous traitez simultanément une mise à jour d'une autre source. Cela peut également se produire si vous traitez une mise à jour d'une source dans les 5 minutes suivant la fin d'une mise à jour d'une autre source.
+====
+
+[#_how_it_works]
+== Fonctionnement
+
+Il y a deux champs sur l'objet Cluster de Rancher qui doivent être compris pour comprendre comment fonctionne la synchronisation{nbsp}:
+
+. L'objet de configuration pour le cluster, situé dans la spécification du cluster{nbsp}:
+ifeval::["{build-type}" != "srfa"]
+ ** Pour AKS, le champ s'appelle AKSConfig
+ ** Pour EKS, le champ s'appelle EKSConfig
+ ** Pour GKE, le champ s'appelle GKEConfig
+. L'objet UpstreamSpec
+ ** Pour AKS, cela se trouve dans le champ AKSStatus sur l'état du cluster.
+ ** Pour EKS, cela se trouve dans le champ EKSStatus sur l'état du cluster.
+ ** Pour GKE, cela se trouve dans le champ GKEStatus sur l'état du cluster.
+
+Les types de structures qui définissent ces objets peuvent être trouvés dans leurs projets d'opérateur correspondants{nbsp}:
+
+* https://github.com/rancher/aks-operator/blob/master/pkg/apis/aks.cattle.io/v1/types.go[aks-operator]
+* https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
+* https://github.com/rancher/gke-operator/blob/master/pkg/apis/gke.cattle.io/v1/types.go[gke-operator]
+
+Tous les champs peuvent être nuls, sauf pour les suivants{nbsp}: le nom du cluster, la localisation (région ou zone), Importé et la référence d'identification du cloud.
+
+L'AKSConfig, l'EKSConfig ou le GKEConfig représente l'état souhaité. Les valeurs nulles sont ignorées. Les champs qui ne sont pas nuls dans l'objet de configuration peuvent être considérés comme gérés. Lorsqu'un cluster est créé dans Rancher, tous les champs sont non-nuls et donc gérés. Lorsqu'un cluster préexistant est enregistré dans Rancher, tous les champs pouvant être nuls sont définis sur nul et ne sont pas gérés. Ces champs deviennent gérés une fois que leur valeur a été modifiée par Rancher.
+
+UpstreamSpec représente le cluster tel qu'il est dans le fournisseur Kubernetes hébergé. Il est actualisé toutes les 5 minutes. Après que l'UpstreamSpec a été actualisé, Rancher vérifie si le cluster a une mise à jour en cours. S'il est actuellement en cours de mise à jour, aucune autre action n'est effectuée. S'il n'est pas actuellement en cours de mise à jour, tous les champs gérés sur l'AKSConfig, l'EKSConfig ou le GKEConfig sont écrasés par leur valeur correspondante de l'UpstreamSpec récemment mis à jour.
+
+[CAUTION]
+====
+Lorsque vous importez un cluster d'un fournisseur de cloud dans Rancher, l'UpstreamSpec représente l'état du cluster et la configuration est vide. Si vous mettez ensuite à jour le cluster importé via l'interface utilisateur de Rancher, à la fois l'UpstreamSpec et la configuration deviennent non nulles. Toute mise à jour ultérieure du cluster doit être appliquée via Rancher. C'est parce qu'il n'existe aucun moyen sûr de déterminer si les changements provenant de l'UpstreamSpec représentent l'état souhaité ou simplement un décalage avec la configuration. Si vous mettez à jour le cluster importé via la console du fournisseur de cloud après avoir appliqué des mises à jour via l'interface utilisateur de Rancher, le contrôleur déploiera un retour à l'état initial et le contenu de la configuration sera considéré comme l'état souhaité.
+====
+
+
+L'état souhaité effectif peut être considéré comme l'UpstreamSpec, plus tous les champs non nuls dans l'AKSConfig, l'EKSConfig ou le GKEConfig. C'est ce qui est affiché dans l'interface utilisateur.
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+ ** Pour EKS, le champ s'appelle EKSConfig
+.  L'objet UpstreamSpec
+ ** Pour EKS, cela se trouve dans le champ EKSStatus sur l'état du cluster.
+
+Les types de structures qui définissent ces objets peuvent être trouvés dans leurs projets d'opérateur correspondants{nbsp}:
+
+* https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
+
+Tous les champs peuvent être nuls, sauf pour les suivants{nbsp}: le nom du cluster, la localisation (région ou zone), Importé et la référence d'identification du cloud.
+
+L'EKSConfig représente l'état souhaité. Les valeurs nulles sont ignorées. Les champs qui ne sont pas nuls dans l'objet de configuration peuvent être considérés comme gérés. Lorsqu'un cluster est créé dans Rancher, tous les champs sont non-nuls et donc gérés. Lorsqu'un cluster préexistant est enregistré dans Rancher, tous les champs pouvant être nuls sont définis sur nul et ne sont pas gérés. Ces champs deviennent gérés une fois que leur valeur a été modifiée par Rancher.
+
+UpstreamSpec représente le cluster tel qu'il est dans le fournisseur Kubernetes hébergé. Il est actualisé toutes les 5 minutes. Après que l'UpstreamSpec a été actualisé, Rancher vérifie si le cluster a une mise à jour en cours. S'il est actuellement en cours de mise à jour, aucune autre action n'est effectuée. S'il n'est pas en cours de mise à jour, tous les champs gérés sur EKSConfig sont écrasés par leur valeur correspondante de l'UpstreamSpec récemment mis à jour.
+
+[CAUTION]
+====
+Lorsque vous importez un cluster d'un fournisseur de cloud dans Rancher, l'UpstreamSpec représente l'état du cluster et la configuration est vide. Si vous mettez ensuite à jour le cluster importé via l'interface utilisateur de Rancher, à la fois l'UpstreamSpec et la configuration deviennent non nulles. Toute mise à jour ultérieure du cluster doit être appliquée via Rancher. C'est parce qu'il n'existe aucun moyen sûr de déterminer si les changements provenant de l'UpstreamSpec représentent l'état souhaité ou simplement un décalage avec la configuration. Si vous mettez à jour le cluster importé via la console du fournisseur de cloud après avoir appliqué des mises à jour via l'interface utilisateur de Rancher, le contrôleur déploiera un retour à l'état initial et le contenu de Config sera considéré comme l'état souhaité.
+====
+
+
+L'état désiré effectif peut être considéré comme le UpstreamSpec, plus tous les champs non nuls dans l'EKSConfig. C'est ce qui est affiché dans l'interface utilisateur.
+endif::[]
+
+Si Rancher et une autre source tentent de mettre à jour un cluster en même temps, ou dans les 5 minutes suivant la fin d'une mise à jour, tous les champs gérés risquent d'être pris dans une condition de concurrence. Pour utiliser EKS comme exemple, un cluster peut avoir PrivateAccess comme champ géré. Si PrivateAccess est faux et qu'il est ensuite activé dans la console EKS à 11h01, et que les balises sont mises à jour depuis Rancher avant 11h05, alors la valeur risque d'être écrasée. Cela peut également se produire si les balises sont mises à jour pendant que le cluster est encore en train de traiter la mise à jour. Le problème décrit dans cet exemple ne devrait pas se produire si le cluster est enregistré et que les champs PrivateAccess sont nuls.

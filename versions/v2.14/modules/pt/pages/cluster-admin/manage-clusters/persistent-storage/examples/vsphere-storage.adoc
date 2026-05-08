@@ -1,0 +1,96 @@
+= Armazenamento VMware vSphere
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-23
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/provisioning-storage-examples/vsphere-storage.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/examples/vsphere-storage.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc
+:xref-cloud-provider-vsphere: xref:cluster-deployment/set-up-cloud-providers/configure-in-tree-vsphere.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-rke2-config: xref:guias-de-referência/configuração-do-cluster/configuração-do-servidor-rancher/configuração-do-cluster-rke2.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:como-fazer-guias/novos-guias-de-usuário/configuração-de-clusters-kubernetes-no-rancher/configurar-provedores-de-nuvem/configurar-vsphere-fora-da-árvore.adoc
+:xref-cloud-provider-vsphere: xref:como-fazer-guias/novos-guias-de-usuário/configuração-de-clusters-kubernetes-no-rancher/configurar-provedores-de-nuvem/configurar-vsphere-na-árvore.adoc
+endif::[]
+
+Para fornecer cargas de trabalho com estado com armazenamento VMware vSphere, recomendamos criar uma StorageClass vSphereVolume. Essa prática provisiona dinamicamente o armazenamento vSphere quando as cargas de trabalho solicitam volumes através de um PersistentVolumeClaim.
+
+Para provisionar dinamicamente armazenamento no vSphere, o provedor vSphere deve estar habilitado. Veja as seguintes páginas para mais informações: {xref-cloud-provider-vsphere-out-of-tree}[vSphere fora da árvore] e {xref-cloud-provider-vsphere}[vSphere na árvore].
+
+[#_prerequisites]
+== Pré-requisitos
+
+Para provisionar volumes vSphere em um cluster criado com o {xref-launch-k8s-with-rancher}[RKE2], o https://rancher.com/docs/rke/latest/en/config-options/cloud-providers/vsphere[provedor de nuvem vSphere] deve ser explicitamente habilitado nas {xref-rke2-config}#_cloud_provider[opções do cluster].
+
+[#_creating_a_storageclass]
+== Criando uma StorageClass
+
+[TIP]
+====
+
+Os seguintes passos também podem ser realizados usando a `kubectl` ferramenta de linha de comando. Veja https://kubernetes.io/docs/concepts/storage/persistent-volumes/[documentação do Kubernetes sobre volumes persistentes] para mais detalhes.
+====
+
+
+. Clique em *☰ > Gerenciamento de Cluster*.
+. Escolha o cluster ao qual você deseja fornecer armazenamento vSphere e clique em *Explorar*.
+. Na barra de navegação à esquerda, selecione menu:Armazenamento[Classes de Armazenamento].
+. Clique em *Criar*.
+. Digite um *Nome* para a StorageClass.
+. Em *Provisionador*, selecione *Volume VMware vSphere*.
++
+image::vsphere-storage-class.png[]
+
+. Opcionalmente, especifique propriedades adicionais para esta classe de armazenamento em *Parâmetros*. Consulte a https://github.com/vmware-archive/vsphere-storage-for-kubernetes/blob/master/documentation/storageclass.md[documentação de armazenamento vSphere] para mais detalhes.
+. Clique em *Criar*.
+
+[#_creating_a_workload_with_a_vmware_vsphere_volume]
+== Criando uma Carga de Trabalho com um Volume VMware vSphere
+
+. Na barra de navegação à esquerda, clique em *Carga de Trabalho*.
+. Clique em *Criar*.
+. Clique em *StatefulSet*.
+. Na aba *Modelos de Reivindicação de Volume*, clique em *Adicionar Modelo de Reivindicação*.
+. Digite um nome para o volume persistente.
+. No campo Classe de Armazenamento, selecione a vSphere StorageClass que você criou.
+. Insira a *Capacidade* necessária para o volume. Em seguida, clique em *Definir*.
+. Atribua um caminho no campo *Ponto de Montagem*. Este é o caminho completo onde o volume será montado no sistema de arquivos do contêiner, por exemplo, `/persistent`.
+. Clique em *Criar*.
+
+[#_verifying_persistence_of_the_volume]
+== Verificando a Persistência do Volume
+
+. Na barra de navegação à esquerda, clique em menu:Carga de Trabalho[Pods].
+. Vá para a carga de trabalho que você acabou de criar e clique em *⋮ > Executar Shell*.
+. Observe o caminho na raiz onde o volume foi montado (neste caso `/persistent`).
+. Crie um arquivo no volume executando o comando `touch /<volumeMountPoint>/data.txt`.
+. Feche a janela do shell.
+. Clique no nome da carga de trabalho para revelar informações detalhadas.
+. Clique em *⋮ > Excluir*.
+. Observe que o pod foi excluído. Em seguida, um novo pod é agendado para substituí-lo, de modo que a carga de trabalho mantenha sua escala configurada de um único pod stateful.
+. Uma vez que o pod de substituição esteja em execução, clique em *Executar Shell*.
+. Inspecione o conteúdo do diretório onde o volume está montado, digitando `ls -l /<volumeMountPoint>`. Observe que o arquivo que você criou anteriormente ainda está presente.
++
+image::workload-persistent-data.png[workload-persistent-data]
+
+[#_why_to_use_statefulsets_instead_of_deployments]
+== Por que usar StatefulSets em vez de Deployments
+
+Você deve sempre usar https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/[StatefulSets] para cargas de trabalho que consomem armazenamento vSphere, pois esse tipo de recurso é projetado para resolver uma limitação do armazenamento em blocos VMDK.
+
+Como os volumes vSphere são suportados por armazenamento em blocos VMDK, eles suportam apenas um https://kubernetes.io/docs/concepts/storage/persistent-volumes/#persistentvolumeclaims[modo de acesso] de `ReadWriteOnce`. Essa configuração restringe o volume para que ele possa ser montado apenas em um único pod por vez, a menos que todos os pods que consomem esse volume estejam co-localizados no mesmo nó. Esse comportamento torna um recurso de implantação inutilizável para escalonamento além de uma única réplica se consumir volumes vSphere.
+
+Mesmo usar um recurso de implantação com apenas uma única réplica pode resultar em uma situação de deadlock durante a atualização da implantação. Se o pod atualizado for agendado para um nó diferente de onde o pod existente está, ele falhará ao iniciar porque o VMDK ainda está anexado ao outro nó.
+
+[#_related_links]
+== Links relacionados
+
+* https://github.com/vmware-archive/vsphere-storage-for-kubernetes/tree/master/documentation[Armazenamento vSphere para Kubernetes]
+* https://kubernetes.io/docs/concepts/storage/persistent-volumes/[Kubernetes Persistent Volumes]

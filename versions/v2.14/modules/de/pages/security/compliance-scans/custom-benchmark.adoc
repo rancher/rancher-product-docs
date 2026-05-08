@@ -1,0 +1,95 @@
+= Erstellen einer benutzerdefinierten Benchmark-Version für die Ausführung eines Cluster-Scans
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/compliance-scans/custom-benchmark.adoc 
+:product-path: security/compliance-scans/custom-benchmark.adoc
+:experimental:
+
+Jede Benchmark-Version definiert eine Reihe von Test-Konfigurationsdateien, die die Compliance-Tests festlegen, die mit dem https://github.com/aquasecurity/kube-bench[kube-bench] Tool durchgeführt werden sollen.
+Die `rancher-compliance` Anwendung installiert einige Standard-Benchmark-Versionen, die im Menü der Compliance-Benchmark-Anwendung aufgeführt sind.
+
+Es könnte jedoch einige Kubernetes-Cluster-Setups geben, die benutzerdefinierte Konfigurationen der Benchmark-Tests erfordern. Zum Beispiel könnte der Pfad zu den Kubernetes-Konfigurationsdateien oder Zertifikaten von dem Standardstandort abweichen, an dem die Upstream CIS Benchmarks nach ihnen suchen.
+
+In den folgenden Fällen kann jedoch eine benutzerdefinierte Konfiguration oder Abhilfe erforderlich sein:
+
+* Nicht-standardmäßige Dateistandorte: Wenn Kubernetes-Binärdateien, Konfigurationen oder Zertifikatspfade von den Standardwerten des Upstream-Benchmarks abweichen.
++
+Beispiel: Im Gegensatz zu traditionellem Kubernetes bündelt K3s die Komponenten der Kontroll-Ebene in einer einzigen Binärdatei. Daher sollte die Anwesenheit und Konfiguration des `--anonymous-auth` Flags in den K3s-Protokollen (`journalctl`) und nicht über `kube-apiserver` Prozessprüfungen (`ps`) überprüft werden.
+
+* Alternative Risikominderungen: Wenn ein Setup einen Check nicht erfüllt, aber eine ebenso effektive ausgleichende Kontrolle mit Begründung hat. Oder einfach nicht von der Prüfanforderung betroffen ist, aufgrund seines Designs.
++
+Beispiel: Standardmäßig bettet K3s den API-Server in den K3s-Prozess ein. Es gibt keine API-Server-Pod-Spezifikationsdatei, daher ist es nicht erforderlich, die Dateiberechtigungen dieser Datei zu überprüfen.
+
+[#_1_prepare_the_custom_benchmark_version_configmap]
+== 1. Bereiten Sie die ConfigMap für die benutzerdefinierte Benchmark-Version vor
+
+Um eine benutzerdefinierte Benchmark-Version zu erstellen, müssen Sie zunächst eine ConfigMap erstellen, die die Konfigurationsdateien der Benchmark-Version enthält, und diese in Ihr Kubernetes-Cluster hochladen, in dem Sie den Scan durchführen möchten.
+
+Um eine ConfigMap für eine benutzerdefinierte Benchmark-Version vorzubereiten, nehmen wir an, dass wir eine benutzerdefinierte Benchmark-Version mit dem Namen `foo` hinzufügen möchten.
+
+. Erstellen Sie ein Verzeichnis mit dem Namen `foo` und legen Sie in dieses Verzeichnis alle YAML-Konfigurationsdateien, nach denen das https://github.com/aquasecurity/kube-bench[kube-bench] Tool sucht. Zum Beispiel sind hier die YAML-Konfigurationsdateien für eine generische CIS 1.5 Benchmark-Version https://github.com/aquasecurity/kube-bench/tree/master/cfg/cis-1.5
+. Legen Sie die vollständige `config.yaml`-Datei ab, die alle Komponenten enthält, die getestet werden sollen.
+. Fügen Sie den Namen der Benchmark-Version zum `target_mapping` Abschnitt des `config.yaml` hinzu:
++
+[,yaml]
+----
+ target_mapping:
+   "foo":
+     - "master"
+     - "node"
+     - "controlplane"
+     - "etcd"
+     - "policies"
+----
+
+. Laden Sie dieses Verzeichnis in Ihren Kubernetes-Cluster hoch, indem Sie eine ConfigMap erstellen:
++
+[,yaml]
+----
+ kubectl create configmap -n <namespace> foo --from-file=<path to directory foo>
+----
+
+[#_2_add_a_custom_benchmark_version_to_a_cluster]
+== 2. Fügen Sie eine benutzerdefinierte Benchmark-Version zu einem Cluster hinzu
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der *Cluster*-Seite zu dem Cluster, zu dem Sie eine benutzerdefinierte Benchmark hinzufügen möchten, und klicken Sie auf *Erkunden*.
+. Klicken Sie in der linken Navigationsleiste auf *Compliance > Benchmark-Version*.
+. Klicken Sie auf *Erstellen*.
+. Geben Sie den *Name* und eine Beschreibung für Ihre benutzerdefinierte Benchmark-Version ein.
+. Wählen Sie den Clusteranbieter aus, auf den Ihre Benchmark-Version zutrifft.
+. Wählen Sie die ConfigMap aus, die Sie aus dem Dropdown-Menü hochgeladen haben.
+. Fügen Sie die geltenden minimalen und maximalen Kubernetes-Versionen hinzu, falls vorhanden.
+. Klicken Sie auf *Erstellen*.
+
+[#_3_create_a_new_profile_for_the_custom_benchmark_version]
+== 3. Erstellen Sie ein neues Profil für die benutzerdefinierte Benchmark-Version
+
+Um einen Scan mit Ihrer benutzerdefinierten Benchmark-Version durchzuführen, müssen Sie ein neues Profil hinzufügen, das auf diese Benchmark-Version verweist.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der *Cluster*-Seite zu dem Cluster, zu dem Sie eine benutzerdefinierte Benchmark hinzufügen möchten, und klicken Sie auf *Erkunden*.
+. Klicken Sie in der linken Navigationsleiste auf *Compliance > Scan*.
+. Klicken Sie auf *Erstellen*.
+. Geben Sie einen *Name* und eine Beschreibung an. In diesem Beispiel nennen wir es `foo-profile`.
+. Wählen Sie die Benchmark-Version aus dem Dropdown-Menü aus.
+. Klicken Sie auf *Erstellen*.
+
+[#_4_run_a_scan_using_the_custom_benchmark_version]
+== 4. Führen Sie einen Scan mit der benutzerdefinierten Benchmark-Version durch
+
+Sobald das Profil, das auf Ihre benutzerdefinierte Benchmark-Version `foo` verweist, erstellt wurde, können Sie einen neuen Scan erstellen, um die benutzerdefinierten Testkonfigurationen in der Benchmark-Version auszuführen.
+
+Um einen Scan durchzuführen,
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der *Cluster*-Seite zu dem Cluster, zu dem Sie eine benutzerdefinierte Benchmark hinzufügen möchten, und klicken Sie auf *Erkunden*.
+. Klicken Sie in der linken Navigationsleiste auf menu:CIS Benchmark[Scan].
+. Klicken Sie auf *Erstellen*.
+. Wählen Sie das neue Cluster-Scan-Profil aus.
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Ein Bericht wird mit den Scan-Ergebnissen erstellt. Um die Ergebnisse zu sehen, klicken Sie auf den Namen des angezeigten Scans.

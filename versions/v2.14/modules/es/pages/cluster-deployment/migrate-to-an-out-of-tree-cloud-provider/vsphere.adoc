@@ -1,0 +1,123 @@
+= Migración de VMware vSphere de integrado a externo
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: instrucciones/nuevos-usuarios/guías-de-clústeres-de-kubernetes-en-rancher/configuración/migrar-a-un-proveedor-de-nube-externo/migrar-a-vsphere-externo.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/vsphere.adoc
+:experimental:
+
+Kubernetes está dejando de mantener proveedores de nube integrados. VMware vSphere tiene un proveedor de nube externo que se puede utilizar instalando el proveedor de nube de vSphere y los complementos de almacenamiento en la nube.
+
+Esta página explica cómo migrar del proveedor de nube integrado de vSphere al externo, y gestionar las VMs existentes tras la migración.
+
+Sigue los pasos proporcionados en la https://vsphere-csi-driver.sigs.k8s.io/features/vsphere_csi_migration.html[documentación oficial de migración de vSphere] y proporciona los pasos a realizar en Rancher.
+
+[#_cloud_config_format_limitation]
+== Limitación del formato cloud-config
+
+Los volúmenes existentes que fueron aprovisionados utilizando el siguiente formato cloud-config no se migrarán debido a un error existente en la Interfaz de Almacenamiento en la Nube de vSphere (CSI).
+
+Si el cloud-config tiene este formato para la ruta del almacén de datos y del grupo de recursos, el controlador CSI de vSphere no puede reconocerlo:
+
+[,yaml]
+----
+default-datastore: </datacenter>/datastore/<default-datastore-name>
+resourcepool-path: "</datacenter>/host/<cluster-name>/Resources/<resource-pool-name>"
+----
+
+Los volúmenes aprovisionados con el proveedor integrado utilizando el siguiente formato se migrarán correctamente:
+
+[,yaml]
+----
+default-datastore: <default-datastore-name>
+resourcepool-path: "<cluster-name>/Resources/<resource-pool-name>"
+----
+
+Error en sentido ascendente: https://github.com/kubernetes-sigs/vsphere-csi-driver/issues/628
+
+Incidencia de Rancher que sigue este error: https://github.com/rancher/rancher/issues/31105
+
+[#_prerequisites]
+== Requisitos previos
+
+* La migración de vSphere CSI requiere vSphere 7.0u1. Para poder gestionar los volúmenes integrados de vSphere existentes, actualiza la versión de vSphere a 7.0u1.
+* La versión de Kubernetes debe ser 1.19 o superior.
+
+[#_migration]
+== Migración
+
+[#_1_install_the_cpi_plugin]
+=== 1. Instalar el complemento CPI
+
+Antes de instalar CPI, necesitamos aplicar una taint a todos los nodos con `node.cloudprovider.kubernetes.io/uninitialized=true:NoSchedule`.
+
+Esto se puede hacer ejecutando los siguientes comandos:
+
+----
+curl -O https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+----
+
+O bien:
+
+----
+wget https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+chmod +x taints.sh
+./taints.sh <path to kubeconfig if running the command outside the cluster>
+----
+
+Una vez que el script haya aplicado la taint a todos los nodos, lanza el chart de Helm vSphere CPI.
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster donde se instalará el gráfico vSphere CPI y haz clic en *Explorar*.
+. Haz clic en menu:Aplicaciones[Gráficos].
+. Click *vSphere CPI*.
+. Haz clic en *Instalar*.
+. Completa los detalles requeridos de vCenter y haz clic en *Instalar*.
+
+vSphere CPI inicializa todos los nodos con ProviderID, que es necesario para el controlador vSphere CSI.
+
+Verifica si todos los nodos están inicializados con el ProviderID con el siguiente comando:
+
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_2_install_the_csi_driver]
+=== 2. Instala el controlador CSI
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster donde se instalará el gráfico vSphere CSI y haz clic en *Explorar*.
+. Haz clic en menu:Aplicaciones[Gráficos].
+. Click *vSphere CSI*.
+. Haz clic en *Instalar*.
+. Completa los detalles requeridos de vCenter y haz clic en *Instalar*.
+. Marca *Personalizar opciones de Helm antes de instalar* y haz clic en *Siguiente*.
+. En la pestaña *Características*, marca *Habilitar migración CSI*.
+. Opcionalmente, ve a la pestaña *Almacenamiento* y configura un datastore. Este gráfico crea una StorageClass con el `csi.vsphere.vmware.com` como aprovisionador. Puedes proporcionar la URL del almacén de datos que se utilizará para el aprovisionamiento de volúmenes CSI al crear esta StorageClass. La URL del almacén de datos se puede encontrar en el cliente de vSphere seleccionando el almacén de datos y yendo a la pestaña Resumen. Completa los detalles para la StorageClass.
+. Haz clic en *Instalar*.
+
+[#_3_edit_the_cluster_to_enable_csi_migration_feature_flags]
+=== 3. Edita el clúster para habilitar las banderas de características de migración CSI.
+
+. Mientras editas el clúster, si la versión de Kubernetes es inferior a 1.19, selecciona la versión de Kubernetes 1.19 o superior del menú desplegable *Versión de Kubernetes*.
+. Para habilitar las banderas de características, haz clic en "Editar como YAML" y añade lo siguiente bajo kube-controller y kubelet:
++
+[,yaml]
+----
+   extra_args:
+     feature-gates: "CSIMigration=true,CSIMigrationvSphere=true"
+----
+
+[#_4_drain_worker_nodes]
+=== 4. Drenar nodos de trabajo.
+
+Los nodos de trabajo deben ser drenados durante la actualización antes de cambiar los argumentos de kubelet y kube-controller-manager.
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster donde drenarás los nodos de trabajo y haz clic en *⋮ > Editar Config*.
+. En la sección *Opciones Avanzadas*, establece el campo *Máximo número de nodos de trabajo no disponibles* en 1.
+. Para drenar los nodos durante la actualización, selecciona menu:Drenar Nodos[Sí].
+. Establece *Forzar* y *Eliminar Datos Locales* a *true*.
+. Haz clic en *Guardar* para actualizar el clúster.

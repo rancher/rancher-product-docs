@@ -1,0 +1,340 @@
+= etcdノードのトラブルシューティング
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: troubleshooting/kubernetes-components/troubleshooting-etcd-nodes.adoc 
+:product-path: troubleshooting/kubernetes-components/troubleshooting-etcd-nodes.adoc
+
+このセクションには、`etcd` ロールを持つノードのトラブルシューティングに関するコマンドとヒントが含まれています。
+
+[#_checking_if_the_etcd_container_is_running]
+== etcd コンテナが実行中かどうかを確認する
+
+etcd のコンテナは、状態が *Up* である必要があります。*稼働中*の後に表示される期間は、コンテナが実行されている時間です。
+
+----
+docker ps -a -f=name=etcd$
+----
+
+出力の例：
+
+----
+CONTAINER ID   IMAGE                                 COMMAND                  CREATED          STATUS          PORTS     NAMES
+d26adbd23643   rancher/mirrored-coreos-etcd:v3.5.7   "/usr/local/bin/etcd…"   30 minutes ago   Up 30 minutes             etcd
+----
+
+[#_etcd_container_logging]
+== etcd コンテナのログ
+
+コンテナのログには、問題の可能性に関する情報が含まれている場合があります。
+
+----
+docker logs etcd
+----
+
+|===
+| 変換の記録 | 説明
+
+| `health check for peer xxx could not connect: dial tcp IP:2380: getsockopt: connection refused`
+| ポート 2380 で表示されたアドレスへの接続を確立できません。表示されたアドレスを持つホストで etcd コンテナが実行中かどうかを確認してください。
+
+| `xxx is starting a new election at term x`
+| etcd クラスターはクォーラムを失い、新しいリーダーを確立しようとしています。これは、etcd を実行しているノードの大多数がダウンまたは到達不能になると発生する可能性があります。
+
+| `connection error: desc = "transport: Error while dialing dial tcp 0.0.0.0:2379: i/o timeout"; Reconnecting to {0.0.0.0:2379 0  <nil>}`
+| ホストのファイアウォールがネットワーク通信を妨げています。
+
+| `rafthttp: request cluster ID mismatch`
+| ログ `rafthttp: request cluster ID mismatch` の etcd インスタンスを持つノードは、すでに別のピアと形成されたクラスターに参加しようとしています。ノードはクラスターから削除され、再追加されるべきです。
+
+| `rafthttp: failed to find member`
+| クラスターの状態 (`/var/lib/etcd`) は、クラスターに参加するための誤った情報を含んでいます。ノードはクラスターから削除され、状態ディレクトリをクリーンアップし、ノードを再追加するべきです。
+|===
+
+[#_etcd_cluster_and_connectivity_checks]
+== etcd クラスターと接続チェック
+
+etcd がリッスンしているアドレスは、etcd が実行されているホストのアドレス設定に依存します。etcd が実行されているホストに内部アドレスが設定されている場合、`etcdctl` のエンドポイントを明示的に指定する必要があります。コマンドのいずれかが `Error:  context deadline exceeded` で応答した場合、etcd インスタンスは正常ではありません（クォーラムが失われたか、インスタンスがクラスターに正しく参加していない）。
+
+[#_check_etcd_members_on_all_nodes]
+=== すべてのノードで etcd メンバーを確認する
+
+出力には `etcd` ロールを持つすべてのノードが含まれ、出力はすべてのノードで同一である必要があります。
+
+コマンド:
+
+----
+docker exec etcd etcdctl member list
+----
+
+[#_check_endpoint_status]
+=== エンドポイントのステータスを確認してください
+
+`RAFT TERM`の値は等しく、`RAFT INDEX`は互いにあまり離れていない必要があります。
+
+コマンド:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint status --write-out table
+----
+
+出力の例：
+
+----
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| ENDPOINT        |        ID        | VERSION | DB SIZE | IS LEADER | RAFT TERM | RAFT INDEX |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| https://IP:2379 | 333ef673fc4add56 |  3.5.7  |   24 MB |     false |        72 |      66887 |
+| https://IP:2379 | 5feed52d940ce4cf |  3.5.7  |   24 MB |      true |        72 |      66887 |
+| https://IP:2379 | db6b3bdb559a848d |  3.5.7  |   25 MB |     false |        72 |      66887 |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+----
+
+[#_check_endpoint_health]
+=== エンドポイントの健康状態を確認してください
+
+コマンド:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint health
+----
+
+出力の例：
+
+----
+https://IP:2379 is healthy: successfully committed proposal: took = 2.113189ms
+https://IP:2379 is healthy: successfully committed proposal: took = 2.649963ms
+https://IP:2379 is healthy: successfully committed proposal: took = 2.451201ms
+----
+
+[#_check_connectivity_on_port_tcp_2379]
+=== ポート TCP/2379 の接続性を確認してください
+
+コマンド:
+
+----
+for endpoint in $(docker exec etcd etcdctl member list | cut -d, -f5); do
+   echo "Validating connection to ${endpoint}/health"
+   docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -w "\n" --cacert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CACERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --cert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --key $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_KEY" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) "${endpoint}/health"
+done
+----
+
+出力の例：
+
+----
+Validating connection to https://IP:2379/health
+{"health": "true"}
+Validating connection to https://IP:2379/health
+{"health": "true"}
+Validating connection to https://IP:2379/health
+{"health": "true"}
+----
+
+[#_check_connectivity_on_port_tcp_2380]
+=== ポート TCP/2380 の接続性を確認してください
+
+コマンド:
+
+----
+for endpoint in $(docker exec etcd etcdctl member list | cut -d, -f4); do
+  echo "Validating connection to ${endpoint}/version";
+  docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl --http1.1 -s -w "\n" --cacert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CACERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --cert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --key $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_KEY" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) "${endpoint}/version"
+done
+----
+
+出力の例：
+
+----
+Validating connection to https://IP:2380/version
+{"etcdserver":"3.5.7","etcdcluster":"3.5.0"}
+Validating connection to https://IP:2380/version
+{"etcdserver":"3.5.7","etcdcluster":"3.5.0"}
+Validating connection to https://IP:2380/version
+{"etcdserver":"3.5.7","etcdcluster":"3.5.0"}
+----
+
+[#_etcd_alarms]
+== etcd アラーム
+
+etcd は、例えばスペースが不足した場合にアラームをトリガーします。
+
+コマンド:
+
+----
+docker exec etcd etcdctl alarm list
+----
+
+NOSPACE アラームがトリガーされたときの出力例：
+
+----
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+----
+
+[#_etcd_space_errors]
+== etcd スペースエラー
+
+関連するエラーメッセージは `etcdserver: mvcc: database space exceeded` または `applying raft message exceeded backend quota` です。アラーム `NOSPACE` がトリガーされます。
+
+解決策：
+
+* <<_compact_the_keyspace,キー空間を圧縮する>>
+* <<_defrag_all_etcd_members,すべての etcd メンバーをデフラグする>>
+* <<_check_endpoint_status,エンドポイントのステータスを確認する>>
+* <<_disarm_alarm,アラームを解除する>>
+
+[#_compact_the_keyspace]
+=== キー空間を圧縮する
+
+コマンド:
+
+----
+rev=$(docker exec etcd etcdctl endpoint status --write-out json | egrep -o '"revision":[0-9]*' | egrep -o '[0-9]*')
+docker exec etcd etcdctl compact "$rev"
+----
+
+出力の例：
+
+----
+compacted revision xxx
+----
+
+[#_defrag_all_etcd_members]
+=== すべての etcd メンバーをデフラグする
+
+コマンド:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl defrag
+----
+
+出力の例：
+
+----
+Finished defragmenting etcd member[https://IP:2379]
+Finished defragmenting etcd member[https://IP:2379]
+Finished defragmenting etcd member[https://IP:2379]
+----
+
+[#_check_endpoint_status_1]
+=== エンドポイントのステータスを確認してください
+
+コマンド:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint status --write-out table
+----
+
+出力の例：
+
+----
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| ENDPOINT        |        ID        | VERSION | DB SIZE | IS LEADER | RAFT TERM | RAFT INDEX |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| https://IP:2379 |  e973e4419737125 |  3.5.7  |  553 kB |     false |        32 |    2449410 |
+| https://IP:2379 | 4a509c997b26c206 |  3.5.7  |  553 kB |     false |        32 |    2449410 |
+| https://IP:2379 | b217e736575e9dd3 |  3.5.7  |  553 kB |      true |        32 |    2449410 |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+----
+
+[#_disarm_alarm]
+=== アラームを解除する
+
+圧縮とデフラグ後にDBサイズが減少したことを確認した後、etcd が再び書き込みを許可するためにアラームを解除する必要があります。
+
+コマンド:
+
+----
+docker exec etcd etcdctl alarm list
+docker exec etcd etcdctl alarm disarm
+docker exec etcd etcdctl alarm list
+----
+
+出力の例：
+
+----
+docker exec etcd etcdctl alarm list
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+docker exec etcd etcdctl alarm disarm
+docker exec etcd etcdctl alarm list
+----
+
+[#_configure_log_level]
+== ログレベルを設定する
+
+[NOTE]
+====
+
+etcd v3.5以降では、ログレベルを動的に変更することはできません。
+====
+
+
+[#_etcd_v3_5_and_later]
+=== etcd v3.5以降
+
+etcd のログレベルを設定するには、クラスターのYAMLを編集してください。
+
+----
+services:
+  etcd:
+    extra_args:
+      log-level: "debug"
+----
+
+[#_etcd_v3_4_and_earlier]
+=== etcd v3.4以前
+
+以前のetcdバージョンでは、APIを使用してログレベルを動的に変更できます。 以下のコマンドを使用してデバッグログを設定してください。
+
+----
+docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -XPUT -d '{"Level":"DEBUG"}' --cacert $(docker exec etcd printenv ETCDCTL_CACERT) --cert $(docker exec etcd printenv ETCDCTL_CERT) --key $(docker exec etcd printenv ETCDCTL_KEY) $(docker exec etcd printenv ETCDCTL_ENDPOINTS)/config/local/log
+----
+
+ログレベルをデフォルト（`INFO`）にリセットするには、以下のコマンドを使用できます。
+
+コマンド:
+
+----
+docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -XPUT -d '{"Level":"INFO"}' --cacert $(docker exec etcd printenv ETCDCTL_CACERT) --cert $(docker exec etcd printenv ETCDCTL_CERT) --key $(docker exec etcd printenv ETCDCTL_KEY) $(docker exec etcd printenv ETCDCTL_ENDPOINTS)/config/local/log
+----
+
+[#_etcd_content]
+== etcd の内容
+
+etcd の内容を調査したい場合は、ストリーミングイベントを監視するか、etcd を直接クエリすることができます。以下に例を示します。
+
+[#_watch_streaming_events]
+=== ストリーミングイベントを監視する
+
+コマンド:
+
+----
+docker exec etcd etcdctl watch --prefix /registry
+----
+
+影響を受けたキーのみを表示したい場合（バイナリデータは表示しない場合）、コマンドに `| grep -a ^/registry` を追加してキーのみをフィルタリングできます。
+
+[#_query_etcd_directly]
+=== etcd を直接クエリする
+
+コマンド:
+
+----
+docker exec etcd etcdctl get /registry --prefix=true --keys-only
+----
+
+以下のコマンドを使用して、キーごとのカウントの概要を取得するためにデータを処理できます。
+
+----
+docker exec etcd etcdctl get /registry --prefix=true --keys-only | grep -v ^$ | awk -F'/' '{ if ($3 ~ /cattle.io/) {h[$3"/"$4]++} else { h[$3]++ }} END { for(k in h) print h[k], k }' | sort -nr
+----
+
+[#_replacing_unhealthy_etcd_nodes]
+== 不健康な etcd ノードの置き換え
+
+etcd クラスター内のノードが不健康になった場合は、新しい etcd ノードをクラスターに追加する前に、障害が発生したノードや不健康なノードを修正または削除することが推奨されます。

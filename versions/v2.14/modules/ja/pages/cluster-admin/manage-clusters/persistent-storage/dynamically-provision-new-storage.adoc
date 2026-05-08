@@ -1,0 +1,128 @@
+= における新しいストレージの動的プロビジョニング{rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-09-12
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/dynamically-provision-new-storage.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/dynamically-provision-new-storage.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-longhorn: xref:integrations/longhorn/longhorn.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-unsupported-storage-drivers: xref:rancher-admin/experimental-features/unsupported-storage-drivers.adoc
+:xref-about-persistent-storage: xref:cluster-admin/manage-clusters/persistent-storage/about-persistent-storage.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-longhorn: xref:integrations-in-rancher/longhorn/index.adoc
+:xref-set-up-cloud-providers: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/index.adoc
+:xref-unsupported-storage-drivers: xref:how-to-guides/advanced-user-guides/enable-experimental-features/unsupported-storage-drivers.adoc
+:xref-about-persistent-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/about-persistent-storage.adoc
+endif::[]
+
+このセクションでは、Rancherのワークロード用に新しい永続ストレージをプロビジョニングする方法について説明します。
+
+このセクションでは、ストレージクラスと永続ボリュームクレームのKubernetesの概念を理解していることを前提としています。詳細については、{xref-about-persistent-storage}[ストレージの動作に関するセクション]を参照してください。
+
+新しいストレージは、Amazon EBSなどのクラウドプロバイダーによってプロビジョニングされることがよくあります。ただし、新しいストレージはクラウドにある必要はありません。
+
+ブロックストレージのプールがあり、クラウドプロバイダーを使用したくない場合、LonghornはKubernetesクラスターに永続ストレージを提供するのに役立ちます。詳細については、{xref-longhorn}[Cloud Native Storage with Longhorn]を参照してください。
+
+ワークロード用に新しいストレージをプロビジョニングするには、次の手順に従ってください：
+
+. <<_1_add_a_storage_class_and_configure_it_to_use_your_storage,ストレージクラスを追加し、ストレージを使用するように構成します。>>
+. <<_2_use_the_storage_class_for_pods_deployed_with_a_statefulset,StatefulSetでデプロイされたPod用のストレージクラスを使用します。>>
+
+[#_prerequisites]
+== 前提条件
+
+* 永続ストレージを設定するには、`Manage Volumes` {xref-cluster-project-roles}#_project_role_reference[ロール]が必要です。
+* クラウドにホストされているクラスターのためにストレージをプロビジョニングする場合、ストレージとクラスターのホストは同じクラウドプロバイダーである必要があります。
+* クラウドプロバイダーが有効になっている必要があります。クラウドプロバイダーを有効にする詳細については、{xref-set-up-cloud-providers}[このページ]を参照してください。
+* ストレージプロビジョナーが有効にできる状態であることを確認してください。
+
+以下のストレージプロビジョナーはデフォルトで有効になっています：
+
+|===
+| 名前 | プラグイン
+
+| Amazon EBSディスク
+| `aws-ebs`
+
+ifeval::["{build-type}" != "srfa"]
+| AzureFile
+| `azure-file`
+
+| AzureDisk
+| `azure-disk`
+
+| Google永続ディスク
+| `gce-pd`
+
+| VMware vSphereボリューム
+| `vsphere-volume`
+endif::[]
+
+| ローカル
+| `local`
+
+| ネットワークファイルシステム（NFS）
+| `nfs`
+
+| hostPath
+| `host-path`
+|===
+
+上記のリストにないストレージプロビジョナーを使用するには、{xref-unsupported-storage-drivers}[サポートされていないストレージドライバーを有効にするための機能フラグを使用する必要があります。]
+
+[#_1_add_a_storage_class_and_configure_it_to_use_your_storage]
+== 1.ストレージクラスを追加し、ストレージを使用するように構成します。
+
+これらの手順は、クラスターレベルでストレージクラスを設定する方法について説明します。
+
+. *☰ > クラスター管理*をクリックします。
+. 動的に永続ストレージボリュームをプロビジョニングしたいクラスターに移動し、*Explore*をクリックします。
+. menu:ストレージ[ストレージクラス]をクリックします。
+. ［*作成*］をクリックします。
+. ストレージクラスの名前を入力してください。
+. *プロビジョナー*のドロップダウンから、動的にストレージボリュームをプロビジョニングするために使用したいサービスを選択します。例えば、Amazon EC2クラスターがあり、それにクラウドストレージを使用したい場合は、`Amazon EBS Disk`プロビジョナーを使用します。
+. *パラメーター*タブで、サービスが動的にストレージボリュームをプロビジョニングするために必要な情報を入力します。各プロビジョナーは、ストレージボリュームを動的にプロビジョニングするために異なる情報を必要とします。この情報を取得する方法については、サービスのドキュメントを参照してください。
+. ［*作成*］をクリックします。
+
+*結果:*ストレージクラスは、PVCによって消費されることができます。
+
+ストレージクラスのパラメータに関する詳細情報は、公式の https://kubernetes.io/docs/concepts/storage/storage-classes/#parameters[Kubernetesドキュメント]を参照してください。
+
+[#_2_use_the_storage_class_for_pods_deployed_with_a_statefulset]
+== 2.ステートフルセットでデプロイされたポッド用のストレージクラスを使用してください。
+
+ステートフルセットは、各ポッドの固有のアイデンティティを維持しながら、ポッドのデプロイとスケーリングを管理します。このステートフルセットでは、ボリュームクレームテンプレートを設定します。ステートフルセットによって管理される各ポッドは、このボリュームクレームテンプレートに基づいて永続ボリュームクレームと共にデプロイされます。永続ボリュームクレームは、私たちが作成したストレージクラスを参照します。したがって、StatefulSetによって管理される各Podがデプロイされると、それはその永続ボリュームクレームで定義されたストレージクラスを使用して動的にプロビジョニングされたストレージにバインドされます。
+
+. *☰ > クラスター管理*をクリックします。
+. ワークロードでストレージクラスを追加または使用したいクラスターに移動し、*Explore*をクリックしてください。
+. 左のナビゲーションバーで*ワークロード*をクリックします。
+. ［*作成*］をクリックします。
+. *ステートフルセット* をクリックします。
+. *ボリュームクレームテンプレート* タブで、*クレームテンプレートを追加* をクリックします。
+. 永続ボリュームの名前を入力してください。
+. *ストレージクラス*フィールドで、このStatefulSetによって管理されるポッドのためにストレージを動的にプロビジョニングするストレージクラスを選択してください。
+. *マウントポイント*フィールドに、ワークロードがボリュームにアクセスするために使用するパスを入力してください。
+. *[起動]* をクリックします。
+
+*結果:*StatefulSetによって管理される各Podがデプロイされると、指定されたディスクスペースの量をKubernetesマスターにリクエストします。ワークロードがデプロイされるときに、指定されたリソースを持つPVが利用可能であれば、KubernetesマスターはPVを互換性のあるPVCを持つPodにバインドします。
+
+既存のワークロードにPVCを添付するには、
+
+. *☰ > クラスター管理*をクリックします。
+. ワークロードでストレージクラスを追加または使用したいクラスターに移動し、*Explore*をクリックしてください。
+. 左のナビゲーションバーで*ワークロード*をクリックします。
+. ストレージクラスでプロビジョニングされたストレージを使用するワークロードに移動し、*⋮ > Edit Config*をクリックしてください。
+. *ボリュームクレームテンプレート*セクションで、*クレームテンプレートを追加*をクリックしてください。
+. 永続ボリューム名を入力してください。
+. *ストレージクラス*フィールドで、このStatefulSetによって管理されるポッドのためにストレージを動的にプロビジョニングするストレージクラスを選択してください。
+. *マウントポイント*フィールドに、ワークロードがボリュームにアクセスするために使用するパスを入力してください。
+. ［*保存*］をクリックします。
+
+*結果:*ワークロードは、指定されたディスクスペースの量をKubernetesマスターにリクエストします。ワークロードがデプロイされるときに、指定されたリソースを持つPVが利用可能であれば、KubernetesマスターはPVをPVCにバインドします。そうでない場合、Rancherは新しい永続ストレージをプロビジョニングします。

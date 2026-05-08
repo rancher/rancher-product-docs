@@ -1,0 +1,367 @@
+= 4.{rancher-product-name}をインストールします。
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-22
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/install-rancher-ha.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/install-rancher-ha.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-tls-secrets: xref:installation-and-upgrade/resources/tls-secrets.adoc
+:xref-upgrade-certmanager: xref:installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+:xref-helm-reqs: xref:installation-and-upgrade/requirements/helm-version-requirements.adoc
+:xref-rancher-extensions: xref:integrations/rancher-extensions.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-tls-secrets: xref:getting-started/installation-and-upgrade/resources/add-tls-secrets.adoc
+:xref-upgrade-certmanager: xref:getting-started/installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+:xref-helm-reqs: xref:getting-started/installation-and-upgrade/resources/helm-version-requirements.adoc
+:xref-rancher-extensions: xref:integrations-in-rancher/rancher-extensions.adoc
+endif::[]
+
+
+このセクションでは、エアギャップ環境での高可用性KubernetesインストールのためにRancherをデプロイする方法について説明します。エアギャップ環境とは、Rancherサーバーがオフラインで、ファイアウォールの背後またはプロキシの背後にインストールされる場所を指します。
+
+[#_privileged_access_for_rancher]
+== Rancherの特権アクセス
+
+RancherサーバーがDockerコンテナ内にデプロイされると、Rancherが使用するためのローカルKubernetesクラスターがコンテナ内にインストールされます。Rancherの多くの機能はデプロイメントとして実行され、コンテナ内でコンテナを実行するには特権モードが必要なため、`--privileged`オプションを使用してRancherをインストールする必要があります。
+
+[#_docker_instructions]
+== Dockerの手順
+
+Dockerコマンドを使用してエアギャップインストールを続行したい場合は、このページの残りをスキップし、xref:[このページの指示に従ってください。]
+
+[#_kubernetes_instructions]
+== Kubernetesの手順
+
+RancherはKubernetesクラスターにRancherをインストールすることを推奨しています。高可用性のKubernetesインストールは、Kubernetesクラスター上でRancherサーバーコンポーネントを実行する3つのノードで構成されています。永続層（etcd）もこれらの3つのノードに複製され、ノードの1つが故障した場合に冗長性とデータの重複を提供します。
+
+[#_1_add_the_helm_chart_repository]
+=== 1.Helmチャートリポジトリを追加する
+
+インターネットにアクセスできるシステムから、最新のHelmチャートを取得し、その結果のマニフェストをRancherサーバークラスターにアクセスできるシステムにコピーします。
+
+. まだインストールしていない場合は、インターネットアクセスがあるワークステーションに`helm`をローカルにインストールしてください。注意:RancherをインストールするHelmのバージョンを選択するには、{xref-helm-reqs}[Helmのバージョン要件]を参照してください。
+
+ifeval::["{build-type}" == "product"]
+. `helm repo add`コマンドを使用して、Rancher Primeをインストールするためのチャートを含むHelmチャートリポジトリを追加します。
++
+[,shell]
+----
+helm repo add rancher-prime <helm-chart-repo-url>
+----
++
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
+endif::[]
+
+ifeval::["{build-type}" == "community"]
+. `helm repo add`コマンドを使用して、Rancherをインストールするためのチャートを含むHelmチャートリポジトリを追加します。リポジトリの選択肢と、どれがあなたのユースケースに最適かについての詳細は、xref:getting-started/installation-and-upgrade/resources/choose-a-rancher-version.adoc[Rancherバージョンの選択]を参照してください。
+
+** 最新：最新の機能を試すために推奨されます。
++
+----
+helm repo add rancher-latest https://releases.rancher.com/server-charts/latest
+----
+
+** 安定：本番環境に推奨されます。
++
+----
+helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+----
+
+** アルファ:今後のリリースの実験的プレビューです。
++
+----
+helm repo add rancher-alpha https://releases.rancher.com/server-charts/alpha
+----
++
+[NOTE]
+====
+アルファ間のアップグレードはサポートされていません。
+====
+endif::[]
+
+. {rancher-product-name}チャートを取得します。これにより、チャートがダウンロードされ、現在のディレクトリに`.tgz`ファイルとして保存されます。
+** 最新バージョンを取得するには:
+ifeval::["{build-type}" == "product"]
+endif::[]
++
+[,shell,subs="attributes+"]
+----
+helm fetch {rancher-helm-repo}/rancher
+----
+** 特定のバージョンを取得するには:
++
+.. 利用可能なRancher Primeのバージョンを確認してください。
++
+[,shell,subs="attributes+"]
+----
+helm search repo --versions {rancher-helm-repo}
+----
+
+.. 特定のバージョンを取得するには、`--version`パラメータを指定してください。
++
+[,shell,subs="attributes+"]
+----
+helm fetch {rancher-helm-repo}/rancher --version=<version>
+----
+
+[#_2_choose_your_ssl_configuration]
+=== 2.SSL設定を選択してください。
+
+Rancher Serverはデフォルトで安全に設計されており、SSL/TLS設定が必要です。
+
+RancherがエアギャップのKubernetesクラスターにインストールされている場合、証明書のソースとして推奨される2つのオプションがあります。
+
+[NOTE]
+====
+
+SSL/TLSを外部で終了させたい場合は、{xref-helm-chart-options}#_external_tls_termination[外部ロードバランサーでのTLS終了]を参照してください。
+====
+
+
+|===
+| 設定 | チャートオプション | 説明 | cert-managerが必要です。
+
+| Rancher生成の自己署名証明書
+| `ingress.tls.source=rancher`
+| Rancherが生成したCA（自己署名）によって発行された証明書を使用します。 +
+これは*デフォルト*であり、Helmテンプレートをレンダリングする際に追加する必要はありません。
+| yes
+
+| ファイルからの証明書
+| `ingress.tls.source=secret`
+| Kubernetes Secretを作成することで、自身の証明書ファイルを使用してください。 +
+このオプションは、Rancher Helmテンプレートをレンダリングする際に渡す必要があります。
+| no
+|===
+
+[#_helm_chart_options_for_air_gap_installations]
+=== エアギャップインストール用のHelmチャートオプション
+
+Rancher Helmテンプレートを設定する際、エアギャップインストール専用に設計されたHelmチャートのオプションがいくつかあります。
+
+|===
+| チャートオプション | チャート値 | 説明
+
+| `certmanager.version`
+| `<version>`
+| 実行中のcert-managerのバージョンに応じて、適切なRancher TLS発行者を設定します。
+
+| `systemDefaultRegistry`
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| クラスターをプロビジョニングする際に、Rancherサーバーが常にプライベートレジストリからプルするように設定します。
+
+| `useBundledSystemChart`
+| `true`
+| RancherサーバーがHelmシステムチャートのパッケージ版を使用するように設定します。 https://github.com/rancher/system-charts[システムチャート]リポジトリには、監視、ログ記録、アラート、グローバルDNSなどの機能に必要なすべてのカタログアイテムが含まれています。これらの https://github.com/rancher/system-charts[Helmチャート]はGitHubにありますが、エアギャップ環境にいるため、Rancherにバンドルされているチャートを使用する方がGitミラーを設定するよりもはるかに簡単です。
+|===
+
+[#_3_fetch_the_cert_manager_chart]
+=== 3.Cert-Managerチャートを取得する
+
+<<_2_choose_your_ssl_configuration,2で行った選択に基づいて。SSL設定>>を選択し、以下の手順のいずれかを完了してください。
+
+[#_option_a_default_self_signed_certificate]
+==== オプションA：デフォルトの自己署名証明書
+
+デフォルトでは、RancherはCAを生成し、Rancherサーバーインターフェースへのアクセスのためにcert-managerを使用して証明書を発行します。
+
+[NOTE]
+====
+
+cert-managerへの最近の変更により、アップグレードが必要です。Rancherをアップグレードしており、cert-managerのバージョンがv0.11.0より古い場合は、{xref-upgrade-certmanager}[cert-managerのアップグレードドキュメント]を参照してください。
+====
+
+
+[#_1_add_the_cert_manager_repo]
+===== 1.cert-managerリポジトリを追加します。
+
+インターネットに接続されたシステムから、Helmにcert-managerリポジトリを追加します。
+
+[,plain]
+----
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+----
+
+[#_2_fetch_the_cert_manager_chart]
+===== 2.cert-managerチャートを取得します。
+
+https://artifacthub.io/packages/helm/cert-manager/cert-manager[Helmチャートリポジトリ]から利用可能な最新のcert-managerチャートを取得します。
+
+[,plain]
+----
+helm fetch jetstack/cert-manager --version v1.11.0
+----
+
+[#_3_retrieve_the_cert_manager_crds]
+===== 3.cert-managerのCRDを取得します。
+
+cert-manager用の必要なCRDファイルをダウンロードします。
+
+[,plain]
+----
+   curl -L -o cert-manager-crd.yaml https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.crds.yaml
+----
+
+[#_4_install_rancher]
+=== 4.Rancher をインストールします。
+
+取得したチャートをRancherサーバークラスターにアクセスできるシステムにコピーして、インストールを完了します。
+
+[#_1_install_cert_manager]
+==== 1.cert-managerをインストールします。
+
+チャートをインストールするために使用するのと同じオプションでcert-managerをインストールします。プライベートレジストリからイメージを取得するために`image.repository`オプションを設定することを忘れないでください。
+
+[NOTE]
+====
+
+cert-managerのインストールをカスタマイズする方法についてのオプションを確認するには、 https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[cert-manager docs]を参照してください。
+====
+
+
+.クリックして開く。
+[%collapsible]
+======
+自己署名証明書を使用している場合は、cert-managerをインストールします：
+
+. cert-manager用のネームスペースを作成します。
++
+[,plain]
+----
+ kubectl create namespace cert-manager
+----
+
+. cert-managerのカスタムリソース定義（CRD）を作成します。
++
+[,plain]
+----
+ kubectl apply -f cert-manager-crd.yaml
+----
+
+. cert-managerをインストールします。
++
+[,plain]
+----
+ helm install cert-manager ./cert-manager-v1.11.0.tgz \
+     --namespace cert-manager \
+     --set image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-controller \
+     --set webhook.image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-webhook \
+     --set cainjector.image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-cainjector \
+     --set startupapicheck.image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-ctl
+----
++
+======
+
+[#_2_install_rancher]
+==== 2.Rancher をインストールします。
+
+まず、{xref-tls-secrets}[TLSシークレットの追加]を参照して、Rancherとイングレスコントローラーが使用できるように証明書ファイルを公開します。
+
+次に、kubectlを使用してRancher用のネームスペースを作成します。
+
+[,plain]
+----
+kubectl create namespace cattle-system
+----
+
+次に、選択したオプションを宣言してRancherをインストールします。以下の参照表を使用して、各プレースホルダーを置き換えます。Rancherは、Rancherが起動したKubernetesクラスターやRancherツールをプロビジョニングするためにプライベートレジストリを使用するように構成する必要があります。
+
+|===
+| Placeholder | 説明
+
+| `<VERSION>`
+| 出力tarballのバージョン番号。
+
+| `<RANCHER.YOURDOMAIN.COM>`
+| ロードバランサーにポイントしたDNS名。
+
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| プライベートレジストリのDNS名です。
+
+| `<CERTMANAGER_VERSION>`
+| k8sクラスターで実行されているCert-managerのバージョン。
+|===
+
+[,plain]
+----
+   helm install rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set certmanager.version=<CERTMANAGER_VERSION> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+*オプション*：特定のRancherバージョンをインストールするには、`image.tag`の値を設定します。例：`--set image.tag=v{current-patch-version}`
+
+[#_option_b_certificates_from_files_using_kubernetes_secrets]
+==== オプションB：Kubernetesシークレットを使用したファイルからの証明書
+
+[#_1_create_secrets]
+===== 1.シークレットを作成する
+
+Rancherが使用するために、自分の証明書からKubernetesシークレットを作成します。証明書の共通名は、以下のコマンドの`hostname`オプションと一致する必要があります。そうしないと、IngressコントローラーはRancherのサイトをプロビジョニングできません。
+
+[#_2_install_rancher_1]
+===== 2.Rancher をインストールします。
+
+選択したオプションを宣言してRancherをインストールします。以下の参照表を使用して、各プレースホルダーを置き換えます。Rancherは、Rancherが起動したKubernetesクラスターやRancherツールをプロビジョニングするためにプライベートレジストリを使用するように構成する必要があります。
+
+|===
+| Placeholder | 説明
+
+| `<VERSION>`
+| 出力tarballのバージョン番号。
+
+| `<RANCHER.YOURDOMAIN.COM>`
+| ロードバランサーにポイントしたDNS名。
+
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| プライベートレジストリのDNS名です。
+|===
+
+[,plain]
+----
+   helm install rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+プライベートCA署名の証明書を使用している場合は、`--set ingress.tls.source=secret`の後に`--set privateCA=true`を追加してください：
+
+[,plain]
+----
+   helm install rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set privateCA=true \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+インストールは完了しました。
+
+[#_additional_resources]
+== その他の資料
+
+これらのリソースは、Rancherをインストールする際に役立ちます。
+
+* {xref-rancher-extensions}#_エアギャップ(された)環境での拡張機能のインポートとインストール[エアギャップ(された)環境での拡張機能のインポートとインストール]
+* {xref-helm-chart-options}[Rancher Helmチャートオプション]
+* {xref-tls-secrets}[TLSシークレットの追加]
+* {xref-install-upgrade-troubleshooting}[Rancher Kubernetesインストールのトラブルシューティング]

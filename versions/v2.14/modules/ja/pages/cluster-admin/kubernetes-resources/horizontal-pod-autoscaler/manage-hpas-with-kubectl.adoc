@@ -1,0 +1,220 @@
+= kubectlを使用したHPAの管理
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-resources-setup/horizontal-pod-autoscaler/manage-hpas-with-kubectl.adoc 
+:product-path: cluster-admin/kubernetes-resources/horizontal-pod-autoscaler/manage-hpas-with-kubectl.adoc
+ifeval::["{build-type}" != "community"]
+:xref-hpas-with-ui: xref:cluster-admin/kubernetes-resources/horizontal-pod-autoscaler/manage-hpas-with-ui.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-hpas-with-ui: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/horizontal-pod-autoscaler/manage-hpas-with-ui.adoc
+endif::[]
+
+このセクションでは、`kubectl`を使用したHPAの管理について説明します。この文書には、次の操作を行うための手順が含まれています。
+
+* HPAを作成する
+* HPAに関する情報を取得する
+* HPAを削除する
+* CPUまたはメモリの使用率に基づいてHPAをスケールするように設定する
+* Prometheusなどのサードパーティツールを使用してカスタムメトリクスに基づいてHPAをスケールするように設定する
+
+Rancher UIからHPAを作成、表示、削除できます。Rancher UIからCPUまたはメモリの使用量に基づいてスケールするように設定することもできます。詳細については、{xref-hpas-with-ui}[Rancher UIを使用したHPAの管理]を参照してください。CPUまたはメモリ以外のメトリクスに基づいてHPAをスケールするには、依然として`kubectl`が必要です。
+
+[#_basic_kubectl_command_for_managing_hpas]
+== HPA管理のための基本的なkubectlコマンド
+
+HPAマニフェストファイルがある場合、`kubectl`を使用してHPAを作成、管理、削除できます。
+
+* HPAの作成
+ ** マニフェストを使用して: `kubectl create -f <HPA_MANIFEST>`
+ ** マニフェストなし（CPUのみサポート）: `kubectl autoscale deployment hello-world --min=2 --max=5 --cpu-percent=50`
+* HPA情報の取得
+ ** 基本: `kubectl get hpa hello-world`
+ ** 詳細な説明: `kubectl describe hpa hello-world`
+* HPAの削除
+ ** `kubectl delete hpa hello-world`
+
+[#_hpa_manifest_definition_example]
+== HPAマニフェスト定義の例
+
+HPAマニフェストは、`kubectl`を使用してHPAを管理するための設定ファイルです。
+
+以下のスニペットは、HPAマニフェストにおける異なるディレクティブの使用を示しています。各ディレクティブの目的を理解するために、サンプルの下にあるリストを参照してください。
+
+[,yml]
+----
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hello-world
+spec:
+  scaleTargetRef:
+    apiVersion: extensions/v1beta1
+    kind: Deployment
+    name: hello-world
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      targetAverageUtilization: 50
+  - type: Resource
+    resource:
+      name: memory
+      targetAverageValue: 100Mi
+----
+
+|===
+| ディレクティブ | 説明
+
+| `apiVersion: autoscaling/v2beta1`
+| 使用中のKubernetes `autoscaling` APIグループのバージョン。この例のマニフェストはベータ版を使用しているため、CPUとメモリによるスケーリングが有効になっています。
+
+| `name: hello-world`
+| HPAが`hello-word`デプロイメントのオートスケーリングを行っていることを示します。
+
+| `minReplicas: 1`
+| 実行中のレプリカの最小数が1未満にならないことを示します。
+
+| `maxReplicas: 10`
+| デプロイメントの最大レプリカ数が10を超えないことを示します。
+
+| `targetAverageUtilization: 50`
+| 平均実行中のポッドが要求されたCPUの50%以上を使用している場合、ポッドをスケールアップすることを示します。
+
+| `targetAverageValue: 100Mi`
+| 平均実行中のポッドが100Mi以上のメモリを使用している場合、ポッドをスケールアップすることを示します。
+|===
+
+[#_configuring_hpa_to_scale_using_resource_metrics_cpu_and_memory]
+== リソースメトリクス（CPUとメモリ）を使用してスケールするためのHPAの設定
+
+Rancher v2.0.7以降で作成されたクラスターは、Horizontal Pod Autoscalerを使用するために必要なすべての要件（メトリクスサーバーとKubernetesクラスターの設定）を満たしています。
+
+メトリクスがインストールで利用可能かどうかを確認するために、以下のコマンドを実行してください:
+
+ $ kubectl top nodes
+ NAME                              CPU(cores)   CPU%      MEMORY(bytes)   MEMORY%
+ node-controlplane   196m         9%        1623Mi          42%
+ node-etcd           80m          4%        1090Mi          28%
+ node-worker         64m          3%        1146Mi          29%
+ $ kubectl -n kube-system top pods
+ NAME                                   CPU(cores)   MEMORY(bytes)
+ canal-pgldr                            18m          46Mi
+ canal-vhkgr                            20m          45Mi
+ canal-x5q5v                            17m          37Mi
+ canal-xknnz                            20m          37Mi
+ kube-dns-7588d5b5f5-298j2              0m           22Mi
+ kube-dns-autoscaler-5db9bbb766-t24hw   0m           5Mi
+ metrics-server-97bc649d5-jxrlt         0m           12Mi
+ $ kubectl -n kube-system logs -l k8s-app=metrics-server
+ I1002 12:55:32.172841       1 heapster.go:71] /metrics-server --source=kubernetes.summary_api:https://kubernetes.default.svc?kubeletHttps=true&kubeletPort=10250&useServiceAccount=true&insecure=true
+ I1002 12:55:32.172994       1 heapster.go:72] Metrics Server version v0.2.1
+ I1002 12:55:32.173378       1 configs.go:61] Using Kubernetes client with master "https://kubernetes.default.svc" and version
+ I1002 12:55:32.173401       1 configs.go:62] Using kubelet port 10250
+ I1002 12:55:32.173946       1 heapster.go:128] Starting with Metric Sink
+ I1002 12:55:32.592703       1 serving.go:308] Generated self-signed cert (apiserver.local.config/certificates/apiserver.crt, apiserver.local.config/certificates/apiserver.key)
+ I1002 12:55:32.925630       1 heapster.go:101] Starting Heapster API server...
+ [restful] 2018/10/02 12:55:32 log.go:33: [restful/swagger] listing is available at https:///swaggerapi
+ [restful] 2018/10/02 12:55:32 log.go:33: [restful/swagger] https:///swaggerui/ is mapped to folder /swagger-ui/
+ I1002 12:55:32.928597       1 serve.go:85] Serving securely on 0.0.0.0:443
+
+[#_configuring_hpa_to_scale_using_custom_metrics_with_prometheus]
+== Prometheusを使用してカスタムメトリクスでスケールするためにHPAを設定する方法
+
+サードパーティのソフトウェアが提供するカスタムメトリクスに基づいてHPAをオートスケールするように設定できます。サードパーティのソフトウェアを使用したオートスケーリングの最も一般的なユースケースは、アプリケーションレベルのメトリクス（すなわち、1秒あたりのHTTPリクエスト）に基づいています。HPAは`custom.metrics.k8s.io` APIを使用してこれらのメトリクスを取得します。このAPIは、メトリクス収集ソリューションのためにカスタムメトリクスアダプターをデプロイすることで有効になります。
+
+この例では、 https://prometheus.io/[Prometheus]を使用します。以下の前提から始めます：
+
+* Prometheusはクラスターにデプロイされています。
+* Prometheusは正しく構成されており、ポッド、ノード、ネームスペースなどから適切なメトリクスを収集しています。
+* Prometheusは以下のURLとポートで公開されています：`http://prometheus.mycompany.io:80`
+
+PrometheusはRancher v2.0カタログでデプロイ可能です。クラスターでまだ実行されていない場合は、Rancherカタログからデプロイしてください。
+
+HPAがPrometheusからカスタムメトリクスを使用するには、クラスターの`kube-system`ネームスペースに https://github.com/DirectXMan12/k8s-prometheus-adapter[k8s-prometheus-adapter]パッケージが必要です。`k8s-prometheus-adapter`をインストールするために、 https://github.com/banzaicloud/banzai-charts[banzai-charts]で利用可能なHelmチャートを使用します。
+
+. クラスターでHelmを初期化します。
++
+----
+  # kubectl -n kube-system create serviceaccount tiller
+  kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
+  helm init --service-account tiller
+----
+
+. GitHubから`banzai-charts`リポジトリをクローンします：
++
+----
+  # git clone https://github.com/banzaicloud/banzai-charts
+----
+
+. PrometheusのURLとポート番号を指定して`prometheus-adapter`チャートをインストールします。
++
+----
+  # helm install --name prometheus-adapter banzai-charts/prometheus-adapter --set prometheus.url="http://prometheus.mycompany.io",prometheus.port="80" --namespace kube-system
+----
+
+. `prometheus-adapter`が正しく実行されていることを確認します。`kube-system`ネームスペース内のサービスポッドとログを確認します。
+. サービスポッドが`Running`であることを確認します。以下のコマンドを入力します。
+    `
+    # kubectl get pods -n kube-system
+   `
+    結果の出力から、`Running`のステータスを探します。
+    `+
+    NAME                                  READY     STATUS    RESTARTS   AGE
+    ...
+    prometheus-adapter-prometheus-adapter-568674d97f-hbzfx   1/1       Running   0          7h
+    ...
+   +`
+. サービスが正しく実行されていることを確認するために、次のコマンドを入力してサービスログを確認します。
+    `
+    # kubectl logs prometheus-adapter-prometheus-adapter-568674d97f-hbzfx -n kube-system
+   `
+    次に、ログ出力を確認してサービスが実行されていることを確認します。
+
+ .Prometheus Adaptor Logs [%collapsible] ====== ...
+ I0724 10:18:45.696679       1 round_trippers.go:436] GET https://10.43.0.1:443/api/v1/namespaces/default/pods?labelSelector=app%3Dhello-world 200 OK in 2 milliseconds
+ I0724 10:18:45.696695       1 round_trippers.go:442] Response Headers:
+ I0724 10:18:45.696699       1 round_trippers.go:445]     Date: Tue, 24 Jul 2018 10:18:45 GMT
+ I0724 10:18:45.696703       1 round_trippers.go:445]     Content-Type: application/json
+ I0724 10:18:45.696706       1 round_trippers.go:445]     Content-Length: 2581
+ I0724 10:18:45.696766       1 request.go:836] Response Body: {"kind":"PodList","apiVersion":"v1","metadata":{"selfLink":"/api/v1/namespaces/default/pods","resourceVersion":"6237"},"items":[{"metadata":{"name":"hello-world-54764dfbf8-q6l82","generateName":"hello-world-54764dfbf8-","namespace":"default","selfLink":"/api/v1/namespaces/default/pods/hello-world-54764dfbf8-q6l82","uid":"484cb929-8f29-11e8-99d2-067cac34e79c","resourceVersion":"4066","creationTimestamp":"2018-07-24T10:06:50Z","labels":{"app":"hello-world","pod-template-hash":"1032089694"},"annotations":{"cni.projectcalico.org/podIP":"10.42.0.7/32"},"ownerReferences":[{"apiVersion":"extensions/v1beta1","kind":"ReplicaSet","name":"hello-world-54764dfbf8","uid":"4849b9b1-8f29-11e8-99d2-067cac34e79c","controller":true,"blockOwnerDeletion":true}]},"spec":{"volumes":[{"name":"default-token-ncvts","secret":{"secretName":"default-token-ncvts","defaultMode":420}}],"containers":[{"name":"hello-world","image":"rancher/hello-world","ports":[{"containerPort":80,"protocol":"TCP"}],"resources":{"requests":{"cpu":"500m","memory":"64Mi"}},"volumeMounts":[{"name":"default-token-ncvts","readOnly":true,"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount"}],"terminationMessagePath":"/dev/termination-log","terminationMessagePolicy":"File","imagePullPolicy":"Always"}],"restartPolicy":"Always","terminationGracePeriodSeconds":30,"dnsPolicy":"ClusterFirst","serviceAccountName":"default","serviceAccount":"default","nodeName":"34.220.18.140","securityContext":{},"schedulerName":"default-scheduler","tolerations":[{"key":"node.kubernetes.io/not-ready","operator":"Exists","effect":"NoExecute","tolerationSeconds":300},{"key":"node.kubernetes.io/unreachable","operator":"Exists","effect":"NoExecute","tolerationSeconds":300}]},"status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True","lastProbeTime":null,"lastTransitionTime":"2018-07-24T10:06:50Z"},{"type":"Ready","status":"True","lastProbeTime":null,"lastTransitionTime":"2018-07-24T10:06:54Z"},{"type":"PodScheduled","status":"True","lastProbeTime":null,"lastTransitionTime":"2018-07-24T10:06:50Z"}],"hostIP":"34.220.18.140","podIP":"10.42.0.7","startTime":"2018-07-24T10:06:50Z","containerStatuses":[{"name":"hello-world","state":{"running":{"startedAt":"2018-07-24T10:06:54Z"}},"lastState":{},"ready":true,"restartCount":0,"image":"rancher/hello-world:latest","imageID":"docker-pullable://rancher/hello-world@sha256:4b1559cb4b57ca36fa2b313a3c7dde774801aa3a2047930d94e11a45168bc053","containerID":"docker://cce4df5fc0408f03d4adf82c90de222f64c302bf7a04be1c82d584ec31530773"}],"qosClass":"Burstable"}}]}
+ I0724 10:18:45.699525       1 api.go:74] GET http://prometheus-server.prometheus.34.220.18.140.xip.io/api/v1/query?query=sum%28rate%28container_fs_read_seconds_total%7Bpod_name%3D%22hello-world-54764dfbf8-q6l82%22%2Ccontainer_name%21%3D%22POD%22%2Cnamespace%3D%22default%22%7D%5B5m%5D%29%29by%28pod_name%29&time=1532427525.697 200 OK
+ I0724 10:18:45.699620       1 api.go:93] Response Body: {"status":"success","data":{"resultType":"vector","result":[{"metric":{"pod_name":"hello-world-54764dfbf8-q6l82"},"value":[1532427525.697,"0"]}]}}
+ I0724 10:18:45.699939       1 wrap.go:42] GET /apis/custom.metrics.k8s.io/v1beta1/namespaces/default/pods/%2A/fs_read?labelSelector=app%3Dhello-world: (12.431262ms) 200 [[kube-controller-manager/v1.10.1 (linux/amd64) kubernetes/d4ab475/system:serviceaccount:kube-system:horizontal-pod-autoscaler] 10.42.0.0:24268]
+ I0724 10:18:51.727845       1 request.go:836] Request Body: {"kind":"SubjectAccessReview","apiVersion":"authorization.k8s.io/v1beta1","metadata":{"creationTimestamp":null},"spec":{"nonResourceAttributes":{"path":"/","verb":"get"},"user":"system:anonymous","group":["system:unauthenticated"]},"status":{"allowed":false}}
+ ... ======
+
+. メトリクスAPIがkubectlからアクセス可能であることを確認します。
+
+* クラスターに直接アクセスしている場合は、次の形式でkubectl設定にサーバーURLを入力してください: `\https://<Kubernetes_URL>:6443`。
++
+----
+# kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1
+----
++
+APIにアクセスできる場合は、次のような出力を受け取るはずです。
++
+.APIレスポンス
+[%collapsible]
+======
+{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"custom.metrics.k8s.io/v1beta1","resources":[{"name":"pods/fs_usage_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_rss","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_cpu_period","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_cfs_throttled","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_io_time","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_read","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_sector_writes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_user","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/last_seen","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/tasks_state","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_cpu_quota","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/start_time_seconds","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_write","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_cache","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_usage_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_cfs_periods","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_cfs_throttled_periods","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_reads_merged","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_working_set_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/network_udp_usage","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_inodes_free","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_inodes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_io_time_weighted","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_failures","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_swap","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_cpu_shares","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_memory_swap_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_usage","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_io_current","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_writes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_failcnt","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_reads","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_writes_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_writes_merged","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/network_tcp_usage","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_max_usage_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_memory_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_memory_reservation_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_load_average_10s","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_system","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_reads_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_sector_reads","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]}]}
+======
+
+* Rancherを通じてクラスターにアクセスしている場合は、次の形式でkubectl設定にサーバーURLを入力してください: `\https://<RANCHER_URL>/k8s/clusters/<CLUSTER_ID>`。APIパスに接尾辞`/k8s/clusters/<CLUSTER_ID>`を追加してください。
++
+----
+# kubectl get --raw /k8s/clusters/<CLUSTER_ID>/apis/custom.metrics.k8s.io/v1beta1
+----
++
+APIにアクセスできる場合は、次のような出力を受け取るはずです。
++
+.APIレスポンス
+[%collapsible]
+======
+{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"custom.metrics.k8s.io/v1beta1","resources":[{"name":"pods/fs_usage_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_rss","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_cpu_period","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_cfs_throttled","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_io_time","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_read","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_sector_writes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_user","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/last_seen","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/tasks_state","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_cpu_quota","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/start_time_seconds","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_write","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_cache","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_usage_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_cfs_periods","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_cfs_throttled_periods","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_reads_merged","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_working_set_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/network_udp_usage","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_inodes_free","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_inodes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_io_time_weighted","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_failures","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_swap","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_cpu_shares","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_memory_swap_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_usage","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_io_current","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_writes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_failcnt","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_reads","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_writes_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_writes_merged","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/network_tcp_usage","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/memory_max_usage_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_memory_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/spec_memory_reservation_limit_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_load_average_10s","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/cpu_system","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_reads_bytes","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]},{"name":"pods/fs_sector_reads","singularName":"","namespaced":true,"kind":"MetricValueList","verbs":["get"]}]}
+======

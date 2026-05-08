@@ -1,0 +1,216 @@
+= バックアップおよび復元の使用ガイド
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-restore-usage-guide.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/usage-guide.adoc
+ifeval::["{build-type}" != "community"]
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-upgrades: xref:installation-and-upgrade/upgrades.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-backup-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-rancher-backup-config: xref:reference-guides/backup-restore-configuration/backup-configuration.adoc
+:xref-rancher-upgrades: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/upgrades.adoc
+endif::[]
+
+Rancher Backups チャートは、災害復旧と移行のための私たちのソリューションです。このチャートを使用すると、Kubernetes リソースのバックアップを取得し、さまざまな永続ストレージ場所に保存できます。
+
+このチャートは、Rancher エコシステムのさまざまな領域に関与する非常にシンプルなツールです。その結果、文書化されていない機能につながるエッジケースが発生しました。この文書の目的は、Rancher Backups の適切で定義された使用法を強調し、私たちが直面したいくつかのエッジケースについて議論することです。
+
+[#_functionality_overview]
+== 機能概要
+
+[#_backup]
+=== バックアップ
+
+オペレーターは、チャート内の resourceSet によってキャプチャされたすべてのリソースをメモリ内の非構造化オブジェクトとして収集します。リソースが収集された後、リソースの圧縮 tar ファイルが JSON のマニフェストのコレクションとして保存され、ユーザー定義のオブジェクトストアにアップロードされます。このバックアップは、繰り返しスケジュールに設定でき、暗号化することもできます。この暗号化オプションは重要です。なぜなら、一部のリソースは機密性が高く、値が暗号化されずにプレーンテキストで保存されるからです。
+
+バックアップを構成するオプションについての詳細は、{xref-rancher-backup-config}[バックアップ構成ドキュメント]を参照してください。暗号化を含みます。
+
+[NOTE]
+====
+
+{xref-backup-cluster}[Rancher のバックアップに関するドキュメント]に記載されているように、オペレーターはそれをバックアップ*しない*ため、暗号化構成ファイルの内容を手動で保存する必要があります。
+====
+
+
+[#_restore]
+=== 復元
+
+主な復元シナリオは2つあり、Rancher が実行されているクラスターへの復元と、新しいクラスターへの復元です。バックアップが取得されたのと同じクラスターで Rancher が実行されている場合にのみ、クラスターに復元できます。また、復元中に {xref-rancher-restore-config}#_prune_during_restore[`prune`オプション] が有効である必要があります。復元はバックアップと同様の入力が必要です。バックアップファイル名、encryptionConfigSecret 名、およびストレージ場所が必要です。
+
+リソースは次の順序で復元されます：
+
+. カスタムリソース定義（CRD）
+. クラスター範囲のリソース
+. ネームスペースリソース
+
+詳細な復元オプションについては、{xref-rancher-restore-config}[復元設定のドキュメント]を参照してください。
+
+[#_resource_sets]
+=== リソースセット
+
+resourceSet は、バックアップ時にバックアップ-復元オペレーターが収集するリソースを決定します。これは、キー/値の一致、正規表現の一致、またはKubernetesクライアントのlabelSelectorを使用して選択要件を定義するResourceSelectorsのセットです。
+
+resourceSelectorに利用可能な異なるフィールドは次のとおりです：
+
+* apiVersion
+* excludeKinds
+* excludeResourceNameRegexp
+* 種類
+* kindsRegexp
+* labelSelectors
+* namespaceRegexp
+* namespaces
+* resourceNameRegexp
+* resourceNames
+
+Rancher Backupsチャートには、チャートがインストールされるときに1つの大きなresourceSetに追加されるYAMLファイルの組み合わせである https://github.com/rancher/backup-restore-operator/tree/release/v3.0/charts/rancher-backup/files/default-resourceset-contents[デフォルトのresourceSet]が含まれています。ファイルの順序は重要ではありません。resourceSetsはバージョンによって異なる場合があります。
+
+[CAUTION]
+====
+
+resourceSetを編集したい場合は、チャートをインストールする*前*に編集してください。
+====
+
+
+[#_proper_usage]
+== 適切な使用法
+
+このセクションでは、使用ケースに応じたRancher Backupsチャートの適切な使用法に関するガイドラインを概説します。
+
+[#_all_cases]
+=== すべてのケース
+
+* Rancher Backupsは、ローカルクラスタにインストールする必要があります。
+ ** NOTE:Rancher Backupsは、インストールされているクラスター以外のクラスターを処理しません。ローカルクラスタにあるクラスターリソースを復元することはできますが、ダウンストリームクラスタと通信したり、それらをバックアップしたりすることはありません。
+* 復元先のRancherのバージョンは、バックアップからのRancherのバージョンと一致する必要があります。
+* Kubernetesのバージョンも考慮する必要があります。なぜなら、古いリソース（復元先のKubernetesのバージョンで廃止されたリソース）を復元する可能性があるからです。
+
+[#_backups]
+=== バックアップ
+
+* 一部のユーザー生成リソースは、デフォルトのresourceSetによってキャプチャされるか、resourceSetがそれらをキャプチャするように変更されない限り、バックアップされません。
+ ** 私たちは、任意の名前空間の秘密に追加されるとバックアップされるラベル`resources.cattle.io/backup:true`を提供します。
+* バックアップは、システムやリソースの状態を変更しません。
+* バックアップはローカルクラスタのみのものです。
+
+[#_restores]
+=== 復元
+
+* 復元とは、バックアップを取得したのと同じクラスターに復元することを指します。これは、Rancherがインストールされている場合（*プルーンを有効にする必要があります*）またはインストールされていない場合（特別な指示はありません）に行うことができます。
+* 復元時に注意すべきことの一つは、Rancherリソースのクラスターを"`wipe`"する必要があるかもしれないということです。これは、クラスターにジョブとして https://github.com/rancher/rancher-cleanup[Rancherクリーンアップスクリプト]をデプロイすることで行うことができます。これにより、Rancherバックアップを再度インストールし、完全に新しいクラスターに復元することができます。
+ ** スクリプトをデプロイするためにkubectlを使用することを確認してください。
+
+[#_migrations]
+=== マイグレーション
+
+マイグレーションの場合、異なるクラスターに復元するため、より複雑かつ注意すべき点が存在します。これらは、一般的に見落とされる、または忘れられがちな点です。
+
+* マイグレーション時には、Rancherのドメインが同じでなければなりません。これは、以前のクラスターのドメイン名が新しいクラスターを指す必要があることを意味します。
+* Rancherは、移行先のクラスターで*稼働していてはいけません*。これにより、Rancherバックアップや特定のRancherサービスに多くの問題が発生する可能性があります。
+* バックアップが復元された*後に*、バックアップの*同じ*バージョンのRancherをインストールしてください。
+* 新しいクラスターを異なるKubernetesバージョンでプロビジョニングすることを選択した場合、バックアップを取得したものとは異なるKubernetes APIが利用可能であるため、さまざまなサポートされていない動作が発生する可能性があることを知っておいてください。これにより、廃止されたリソースが復元され、問題が発生する可能性があります。
+* 移行中にアップグレードを*行わない*ようにしてください。
+
+[#_edge_cases_and_improper_usage]
+== エッジケースと不適切な使用法
+
+以下は、Rancherバックアップの*不適切な*使用法や期待の例です。
+
+[#_upgrades]
+=== アップグレード
+
+* RancherのバージョンをアップグレードするためにRancherバックアップを使用することは、有効な使用ケースではありません。推奨される手順は、現在のバージョンのバックアップを取り、その後{xref-rancher-upgrades}[これらの指示]に従ってRancherインスタンスをアップグレードし、アップグレードが完了した後に*別の*バックアップを取ることです。この方法では、アップグレードが失敗した場合に復元するためのバックアップがあり、2回目のバックアップはアップグレードされたRancherバージョンに復元するために有効です。
+* KubernetesのバージョンをアップグレードするためにRancherバックアップを使用することも、有効な使用ケースではありません。Kubernetes APIと利用可能なリソースはバージョンに結びついているため、バックアップの復元を使用してアップグレードすると、非推奨、サポートされていない、または更新されたリソースの不整合なセットに問題が生じる可能性があります。クラスターのバージョンをアップグレードする方法は、どのようにプロビジョニングされたかによりますが、上記と同じ形式（バックアップ、アップグレード、バックアップ）が推奨されます。
+
+[#_resourceset]
+=== ResourceSet
+
+* さまざまなチームからの進化するリソースとサービスのために、開発者は新しいリソースをデフォルトのresourceSetに追加または削除する必要があるかどうかに注意を払うべきです。
+* Rancherバックアップは、デフォルトのresourceSetsによってキャプチャされたもののみをバックアップします（編集されていない限り）。 ユーザー作成のシークレットに対して、任意の名前およびネームスペースでそのラベルが付与されている場合にバックアップ対象となる特定のラベルを追加しました（<<_backups,バックアップの適切な使用法>>を参照）。
+
+[#_downstream_clusters]
+=== ダウンストリームクラスタ
+
+* Rancherバックアップは*のみ*ローカルクラスターのKubernetesリソースをバックアップします。これは、ダウンストリームクラスタは、ローカルクラスタ内のリソースとして存在する場合を除いて、操作またはバックアップの対象と*ならない*ことを意味します。ダウンストリームクラスタの更新と通信は、rancher-agentとrancher-webhookに委ねられています。
+
+[#_restoring_deleted_resources]
+=== 削除されたリソースの復元
+
+* いくつかのリソースは、ダウンストリームクラスタをプロビジョニングするなど、外部の結果を生成します。ダウンストリームクラスタを削除し、ローカルクラスタでクラスタリソースを復元しても、Rancherがそのクラスタを*再プロビジョニングすることはありません*。リソースによっては、復元がリソースを利用可能な状態に完全に戻さない場合があります。
+* 「削除されたクラスタを復元する」というコーナーケースは*サポートされていない*機能です。ダウンストリームクラスタに関しては、プロビジョニングされたかインポートされたかにかかわらず、それらを削除すると、一連のクリーンアップタスクが発生し、ユーザーが削除されたクラスタを復元できなくなります。プロビジョニングされたクラスタは、そのノードとRancher関連のプロビジョニングリソースが破棄され、インポートされたクラスタは、ローカルクラスタへの登録に関連するRancherエージェントやその他のリソース/サービスが破棄される可能性があります。
+
+[CAUTION]
+====
+
+ダウンストリームクラスタを削除して復元しようとすると、Rancher、Rancher Backups、rancher-webhook、Fleetなどにさまざまな問題が発生する可能性があります。これを行うことは推奨されません。
+====
+
+
+[#__fleet_product_name_harvester_product_name_and_other_services]
+=== {fleet-product-name}、{harvester-product-name}、およびその他のサービス
+
+Rancher Backupsによってバックアップされているその他のサービスは、しばしば変化し進化します。このようなことが起こると、それらのリソースやバックアップのニーズも変わる可能性があります。一部のリソースはバックアップする必要がない場合があり、全くバックアップされない場合もあります。チームは、開発プロセスにおいてこれを考慮し、関連するリソースセットがサービスの正しい復元のために適切なリソースを取得しているかどうかを評価することが重要です。
+
+[#_monitoring_backups_and_restores]
+== バックアップと復元の監視
+
+Rancherは、Backup Operatorのための標準的な監視機能を提供しています。これらはデフォルトで無効になっていますが、オペレーターHelmチャートをデプロイする際に簡単に有効にできます。
+
+[#_metrics]
+=== Metrics
+
+メトリクスは、Helmチャートの値に`monitoring.metrics.enabled: true`と`monitoring.serviceMonitor.enabled: true`を設定することで有効にできます。有効にすると、オペレーターは以下のメトリクスをエクスポートします。メトリクスが正しくエクスポートされるためには、*rancher-monitoring*が事前にインストールされている必要があります。
+
+[cols="1,1"]
+|===
+|**メトリクス名**|**説明**
+
+|`rancher_backup_info`
+|特定のRancher Backup CRに関する詳細（ラベル: `name`、`status`、`resourceSetName`、`retentionCount`、`backupType`、`filename`、`storageLocation`、`nextSnapshot`、`lastSnapshot`）。タイプ *GaugeVec*。
+
+|`rancher_backup_count`
+|既存のRancher Backup CRの数。タイプ *Gauge*。
+
+|`rancher_backups_attempted_total`
+|オペレーターによって処理されたRancher Backupsの総数（ラベル: `name`）。タイプ *CounterVec*.
+
+|`rancher_backups_failed_total`
+|このオペレーターによって処理された失敗したRancherバックアップの総数（ラベル: `name`）。タイプ *CounterVec*.
+
+|`rancher_backup_duration_seconds`
+|オペレーターによって処理された各バックアップの所要時間（秒単位）（ラベル: `name`）。タイプ *HistogramVec*。なお、バケットはユーザーによってカスタマイズ可能です。
+
+|`rancher_backup_last_processed_timestamp_seconds`
+|最後のバックアップが処理された Unix 時間（秒単位）（ラベル: `name`）。タイプ *GaugeVec*.
+
+|`rancher_restore_info`
+|特定の Rancher リストア CR に関する詳細 (ラベル: `name`, `status`, `fileName`, `prune`, `storageLocation`, `restoreTime`)。タイプ *GaugeVec*.
+
+|`rancher_restore_count`
+|既存のRancherリストアCRの数。タイプ *Gauge*。
+|===
+
+[#_alerting]
+=== アラート
+
+デフォルトでは、'BackupFailed' という1つのアラートのみが提供されており、オペレーターによってバックアップが処理されない場合にユーザーに警告します。`monitoring.prometheusRules.defaultAlert.enabled: true` を設定することで有効にできます。
+
+ユーザーは `monitoring.prometheusRules.customRules.enabled: true` を設定し、`monitoring.prometheusRules.customRules.rules` の下で定義することで独自のアラートルールをデプロイすることもできます。
+
+[#_dashboards]
+=== ダッシュボード
+
+Rancher は、バックアップオペレーターの健康状態を監視するための Grafana ダッシュボードも提供しています。ただし、これらは *rancher-monitoring* Helm チャートによってのみデプロイできます。そのためには `rancherBackupMonitoring.dashboards.enabled: true` を設定する必要があります。
+
+[#_conclusion]
+== 結論
+
+Rancher バックアップは非常に便利なツールですが、範囲と目的においてやや制限があります。可能な困難を避けるために、チャートの適切な操作を確保するために説明された特定の手順に従うことが重要です。

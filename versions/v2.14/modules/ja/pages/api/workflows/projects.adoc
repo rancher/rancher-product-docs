@@ -1,0 +1,253 @@
+= プロジェクト
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-16
+:page-revdate: {revdate}
+:community-path: api/workflows/projects.adoc 
+:product-path: api/workflows/projects.adoc
+ifeval::["{build-type}" != "community"]
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+endif::[]
+
+[#_creating_a_project]
+== プロジェクトの作成
+
+プロジェクトリソースは、管理クラスターでのみ作成できます。管理クラスター内の<<_creating_a_namespace_in_a_project,プロジェクトにネームスペースを作成する方法>>については、以下を参照してください。
+
+[#_creating_a_basic_project]
+=== 基本プロジェクトの作成
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+EOF
+----
+
+新しいプロジェクトを作成する際には、名前を設定するための2つの主なオプションがあります：
+
+* *自動生成：*一意のプロジェクトIDを確保するために`metadata.generateName`を使用してください。ただし、このオプションでは`kubectl create`（`kubectl apply`の代わりに）を使用する必要があることに注意してください。`kubectl apply`はこれをサポートしていません。
+* *手動命名：*`metadata.name`を使用してプロジェクトIDを明示的に設定できます。その正確な名前のプロジェクトがすでに存在する場合、名前のリクエストは拒否されます。
+UIに表示される名前は`spec.displayName`によって設定されます。`spec.displayName`が提供されていない場合、代わりにフィールド`metadata.name`が使用されます。
+
+`metadata.namespace`と`spec.clusterName`をプロジェクトが属するクラスターのIDに設定してください。
+
+クラスターのメンバーアカウントを通じてプロジェクトを作成し、そのアカウントがプロジェクトにアクセスできるようにしたい場合は、アノテーション`field.cattle.io/creatorId`を含め、その値をクラスターのメンバーアカウントのユーザーIDに設定する必要があります。
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  annotations: 
+    field.cattle.io/creatorId: user-id
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+EOF
+----
+
+`field.cattle.io/creatorId`フィールドを設定すると、指定されたユーザーに`ProjectRoleTemplateBinding`コマンドでプロジェクトリソースを表示し、Rancher UIでプロジェクトを表示する権限を付与する`get`が作成されます。クラスターの所有者および管理者アカウントは、これらのタスクを実行するためにこのアノテーションを設定する必要はありません。
+
+ユーザーのプリンシパルに`field.cattle.io/creator-principal-name`アノテーションを設定すると、プロジェクトオーナーのために自動的に作成されるprojectroletemplatebindingにそれが保持されます。
+
+作成者をプロジェクトのオーナーメンバー（例：作成者がクラスター管理者である場合）として追加したくない場合は、`field.cattle.io/no-creator-rbac`アノテーションを`true`に設定することができ、これにより対応するprojectroletemplatebindingの作成が防止されます。
+
+[#_creating_a_project_with_a_resource_quota]
+=== リソースクォータを持つプロジェクトの作成
+
+https://kubernetes.io/docs/concepts/policy/resource-quotas/[Kubernetesリソースクォータ]を参照してください。
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+  resourceQuota:
+    limit:
+      limitsCpu: 1000m
+  namespaceDefaultResourceQuota:
+    limit:
+      limitsCpu: 50m
+EOF
+----
+
+[#_creating_a_project_with_container_limit_ranges]
+=== コンテナ制限範囲を使用してプロジェクトを作成する
+
+https://kubernetes.io/docs/concepts/policy/limit-range/[Kubernetes制限範囲]を参照してください。
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: Project
+metadata:
+  generateName: p-
+  namespace: c-m-abcde
+spec:
+  clusterName: c-m-abcde
+  displayName: myproject
+  containerDefaultResourceLimit:
+    limitsCpu:    100m
+    limitsMemory: 100Mi
+    requestsCpu:  50m
+    requestsMemory: 50Mi
+EOF
+----
+
+[#_backing_namespace]
+=== バッキングネームスペース
+
+プロジェクトを作成した後、フィールド`status.backingNamespace`が入力されます。これは、プロジェクト関連リソースを管理するために作成された管理クラスター内のネームスペースを表します。バッキングネームスペースに保存されているリソースの例としては、{xref-secrets}#プロジェクトスコープのシークレット（_creating_secrets_in_projects[project scoped secrets]）や{xref-cluster-project-roles}プロジェクトロールテンプレートバインディング（_project_roles[project role template bindings]）#などがあります。
+
+[#_adding_a_member_to_a_project]
+== プロジェクトにメンバーを追加する
+
+プロジェクトの<<_backing_namespace,バッキングネームスペース>>を調べて、`metadata.namespace`フィールドの値を指定し、プロジェクトのIDを調べて`projectName`フィールドの値を指定します。
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+ロールテンプレートIDを調べて`roleTemplateName`フィールドの値を指定します（例：`project-member`または`project-owner`）。
+
+[,bash]
+----
+kubectl get roletemplates
+----
+
+ユーザーメンバーを追加する際は、`userPrincipalName`フィールドを指定してください：
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: ProjectRoleTemplateBinding
+metadata:
+  generateName: prtb-
+  namespace: c-m-abcde-p-vwxyz
+projectName: c-m-abcde:p-vwxyz
+roleTemplateName: project-member
+userPrincipalName: keycloak_user://user
+EOF
+----
+
+グループメンバーを追加する際は、代わりに`groupPrincipalName`フィールドを指定してください：
+
+[,bash]
+----
+kubectl create -f - <<EOF
+apiVersion: management.cattle.io/v3
+kind: ProjectRoleTemplateBinding
+metadata:
+  generateName: prtb-
+  namespace: p-vwxyz
+projectName: c-m-abcde:p-vwxyz
+roleTemplateName: project-member
+groupPrincipalName: keycloak_group://group
+EOF
+----
+
+プロジェクトメンバーに割り当てたい各ロールのプロジェクトロールテンプレートバインディングを作成します。
+
+[#_listing_project_members]
+== プロジェクトメンバーの一覧
+
+プロジェクトのバッキングネームスペースを調べます:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+プロジェクトのバッキングネームスペース内のプロジェクトロールテンプレートバインディングを一覧表示するには:
+
+[,bash]
+----
+kubectl --namespace c-m-abcde-p-vwxyz get projectroletemplatebindings
+----
+
+[#_deleting_a_member_from_a_project]
+== プロジェクトからメンバーを削除する
+
+xref:#_listing_project_members[プロジェクトメンバーの一覧]セクションで説明されているように、プロジェクトのネームスペース内にメンバーを含むプロジェクトロールテンプレートバインディングIDを調べます。
+
+プロジェクトのネームスペースからプロジェクトロールテンプレートバインディングを削除します：
+
+[,bash]
+----
+kubectl --namespace c-m-abcde-p-vwxyz delete projectroletemplatebindings prtb-qx874 prtb-7zw7s
+----
+
+[#_creating_a_namespace_in_a_project]
+== プロジェクトにネームスペースを作成する
+
+プロジェクトリソースは管理クラスターに存在しますが、プロジェクトは管理クラスター用です。プロジェクトの下にあるネームスペースは、管理クラスターに存在します。
+
+管理クラスターで、`metadata.generateName`を使用して生成されたクラスターのプロジェクトIDを調べてください。
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+管理クラスターで、プロジェクト注釈を持つネームスペースを作成します。
+
+[,bash]
+----
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mynamespace
+  annotations:
+    field.cattle.io/projectId: c-m-abcde:p-vwxyz
+EOF
+----
+
+形式に注意してください、`<cluster ID>:<project ID>`。
+
+[#_deleting_a_project]
+== プロジェクトの削除
+
+クラスターのネームスペースで削除するプロジェクトを調べてください。
+
+[,bash]
+----
+kubectl --namespace c-m-abcde get projects
+----
+
+クラスターのネームスペースの下でプロジェクトを削除します。
+
+[,bash]
+----
+kubectl --namespace c-m-abcde delete project p-vwxyz
+----
+
+このコマンドは、以前プロジェクトに属していたネームスペースやリソースを削除しないことに注意してください。
+
+このコマンドは、プロジェクトのすべてのプロジェクトロールテンプレートバインディングを削除しますので、プロジェクトを再作成してもプロジェクトに追加されたメンバーは復元されず、再度ユーザーをメンバーとして追加する必要があります。

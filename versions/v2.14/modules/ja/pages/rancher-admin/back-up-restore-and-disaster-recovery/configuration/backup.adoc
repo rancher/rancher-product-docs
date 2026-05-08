@@ -1,0 +1,274 @@
+= バックアップ環境設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: reference-guides/backup-restore-configuration/backup-configuration.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+ifeval::["{build-type}" != "community"]
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:xref-backup-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc
+endif::[]
+
+*バックアップ：作成*ページでは、スケジュールを設定し、暗号化を有効にし、バックアップの保存場所を指定できます。
+
+まず、{xref-backup-cluster}[インストール]し、`rancher-backup`オペレーターをインストールする必要があります。そうした後、*バックアップにアクセスできます。作成*ページ：
+
+[#_schedule]
+== スケジュール
+
+最初のオプションを選択すると、一時的なバックアップを実行できます。2番目のオプションを選択すると、定期的なバックアップをスケジュールできます。*定期的なバックアップ*を選択すると、次の2つのフィールドを設定できます：
+
+* *スケジュール*：このフィールドは受け入れます
+ ** 標準の https://en.wikipedia.org/wiki/Cron[cron式]、例えば`"0 * * * *"`のように
+ ** ディスクリプタ、例えば`"@midnight"`または`"@every 1h30m"`のように
+* *保持数*：この値は、保持する必要があるバックアップファイルの数を指定します。ファイルが指定された保持数を超えると、最も古いファイルが削除されます。デフォルト値は10です。
+
+|===
+| YAMLディレクティブ名 | 説明
+
+| `schedule`
+| 定期的なバックアップのスケジュール用のcron文字列を提供してください。
+
+| `retentionCount`
+| 保持するバックアップファイルの数を提供してください。
+|===
+
+[#_resourceset]
+== ResourceSet
+
+カスタムアプリケーションをバックアップするために独自のResourceSetsを作成できますが、Rancherのバックアップ専用の2つのResourceSetsは、`rancher-backup`オペレーターによって公式に管理され、デフォルトで作成されます。これらを`rancher-resource-set-basic`および`rancher-resource-set-full`と呼びます。 それらの違いは、バックアップにシークレットが含まれているかどうかです。
+
+`rancher-resource-set-basic`は、機密情報を保護するためにバックアップファイルにシークレットを含めません。あなたは、シークレットを記録し、安全に再デプロイする責任があります。
+
+`rancher-resource-set-full`は、復元または移行後にRancherがスムーズに動作し続けるために、バックアップファイルにすべての重要なシークレットを含めています。機密情報を平文で保存しないように、強力なキーでの暗号化を有効にすることを強くお勧めします。
+
+|===
+| YAMLディレクティブ名 | 説明
+
+| `resourceSetName`
+|  このバックアップに含めるリソースを定義するために、ResourceSetの名前を提供してください。
+|===
+
+[#_encryption]
+== 暗号化
+
+rancher-backupは、kube-apiserverへの呼び出しを行うことでリソースを収集します。apiserverから返されたオブジェクトは復号化されるため、 https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/[静止時の暗号化]が有効になっていても、バックアップによって収集された暗号化されたオブジェクトも平文になります。
+
+平文で保存しないように、静止時の暗号化に使用されたのと同じ`EncryptionConfiguration`ファイルを使用して、バックアップ内の特定のリソースを暗号化できます。
+
+[NOTE]
+.重要:
+====
+
+バックアップ内のオブジェクトを暗号化する際には、`EncryptionConfiguration`ファイルを将来の使用のために保存する必要があります。なぜなら、それはrancher-backupオペレーターによって保存されないからです。
+
+例えば、{xref-migrate-cluster}[Rancherを新しいクラスターに移行する]際に、このファイルは新しいクラスターでシークレットを再作成するために使用されます。
+====
+
+
+オペレーターは、`EncryptionConfiguration`を`cattle-resources-system`ネームスペースのシークレットデータ内の`encryption-provider-config.yaml`という名前のキーのKubernetes Secretとして使用します。
+
+`EncryptionConfiguration`については、 https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#understanding-the-encryption-at-rest-configuration[Kubernetesドキュメントに提供されているサンプルファイルを使用できます。]
+
+秘密で正しいキーが使用されることを保証するために、暗号化設定ファイルは`encryption-provider-config.yaml`という名前でなければなりません。以下のコマンドは、正しいキー名でシークレットを作成するために`--from-file`フラグを使用します。
+
+`EncryptionConfiguration`を`encryption-provider-config.yaml`という名前のファイルに保存し、このコマンドを実行してください：
+
+[,bash]
+----
+kubectl create secret generic encryptionconfig \
+  --from-file=./encryption-provider-config.yaml \
+  -n cattle-resources-system
+----
+
+これにより、シークレットには`encryption-provider-config.yaml`という名前のキーが含まれ、オペレーターはこのキーを使用して暗号化設定を取得します。
+
+`Encryption Config Secret`のドロップダウンは、この正確なキーを持つシークレットのみをフィルタリングしてリストします。
+
+image::backup_restore/backup/encryption.png[]
+
+上記の例のコマンドでは、名前`encryptionconfig`は任意のものに変更できます。
+
+|===
+| YAMLディレクティブ名 | 説明
+
+| `encryptionConfigSecretName`
+| 暗号化設定ファイルを含む`cattle-resources-system`ネームスペースの秘密の名前を提供してください。
+|===
+
+[#_storage_location]
+== ストレージ場所
+
+バックアップにStorageLocationが指定されている場合、オペレーターはその特定のS3バケットからバックアップ場所を取得します。指定されていない場合、オペレーターはデフォルトのオペレーターレベルのS3ストアおよびオペレーターレベルのPVCストアでこのファイルを探そうとします。デフォルトのストレージ場所は、`rancher-backup`オペレーターのデプロイ時に設定されます。
+
+最初のオプションを選択すると、このバックアップはrancher-backupチャートをインストールする際に設定されたストレージ場所に保存されます。2番目のオプションでは、バックアップを保存するために異なるS3互換ストレージプロバイダーを設定できます。
+
+[#_s3]
+=== S3
+
+[CAUTION]
+====
+
+S3バックアップターゲットを使用する場合は、すべてのクラスターに独自のバケットまたはフォルダーがあることを確認してください。Rancherは、そのクラスターに設定されたS3バケットまたはフォルダーにリストされている利用可能なスナップショットからスナップショット情報を取得します。
+====
+
+
+S3ストレージ場所には、次の設定フィールドが含まれています：
+
+. *Credential Secret*（オプション）：S3バケットにアクセスするためにAWSアクセスキーまたはシークレットキーが必要な場合は、{xref-secrets}[シークレットを作成]し、キーとディレクティブを`accessKey`および`secretKey`という名前で指定してください。シークレットは任意の名前空間に存在できます。シークレットの例は<<_example_credentialsecret,こちら>>です。オペレーターを実行しているノードがEC2にあり、<<_iam_permissions_for_ec2_nodes_to_access_s3,IAMのS3アクセス権限>>が割り当てられている場合、このディレクティブは不要です。*Credential Secret*のドロップダウンには、すべてのネームスペースのシークレットがリストされています。
+. *バケット名*：バックアップファイルが保存されるS3バケットの名前です。
+. *リージョン*（オプション）：S3バケットが存在するAWS https://aws.amazon.com/about-aws/global-infrastructure/regions_az/[リージョン]です。このフィールドはMinIOの設定には必要ありません。
+. *フォルダー*（オプション）：バックアップファイルが保存されるS3バケット内のフォルダーの名前。ネストされたフォルダー（例：`rancher/cluster1`）はサポートされていません。このフィールドが空のままにされると、デフォルトの動作はバックアップファイルをS3バケットのルートフォルダーに保存することです。
+. *エンドポイント*：バケットのリージョンでS3にアクセスするために使用される https://docs.aws.amazon.com/general/latest/gr/s3.html[エンドポイント]。
+. *エンドポイント CA*（オプション）：これはBase64エンコードされたCA証明書である必要があります。例については、<<_example_s3_storage_configuration,例のS3互換設定を参照してください。>>
+. *TLS検証をスキップ*（オプション）：TLSを使用していない場合はtrueに設定してください。
+
+[#_yaml_directive_fields]
+==== YAMLディレクティブフィールド
+
+|===
+| YAMLディレクティブ名 | 説明 | 必須
+
+| `credentialSecretName`
+| S3バケットにアクセスするためにAWSアクセスキーまたはシークレットキーが必要な場合は、{xref-secrets}[シークレットを作成]し、`accessKey`および`secretKey`という名前のキーとディレクティブを用いて資格情報を設定してください。シークレットは任意のネームスペースに存在できます。例のシークレットは<<_example_credentialsecret,こちら>>です。オペレーターを実行しているノードがEC2上にあり、S3にアクセスするためのIAM権限が設定されている場合、このディレクティブは不要です。詳細はthis section.を参照してください。
+|
+
+| `credentialSecretNamespace`
+| S3にアクセスするための資格情報を含むシークレットのネームスペース。オペレーターを実行しているノードがEC2にあり、S3にアクセスするためのIAM権限が設定されている場合、このディレクティブは不要です。詳細は<<_iam_permissions_for_ec2_nodes_to_access_s3,this section.>>を参照してください。
+|
+
+| `bucketName`
+| バックアップファイルが保存されるS3バケットの名前です。
+| ✓
+
+| `folder`
+| バックアップファイルが保存されるS3バケット内のフォルダーの名前。ネストされたフォルダー（例：`rancher/cluster1`）はサポートされていません。このフィールドが空のままにされると、デフォルトの動作はバックアップファイルをS3バケットのルートフォルダーに保存することです。
+|
+
+| `region`
+| S3バケットが存在するAWS https://aws.amazon.com/about-aws/global-infrastructure/regions_az/[リージョン]です。
+| ✓
+
+| `endpoint`
+| バケットのリージョンでS3にアクセスするために使用される https://docs.aws.amazon.com/general/latest/gr/s3.html[エンドポイント]。
+| ✓
+
+| `endpointCA`
+| これはBase64エンコードされたCA証明書である必要があります。例については、<<_example_s3_storage_configuration,例のS3互換設定を参照してください。>>
+|
+
+| `insecureTLSSkipVerify`
+| TLSを使用していない場合はtrueに設定してください。
+|
+|===
+
+[#_example_s3_storage_configuration]
+=== 例 S3 ストレージ設定
+
+[,yaml]
+----
+s3:
+  credentialSecretName: s3-creds
+  credentialSecretNamespace: default
+  bucketName: rancher-backups
+  folder: rancher
+  region: us-west-2
+  endpoint: s3.us-west-2.amazonaws.com
+----
+
+[#_example_minio_configuration]
+=== 例 MinIO 設定
+
+[,yaml]
+----
+s3:
+  credentialSecretName: minio-creds
+  bucketName: rancherbackups
+  endpoint: minio.35.202.130.254.xip.io
+  endpointCA: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURHakNDQWdLZ0F3SUJBZ0lKQUtpWFZpNEpBb0J5TUEwR0NTcUdTSWIzRFFFQkN3VUFNQkl4RURBT0JnTlYKQkFNTUIzUmxjM1F0WTJFd0hoY05NakF3T0RNd01UZ3lOVFE1V2hjTk1qQXhNREk1TVRneU5UUTVXakFTTVJBdwpEZ1lEVlFRRERBZDBaWE4wTFdOaE1JSUJJakFOQmdrcWhraUc5dzBCQVFFRkFBT0NBUThBTUlJQkNnS0NBUUVBCjA4dnV3Q2Y0SEhtR2Q2azVNTmozRW5NOG00T2RpS3czSGszd1NlOUlXQkwyVzY5WDZxenBhN2I2M3U2L05mMnkKSnZWNDVqeXplRFB6bFJycjlpbEpWaVZ1NFNqWlFjdG9jWmFCaVNsL0xDbEFDdkFaUlYvKzN0TFVTZSs1ZDY0QQpWcUhDQlZObU5xM3E3aVY0TE1aSVpRc3N6K0FxaU1Sd0pOMVVKQTZ6V0tUc2Yzc3ByQ0J2dWxJWmZsVXVETVAyCnRCTCt6cXZEc0pDdWlhNEEvU2JNT29tVmM2WnNtTGkwMjdub3dGRld3MnRpSkM5d0xMRE14NnJoVHQ4a3VvVHYKQXJpUjB4WktiRU45L1Uzb011eUVKbHZyck9YS2ZuUDUwbk8ycGNaQnZCb3pUTStYZnRvQ1d5UnhKUmI5cFNTRApKQjlmUEFtLzNZcFpMMGRKY2sxR1h3SURBUUFCbzNNd2NUQWRCZ05WSFE0RUZnUVU5NHU4WXlMdmE2MTJnT1pyCm44QnlFQ2NucVFjd1FnWURWUjBqQkRzd09ZQVU5NHU4WXlMdmE2MTJnT1pybjhCeUVDY25xUWVoRnFRVU1CSXgKRURBT0JnTlZCQU1NQjNSbGMzUXRZMkdDQ1FDb2wxWXVDUUtBY2pBTUJnTlZIUk1FQlRBREFRSC9NQTBHQ1NxRwpTSWIzRFFFQkN3VUFBNElCQVFER1JRZ1RtdzdVNXRQRHA5Q2psOXlLRW9Vd2pYWWM2UlAwdm1GSHpubXJ3dUVLCjFrTkVJNzhBTUw1MEpuS29CY0ljVDNEeGQ3TGdIbTNCRE5mVVh2anArNnZqaXhJYXR2UWhsSFNVaWIyZjJsSTkKVEMxNzVyNCtROFkzelc1RlFXSDdLK08vY3pJTGh5ei93aHRDUlFkQ29lS1dXZkFiby8wd0VSejZzNkhkVFJzNwpHcWlGNWZtWGp6S0lOcTBjMHRyZ0xtalNKd1hwSnU0ZnNGOEcyZUh4b2pOKzdJQ1FuSkg5cGRIRVpUQUtOL2ppCnIvem04RlZtd1kvdTBndEZneWVQY1ZWbXBqRm03Y0ZOSkc4Y2ZYd0QzcEFwVjhVOGNocTZGeFBHTkVvWFZnclMKY1VRMklaU0RJd1FFY3FvSzFKSGdCUWw2RXBaUVpWMW1DRklrdFBwSQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0t
+----
+
+[#_example_credentialsecret]
+=== 例 credentialSecret
+
+[,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+type: Opaque
+data:
+  accessKey: <base64-encoded access key>
+  secretKey: <base64-encoded secret key>
+----
+
+[NOTE]
+====
+
+エンコーディングの問題を避けるために、`credentialSecret` は以下のコマンドで作成でき、`accessKey` と `secretKey` の値を更新します。
+
+[,bash]
+----
+kubectl create secret generic s3-creds \
+  --from-literal=accessKey=<access key> \
+  --from-literal=secretKey=<secret key>
+----
+====
+
+
+[#_iam_permissions_for_ec2_nodes_to_access_s3]
+=== EC2 ノードが S3 にアクセスするための IAM 権限
+
+`rancher-backup` オペレーターを設定して S3 をバックアップストレージ場所として使用する方法は二つあります。
+
+一つの方法は、バックアップカスタムリソース内で `credentialSecretName` を設定し、S3 にアクセスできる AWS 認証情報を参照することです。
+
+クラスター ノードが Amazon EC2 にある場合、EC2 ノードに IAM 権限を割り当てて S3 にアクセスできるようにすることでも S3 アクセスを設定できます。
+
+ノードが S3 にアクセスできるようにするには、 https://aws.amazon.com/premiumsupport/knowledge-center/ec2-instance-access-s3-bucket/[AWS ドキュメント] の指示に従って EC2 用の IAM ロールを作成します。ロールにカスタムポリシーを追加する際は、以下の権限を追加し、`Resource` をバケット名に置き換えてください。
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+     "Resource": [
+        "arn:aws:s3:::rancher-backups"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:PutObjectAcl"
+      ],
+      "Resource": [
+         "arn:aws:s3:::rancher-backups/*"
+      ]
+    }
+  ]
+}
+----
+
+ロールが作成され、対応するインスタンスプロファイルが EC2 インスタンスにアタッチされた後は、バックアップカスタムリソース内の `credentialSecretName` ディレクティブは空のままにできます。
+
+[#_examples]
+== 例
+
+例えば、バックアップカスタムリソースについては、xref:./examples.adoc#_backup[このページを参照してください。]

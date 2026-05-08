@@ -1,0 +1,87 @@
+= Aktivierung der Anpassung der Cluster-Agent-Planung
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-cluster-agent-scheduling-customization.adoc 
+:product-path: cluster-deployment/enable-cluster-agent-scheduling-customization.adoc
+
+Das `cattle-cluster-agent` ermöglicht die Aktivierung der automatischen Bereitstellung einer Prioritätsklasse und eines Budgets für Pod-Störungen.
+
+Wenn diese Funktion aktiviert ist, werden alle neu bereitgestellten Node Driver-, benutzerdefinierten und importierten RKE2- und K3s-Cluster während des Bereitstellungsprozesses automatisch eine Prioritätsklasse und ein Budget für Pod-Störungen bereitstellen. Bestehende Cluster können schrittweise mit diesem neuen Verhalten aktualisiert werden, indem entweder die <<_updating_existing_clusters,Rancher UI>> verwendet oder eine bestimmte Annotation auf Clusterobjekten gesetzt wird.
+
+Diese Funktion ist standardmäßig deaktiviert.
+
+[#_enabling_cluster_agent_scheduling_customization]
+== Aktivierung der Anpassung der Cluster-Agent-Planung
+
+[NOTE]
+====
+Die Aktivierung oder Deaktivierung dieser Funktion hat nur Auswirkungen auf neue Cluster. Bestehende Downstream-Cluster werden nicht automatisch aktualisiert. Siehe <<_updating_existing_clusters,_Aktualisierung bestehender Cluster_>>.
+====
+
+. Klicken Sie in der oberen linken Ecke auf **☰ > Globale Einstellungen**.
+. Wählen Sie **Feature-Flags**.
+. Suchen Sie die `cluster-agent-scheduling-customization`-Funktion und klicken Sie **⋮ > Aktivieren**.
+
+[#_configuring_the_global_settings]
+== Konfiguration der globalen Einstellungen
+
+Sie können die standardmäßige Prioritätsklasse (PC) und das Budget für Pod-Störungen (PDB) anpassen, indem Sie die `cluster-agent-default-priority-class` und `cluster-agent-default-pod-disruption-budget` globalen Einstellungen in der Rancher UI aktualisieren. Beachten Sie, dass sowohl die Prioritätsklasse als auch das Budget für Pod-Störungen Konfigurationsbeschränkungen haben:
+
+* Der für die standardmäßige PC festgelegte `Value` darf nicht kleiner als minus 1 Milliarde oder größer als 1 Milliarde sein.
+* Der für die PC festgelegte `PreemptionPolicy` muss gleich `PreemptLowerPriority` oder `Never` sein.
+* Sie können die PDB `minAvailable` und `maxUnavailable` Felder nicht so konfigurieren, dass beide einen von Null verschiedenen Wert haben.
+* Die PDB `minAvailable` muss entweder eine nicht-negative ganze Zahl oder ein nicht-negativer ganzzahliger Prozentsatz (z. B. `1` oder `100%`) sein.
+* Die PDB `maxUnavailable` muss entweder eine nicht-negative ganze Zahl oder ein nicht-negativer ganzzahliger Prozentsatz (z. B. `1` oder `100%`) sein.
+
+
+[#_updating_existing_clusters]
+== Aktualisierung bestehender Cluster
+
+[NOTE]
+====
+Wenn diese Funktion deaktiviert ist, können Sie die Anpassungsfelder der Cluster-Agent-Planung für bestehende Cluster nicht ändern. Sie können die Konfiguration jedoch immer entfernen, unabhängig vom Status der Funktion.
+====
+
+Nachdem Sie diese Funktion aktiviert haben, können Sie die Anpassung der Cluster-Agent-Planung für bestehende Cluster auf zwei Arten vornehmen:
+
+* **Verwendung der Rancher-Benutzeroberfläche**
+** Bearbeiten Sie das gewünschte Cluster und navigieren Sie zum **Cluster Agent** Tab im Abschnitt **Cluster-Konfiguration**.
+** Aktivieren Sie das Kontrollkästchen `Prevent Rancher cluster agent pod eviction`.
+*** Die erforderlichen Felder im zugehörigen `clusters.provisioning.cattle.io`- oder `clusters.management.cattle.io`-Objekt werden automatisch mit den Werten konfiguriert, die in den globalen Einstellungen festgelegt sind.
+** Speichern Sie das Cluster.
+* **Verwendung einer Annotation**
+** Die `provisioning.cattle.io/enable-scheduling-customization` Annotation kann verwendet werden, um Cluster zu aktualisieren, ohne die Rancher-Benutzeroberfläche verwenden zu müssen. Diese Annotation wird automatisch vom Cluster entfernt, nachdem die Prioritätsklasse und das Budget für Pod-Störungen konfiguriert sind.
+*** Der Wert dieser Annotation kann entweder `true` oder `false` sein, um die Anpassung der Cluster-Agent-Planung automatisch hinzuzufügen oder zu entfernen.
+*** Für von Node Driver bereitgestellte und benutzerdefinierte Cluster wenden Sie diese Annotation auf das zugehörige `clusters.provisioning.cattle.io`-Objekt an.
+*** Für importierte Cluster wenden Sie die Annotation auf das zugehörige `clusters.management.cattle.io`-Objekt an.
+
+[#_applying_updated_global_settings]
+== Anwenden aktualisierter globaler Einstellungen
+
+Um unerwartete Änderungen im Verhalten des Planers zu verhindern, aktualisiert Rancher bestehende Downstream-Cluster nicht, wenn die globalen Einstellungen `cluster-agent-default-priority-class` und `cluster-agent-default-pod-disruption-budget` geändert werden. Es gibt zwei Möglichkeiten, bestehende Cluster zu aktualisieren, um die neuesten globalen Einstellungen zu verwenden:
+
+* **Verwendung der Rancher-Benutzeroberfläche**
+** Beim Konfigurieren eines Clusters wird ein zusätzliches Kontrollkästchen im **Cluster Agent** Tab im Abschnitt **Cluster-Konfiguration** angezeigt. Das Aktivieren des Kontrollkästchens `Apply global settings for Priority Class and Pod Disruption Budget` aktualisiert automatisch die Prioritätsklasse und das Budget für Pod-Störungen, um mit den globalen Einstellungen übereinzustimmen, sobald das Cluster gespeichert wird.
+* **Anpassen der Cluster-YAML**
+** Sie können die relevanten Felder im Cluster-Objekt manuell mit `kubectl` oder der Rancher-Benutzeroberfläche 'Als YAML bearbeiten' anpassen. Die Anpassung der Cluster-Agent-Planung finden Sie im Abschnitt `spec.ClusterAgentDeploymentCustomization.SchedulingCustomization` des Cluster-Objekts.
+** Alternativ kann die `provisioning.cattle.io/enable-scheduling-customization`-Annotation verwendet werden, um die aktualisierten Felder zur Anpassung der Cluster-Agent-Planung, die auf einem bestimmten Cluster festgelegt sind, zu entfernen und erneut hinzuzufügen.
+
+[#_downstream_objects]
+== Downstream-Objekte
+
+Wenn diese Funktion für einen bestimmten Cluster aktiviert ist, werden zwei Downstream-Ressourcen automatisch von Rancher erstellt:
+
+* Ein Budget für Pod-Störungen wird automatisch im `cattle-system`-Namespace erstellt, benannt `cattle-cluster-agent-pod-disruption-budget`.
+* Eine Prioritätsklasse wird automatisch erstellt, benannt `cattle-cluster-agent-priority-class`.
+
+Diese Objekte werden von Rancher verwaltet und dürfen nicht geändert oder gelöscht werden. Der Rancher-Server wird diese Objekte automatisch aktualisieren, um sie mit der Konfiguration des Cluster-Objekts abzugleichen, und sie entfernen, wenn sie nicht mehr benötigt werden.
+
+[#_rbac_considerations]
+=== RBAC-Überlegungen
+
+Bevor diese Funktion auf einem Downstream-Cluster aktiviert wird, sollten Cluster-Administratoren ihre aktuelle RBAC-Konfiguration bewerten, um den gemeinsamen Zugriff auf das `cattle-cluster-agent-priority-class` zu verhindern. In Fällen, in denen externe Benutzer Zugriff auf einen Cluster haben, wie zum Beispiel bei der Bereitstellung von Clustern als Dienst, wird empfohlen, den Zugriff auf das `cattle-cluster-agent-priority-class`-Objekt zu beschränken, um Änderungen oder das Entfernen zu verhindern.
+
+Ähnliche Überlegungen müssen für das `cattle-cluster-agent-pod-disruption-budget`-Objekt nicht angestellt werden, da Budgets für Pod-Störungen namespaced Objekte sind. Rancher wird das `cattle-cluster-agent-pod-disruption-budget` im privilegierten `cattle-system`-Namespace erstellen.

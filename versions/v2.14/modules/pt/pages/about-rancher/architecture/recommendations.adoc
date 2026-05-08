@@ -1,0 +1,91 @@
+= Recomendações de Arquitetura
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-manager-architecture/architecture-recommendations.adoc 
+:product-path: about-rancher/architecture/recommendations.adoc
+ifeval::["{build-type}" != "community"]
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/communicating-with-downstream-clusters.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-register-clusters: xref:cluster-deployment/register-existing-clusters.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-register-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc
+endif::[]
+
+Se você estiver instalando o Rancher em um único nó, a principal recomendação de arquitetura que se aplica à sua instalação é que o nó executando o Rancher deve estar <<_separation_of_rancher_and_user_clusters,separado dos downstream clusters.>>
+
+[#_separation_of_rancher_and_user_clusters]
+== Separação do Rancher e dos Clusters de Usuário
+
+Um cluster de usuário é um downstream cluster Kubernetes que executa seus aplicativos e serviços.
+
+Se você tiver uma instalação do Rancher em Docker, o nó executando o servidor Rancher deve estar separado dos seus downstream clusters.
+
+Se o Rancher for destinado a gerenciar clusters Kubernetes downstream, o cluster Kubernetes no qual o servidor Rancher está executando também deve estar separado dos clusters de usuário downstream.
+
+image::rancher-architecture-separation-of-rancher-server.svg[Separação do Servidor Rancher dos Clusters de Usuário]
+
+[#_why_ha_is_better_for_rancher_in_production]
+== Por que HA é Melhor para o Rancher em Produção
+
+Recomendamos instalar o servidor Rancher em um cluster Kubernetes de alta disponibilidade, principalmente porque isso protege os dados do servidor Rancher. Em uma instalação de alta disponibilidade, um balanceador de carga serve como o único ponto de contato para os clientes, distribuindo o tráfego de rede entre vários servidores no cluster e ajudando a evitar que um único servidor se torne um ponto de falha.
+
+Não recomendamos instalar o Rancher em um único contêiner Docker, porque se o nó falhar, não haverá cópia dos dados do cluster disponível em outros nós e você poderá perder os dados do seu servidor Rancher.
+
+[#__k3s_product_name_kubernetes_cluster_installations]
+=== {k3s-product-name} Instalações de Cluster Kubernetes
+
+Uma opção para o cluster Kubernetes subjacente é usar o K3s Kubernetes. K3s é a distribuição Kubernetes certificada pela CNCF do Rancher. É fácil de instalar e usa metade da memória do Kubernetes, tudo em um binário de menos de 100 MB. Outra vantagem do K3s é que ele permite que um datastore externo armazene os dados do cluster, permitindo que os nós do servidor K3s sejam tratados como efêmeros.
+
+.Arquitetura de um Cluster Kubernetes K3s Executando o Servidor de Gerenciamento Rancher
+image::k3s-server-storage.svg[Arquitetura de um Cluster Kubernetes K3s Executando o Servidor de Gerenciamento Rancher]
+
+[#_recommended_load_balancer_configuration_for_kubernetes_installations]
+== Configuração Recomendada de Balanceador de Carga para Instalações Kubernetes
+
+Recomendamos as seguintes configurações para o balanceador de carga e controladores de Ingress:
+
+* O DNS para o Rancher deve resolver para um balanceador de carga de camada 4 (TCP).
+* O Balanceador de Carga deve encaminhar a porta TCP/80 e TCP/443 para todos os 3 nós no cluster Kubernetes.
+* O controlador de Ingress redirecionará HTTP para HTTPS e encerrará SSL/TLS na porta TCP/443.
+* O controlador de Ingress encaminhará o tráfego para a porta TCP/80 no pod na implantação do Rancher.
+
+.Rancher instalado em um cluster Kubernetes com balanceador de carga de camada 4, representando a terminação de SSL nos controladores de Ingress.
+image::ha/rancher2ha.svg[Rancher HA]
+
+[#_environment_for_kubernetes_installations]
+== Ambiente para Instalações Kubernetes
+
+É altamente recomendável instalar o Rancher em um cluster Kubernetes em infraestrutura hospedada, como o EC2 da Amazon ou o Google Compute Engine.
+
+Para melhor desempenho e maior segurança, recomendamos um cluster Kubernetes dedicado para o servidor de gerenciamento do Rancher. Executar cargas de trabalho de usuários neste cluster não é aconselhável. Após implantar o Rancher, você pode {xref-cluster-deployment}[criar ou importar clusters] para executar suas cargas de trabalho.
+
+[#_recommended_node_roles_for_kubernetes_installations]
+== Funções de Nó Recomendadas para Instalações Kubernetes
+
+As recomendações abaixo se aplicam quando o Rancher é instalado em um cluster Kubernetes K3s.
+
+[#__k3s_product_name_cluster_roles]
+=== {k3s-product-name} Funções de Cluster
+
+Em clusters K3s, existem dois tipos de nós: nós de servidor e nós de agente. Tanto servidores quanto agentes podem ter cargas de trabalho agendadas neles. Nós de servidor executam o mestre do Kubernetes.
+
+Para o cluster que executa o servidor de gerenciamento do Rancher, recomendamos usar dois nós de servidor. Nós de agente não são necessários.
+
+[#_architecture_for_an_authorized_cluster_endpoint_ace]
+== Arquitetura para um Ponto de Extremidade de Cluster Autorizado (ACE)
+
+Se você estiver usando um {xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[ponto de extremidade de cluster autorizado (ACE),] recomendamos criar um FQDN apontando para um balanceador de carga que distribui o tráfego entre nossos nós com a `controlplane` função.
+
+Se você estiver usando certificados assinados por CA privada no balanceador de carga, deve fornecer o certificado CA, que será incluído no arquivo kubeconfig gerado para validar a cadeia de certificados. Consulte a documentação sobre {xref-access-cluster-kubectl}[arquivos kubeconfig] e {xref-user-api-keys}#_creating_an_api_key[chaves de API] para mais informações.
+
+O suporte ACE está disponível para clusters RKE2 e K3s registrados. Para ver os passos manuais a serem realizados no downstream cluster para habilitar o ACE, clique {xref-register-clusters}#_authorized_cluster_endpoint_support_for_rke2_and_k3s_clusters[aqui].

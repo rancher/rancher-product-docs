@@ -1,0 +1,45 @@
+= 大規模インストールのためのetcdの調整
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-01-06
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/tune-etcd-for-large-installs.adoc 
+:product-path: installation-and-upgrade/best-practices/tuning-etcd-for-large-installs.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+Rancherを使用して{xref-install-reqs}[大規模インフラストラクチャ]を管理する場合、etcdのキー空間は既定の2GBから増加させることを推奨します。最大設定は8GBで、ホストはデータセット全体をメモリに保持するのに十分なRAMを持っている必要があります。この値を増やす際には、ホストのサイズも増やすべきです。キー空間のサイズは、ガーベジコレクションの間にポッドの高い変更率が予想される場合、小規模なインストールでも調整できます。
+
+etcdデータセットは、Kubernetesによって5分ごとに自動的にクリーンアップされます。デプロイメントのスラッシングなどの状況では、etcdに十分なイベントが書き込まれ、ガーベジコレクションが発生する前に削除される可能性があり、これによりキー空間が満杯になることがあります。etcdのログやKubernetes APIサーバーログに`mvcc: database space exceeded`エラーが表示された場合、キー空間のサイズを増やすことを検討すべきです。これは、etcdサーバーで https://etcd.io/docs/v3.5/op-guide/maintenance/#space-quota[quota-backend-bytes]設定を行うことで実現できます。
+
+[#_example_this_snippet_of_the_rke2_k3s_config_yaml_file_increases_the_keyspace_size_to_5gb]
+== 例:このRKE2/K3sのconfig.yamlファイルのスニペットは、キー空間のサイズを5GBに増やします。
+
+[,yaml]
+.RKE2/K3s config.yaml
+----
+etcd-arg:
+  - "quota-backend-bytes=5368709120"
+----
+
+[#_scaling_etcd_disk_performance]
+== etcdディスクパフォーマンスのスケーリング
+
+ホスト上のディスク優先度を調整する方法については、 https://etcd.io/docs/v3.5/tuning/#disk[etcdドキュメント]の推奨事項に従うことができます。
+
+さらに、etcdのディスクに対するIO競合を減らすために、データおよびwalディレクトリ用に専用のデバイスを使用できます。etcdのベストプラクティスに基づくと、ミラーリングRAID構成は不要です。なぜなら、etcdはクラスター内のノード間でデータを複製するからです。利用可能なIOPSを増やすために、ストライピングRAID構成を使用できます。
+
+このソリューションをRKE2/K3sクラスターに実装するには、`/var/lib/etcd/data`および`/var/lib/etcd/wal`ディレクトリにディスクをマウントし、基盤となるホストでフォーマットする必要があります。`etcd`サービスの`extra_args`ディレクティブには、`wal_dir`ディレクトリを含める必要があります。`wal_dir`を指定しない場合、etcdプロセスは不十分な権限で基盤となる`wal`マウントを操作しようとします。
+
+[,yaml]
+.RKE2/K3s config.yaml
+----
+etcd-arg:
+  - "data-dir=/var/lib/etcd/data"
+  - "wal-dir=/var/lib/etcd/wal"
+----

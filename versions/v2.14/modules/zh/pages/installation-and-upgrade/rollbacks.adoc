@@ -1,86 +1,115 @@
 = 回滚
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-26
+endif::[]
+:revdate: 2026-04-06
 :page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc 
+:product-path: installation-and-upgrade/rollbacks.adoc
 :experimental:
+ifeval::["{build-type}" != "community"]
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+:xref-rancher-restore: xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rollback-docker-installed: xref:getting-started/installation-and-upgrade/other-installation-methods/rancher-on-a-single-node-with-docker/回滚-Docker安装的Rancher.adoc
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/迁移-Rancher到新集群.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-back-restore-example-configs: xref:reference-guides/backup-restore-configuration/examples.adoc
+:xref-rancher-restore: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc
+endif::[]
 
-本页概述了如何在升级 Rancher 后将 Rancher 回滚到之前的版本。
+本页面概述了如何在升级后将Rancher回滚到先前版本。
 
-include::shared:ROOT:partial$zh/rollback-warning.adoc[]
+include::shared:ROOT:partial$en/rollback-warning.adoc[]
 
-请在以下情况时按照本页的说明进行操作：
+在以下情况下，请遵循本页面的说明：
 
-* 正在运行的 Rancher 实例在备份完成后升级到了更新的版本。
-* 上游（本地）集群与进行备份的集群相同。
+* 运行中的Rancher实例在备份完成后已升级到新版本。
+* 上游（本地）集群与备份创建时的集群相同。
 
 [TIP]
 ====
-
-* xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc[请参阅这些步骤来迁移 Rancher].
-* 如果你需要还原 Rancher 到同一版本的之前的状态, 请参阅xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc[还原 Rancher].
+* 按照以下步骤{xref-migrate-cluster}[迁移Rancher]。
+* 如果您需要将Rancher恢复到相同版本的先前状态，请参见{xref-rancher-restore}[恢复文档]。
 ====
 
-To roll back Rancher to a lower/previous version, use the *Rancher Backups* application and restore Rancher from backup.
+要将Rancher回滚到较低/先前版本，请使用*Rancher备份*应用程序并从备份中恢复Rancher。
 
-回滚后，Rancher 必须以较低/较早的版本启动。
+回滚后，Rancher必须使用较低/先前版本启动。
 
-还原是通过创建 Restore 自定义资源实现的。
+恢复是通过创建恢复自定义资源来执行的。
+
+[#_alternative_steps_for_special_scenarios]
+== 特殊场景的替代步骤
+
+在以下情况下，需要执行回滚的替代步骤：
+
+* 从v2.14.0及更高版本回滚到早期版本的v2.13.x。
+
+在Rancher v2.13.0中，Rancher Turtles成为CAPI资源的默认管理器，取代了之前嵌入的集群API控制器，而在Rancher v2.14.0中，嵌入的集群API被完全移除。因此，如果您从Rancher v2.14.0及更高版本回滚到早期版本的Rancher v2.13.x，并且不打算继续使用Rancher Turtles管理CAPI资源，则可能需要额外的手动步骤来使用嵌入的集群API控制器。从Rancher v2.14.0开始，Rancher Turtles是CAPI资源唯一支持的管理器。
+
+在Rancher v2.14.0中，集群API模块从v1.10.6升级到v1.12.2。集群API v1.12.2反过来将其自定义资源定义（CRD）的apiVersions从`cluster.x-k8s.io/v1beta1`升级到`cluster.x-k8s.io/v1beta2`。Rancher 备份文件包括集群 API CRD。在将备份数据从 Rancher v2.13.x 恢复到本地群集时，升级到 v2.14.0 后，Rancher 备份应用程序首先恢复 v1beta1 CRD。这失败了，因为在集群中存在 v1beta2 自定义资源时，无法从 CRD 中删除 v1beta2 版本。
 
 [NOTE]
-.重要提示：
+.重要说明：
 ====
 
-* 请按照此页面上的说明在已备份的同一集群上还原 Rancher。要把 Rancher 迁移到新集群，请参照步骤xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc[迁移 Rancher]。
-* 在使用相同设置恢复 Rancher 时，Rancher deployment 在恢复开始前被手动缩减，然后 Operator 将在恢复完成后将其缩回。因此，在恢复完成之前，Rancher 和 UI 都将不可用。如果 UI 不可用时，你可使用 ``kubectl create -f restore.yaml``YAML 恢复文件来使用初始的集群 kubeconfig。
+* 请按照此页面上的说明在与备份相同的集群上恢复 Rancher。为了将 Rancher 迁移到新集群，请按照步骤 {xref-migrate-cluster}[迁移Rancher]
+* 在相同设置上恢复 Rancher 时，Rancher 部署在恢复开始之前手动缩减，然后操作员将在恢复完成后将其重新扩展。因此，Rancher 及其 UI 在恢复完成之前将不可用。在 UI 不可用时，请使用原始集群的 kubeconfig 和恢复 YAML 文件：`kubectl create -f restore.yaml`。
 ====
 
+[#_step_1_create_the_restore_custom_resource]
+== 第 1 步：创建恢复自定义资源
 
-== 步骤 1 ：创建 Restore 自定义资源
-
-. 点击 *☰ > 集群管理*。
-. 找到你的本地集群，并点击 *Explore*。
-. 在左侧导航栏中，点击 menu:Rancher 备份[还原]。
+. 单击 *☰ > 集群管理*。
+. 转到本地群集并点击 *探索*。
+. 在左侧导航栏中，点击 menu:Rancher 备份[恢复]。
 
 [NOTE]
 ====
-如果 Rancher Backups 应用不可见，你需要到 *Apps* 的 Charts 页面中安装应用。详情请参见xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc#_访问_charts[此处]。
+如果看不到 Rancher 备份应用程序，您需要从 *Apps* 的 Charts 页面安装它。有关更多信息，请参阅 {xref-helm-charts-in-rancher}#_access_charts[这里]。
 ====
 
 
-. 单击**创建**。
-. 使用表单或 YAML 创建 Restore。如需获取使用表单创建 Restore 资源的更多信息，请参见xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc[配置参考]和xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc[示例]。
-. 如需使用 YAML 编辑器，点击menu:创建[使用 YAML 文件创建]。然后输入 Restore YAML。以下是 Restore 自定义资源示例：
+. 单击*创建*。
+. 使用表单或 YAML 创建恢复。有关使用在线表单创建恢复资源的帮助，请参阅 {xref-rancher-restore-config}[配置参考] 和 {xref-back-restore-example-configs}[示例]
+. 要使用 YAML 编辑器，您可以点击 menu:创建[从 YAML 创建]。输入恢复 YAML。以下是一个示例恢复自定义资源：
 +
 [,yaml]
 ----
-apiVersion: resources.cattle.io/v1
-kind: Restore
-metadata:
-  name: restore-migration
-spec:
-  backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
-  encryptionConfigSecretName: encryptionconfig
-  storageLocation:
-    s3:
-      credentialSecretName: s3-creds
-      credentialSecretNamespace: default
-      bucketName: rancher-backups
-      folder: rancher
-      region: us-west-2
-      endpoint: s3.us-west-2.amazonaws.com
+ apiVersion: resources.cattle.io/v1
+ kind: Restore
+ metadata:
+   name: restore-migration
+ spec:
+   backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+   encryptionConfigSecretName: encryptionconfig
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
 ----
 +
-如需获得配置 Restore 的帮助，请参见xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc[配置参考]和xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc[示例]。
+有关配置恢复的帮助，请参阅 {xref-rancher-restore-config}[配置参考] 和 {xref-back-restore-example-configs}[示例]
 
-. 单击**创建**。
+. 单击*创建*。
 
-*结果*：已创建备份文件并更新到目标存储位置。资源还原顺序如下：
+*结果：*备份文件已创建并更新到目标存储位置。资源按以下顺序恢复：
 
-. 自定义资源定义（CRD）
-. 集群范围资源
+. 自定义资源定义 (CRDs)
+. 集群范围的资源
 . 命名空间资源
 
-如需查看还原的处理方式，请检查 Operator 的日志。按照如下步骤获取日志：
+要检查恢复进度，可以查看操作员的日志。请按以下步骤获取日志：
 
 [,yaml]
 ----
@@ -88,23 +117,24 @@ kubectl get pods -n cattle-resources-system
 kubectl logs -n cattle-resources-system -f
 ----
 
-== 步骤 2：回滚到上一个 Rancher 版本
+[#_step_2_roll_back_to_a_previous_rancher_version]
+== 第 2 步：回滚到先前的 Rancher 版本
 
-你可以使用 Helm CLI 回滚 Rancher。要回滚到上一个版本：
+可以使用 Helm CLI 回滚 Rancher。要回滚到先前的版本：
 
 [,yaml]
 ----
 helm rollback rancher -n cattle-system
 ----
 
-如果你不是想回滚到上一个版本，你也可以指定回滚的版本。查看部署历史记录：
+如果先前的修订不是预期目标，可以指定要回滚到的修订。要查看部署历史：
 
 [,yaml]
 ----
 helm history rancher -n cattle-system
 ----
 
-确定目标版本后，执行回滚。此示例回滚到版本 `3`：
+确定目标修订后，执行回滚。此示例将回滚到修订 `3`：
 
 [,yaml]
 ----

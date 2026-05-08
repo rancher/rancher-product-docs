@@ -1,0 +1,463 @@
+= ノードからKubernetesコンポーネントを削除する
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/clean-cluster-nodes.adoc 
+:product-path: cluster-admin/manage-clusters/clean-cluster-nodes.adoc
+:description: Rancherが起動したKubernetesクラスターからノードを削除する際のクラスターのクリーンアップについて学びます。何が削除されるのか、および手動で実行する方法
+ifeval::["{build-type}" != "community"]
+:url-rke2-uninstall: https://documentation.suse.com/cloudnative/rke2/latest/en/install/uninstall.html
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-register-clusters: xref:cluster-deployment/register-existing-clusters.adoc
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-hosted-k8s-clusters: xref:cluster-deployment/hosted-kubernetes/hosted-kubernetes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-uninstall: https://docs.rke2.io/install/uninstall
+:xref-infra-providers: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/index.adoc
+:xref-register-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc
+:xref-custom-clusters: xref:reference-guides/cluster-configuration/rancher-server-configuration/use-existing-nodes/index.adoc
+:xref-hosted-k8s-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-clusters-from-hosted-kubernetes-providers/index.adoc
+endif::[]
+
+このセクションでは、Rancherが起動したKubernetesクラスターからノードを切断し、そのノードからすべてのKubernetesコンポーネントを削除する方法について説明します。このプロセスにより、ノードを他の目的に使用できるようになります。
+
+インフラストラクチャプロバイダーの新しいノードにKubernetesをインストールするためにRancherを使用すると、リソース（コンテナ/仮想ネットワークインタフェース）と設定項目（証明書/設定ファイル）が作成されます。
+
+Rancherが起動したKubernetesクラスターからノードを削除する際（それらが`Active`の状態にある場合）、それらのリソースは自動的にクリーンアップされ、必要な唯一のアクションはノードを再起動することです。ノードが到達不能になり、自動クリーンアッププロセスが使用できない場合、ノードを再びクラスターに追加する前に実行する必要がある手順について説明します。
+
+[#_what_gets_removed]
+== 何が削除されるのか？
+
+Rancherを使用してプロビジョニングされたノードをクリーンアップする際、削除するクラスターのノードのタイプに基づいて以下のコンポーネントが削除されます。
+
+|===
+| 削除されたコンポーネント | {xref-infra-providers}[インフラストラクチャプロバイダーによってホストされているノード] | {xref-custom-clusters}[カスタムノード] | {xref-hosted-k8s-clusters}[ホスト型クラスター] | {xref-register-clusters}[登録済みのノード]
+
+| Rancherデプロイメントネームスペース（デフォルトでは`cattle-system`）
+| ✓
+| ✓
+| ✓
+| ✓
+
+| `serviceAccount`、`clusterRoles`、および`clusterRoleBindings`はRancherによってラベル付けされています
+| ✓
+| ✓
+| ✓
+| ✓
+
+| ラベル、アノテーション、およびファイナライザー
+| ✓
+| ✓
+| ✓
+| ✓
+
+| Rancherのデプロイメント
+| ✓
+| ✓
+| ✓
+|
+
+| マシン、クラスター、プロジェクト、およびユーザーのCRD
+| ✓
+| ✓
+| ✓
+|
+
+| `management.cattle.io` APIグループの下に作成されたすべてのリソース
+| ✓
+| ✓
+| ✓
+|
+
+| Rancher v2.xによって作成されたすべてのCRD
+| ✓
+| ✓
+| ✓
+|
+|===
+
+[#_removing_a_node_from_a_cluster_by_rancher_ui]
+== Rancher UIを使用してクラスターからノードを削除する
+
+ノードが`Active`の状態にあるとき、クラスターからノードを削除すると、ノードをクリーンアップするプロセスがトリガーされます。自動クリーンアッププロセスが完了した後、ノードを再起動して、非永続データが適切に削除されることを確認してください。
+
+*ノードを再起動するには:*
+
+----
+# using reboot
+$ sudo reboot
+
+# using shutdown
+$ sudo shutdown -r now
+----
+
+[#_removing_rancher_components_from_a_cluster_manually]
+== クラスターからRancherコンポーネントを手動で削除する
+
+ノードが到達不能でクラスターから削除されると、自動クリーンアッププロセスはトリガーされません。以下の手順に従って、Rancherコンポーネントを手動で削除してください。
+
+[WARNING]
+====
+
+以下に示すコマンドは、ノードからデータを削除します。いずれかのコマンドを実行するとデータが失われるため、実行前に保持したいファイルのバックアップを作成していることを確認してください。
+====
+
+
+[#_removing_rancher_components_from_registered_clusters]
+=== 登録されたクラスターからRancherコンポーネントを削除する
+
+登録されたクラスターの場合、Rancherを削除するプロセスは少し異なります。Rancher UIでクラスターを単純に削除するか、ノードからRancherコンポーネントを削除するスクリプトを実行するオプションがあります。どちらのオプションも同じ削除を行います。
+
+登録されたクラスターがRancherから切り離された後、クラスターのワークロードには影響がなく、クラスターがRancherに登録される前と同じ方法でクラスターにアクセスできます。
+
+[tabs]
+======
+UI / APIによる::
++
+--
+[WARNING]
+====
+このプロセスは、クラスターからデータを削除します。コマンドを実行する前に保持したいファイルのバックアップを作成していることを確認してください。データが失われるためです。
+====
+
+Rancher UI（またはAPI）を使用して登録されたクラスターの削除を開始すると、次のイベントが発生します。
+
+. Rancherは、クラスターからRancherコンポーネントを削除するために使用する`serviceAccount`を作成します。このアカウントには、Rancherコンポーネントを削除するために必要な https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole[clusterRole]および https://kubernetes.io/docs/reference/access-authn-authz/rbac/#rolebinding-and-clusterrolebinding[clusterRoleBinding]の権限が割り当てられています。
+. `serviceAccount`を使用して、RancherはクラスターからRancherコンポーネントをクリーンアップする https://kubernetes.io/docs/concepts/workloads/controllers/jobs-run-to-completion/[ジョブ]をスケジュールし、実行します。このジョブは、依存関係として`serviceAccount`とその役割も参照するため、ジョブは完了する前にそれらを削除します。
+. Rancherはクラスターから削除されます。しかし、クラスターは持続し、Kubernetesのネイティブバージョンを実行します。
+
+*結果:*<<_what_gets_removed,削除されるものは？>>に登録されたクラスターのすべてのコンポーネントが削除されます。
+--
+
+スクリプトによって::
++
+--
+Rancher UIを使用して登録されたクラスターのノードをクリーンアップする代わりに、スクリプトを実行することができます。
+
+[NOTE]
+.前提条件
+====
+https://kubernetes.io/docs/tasks/tools/install-kubectl/[kubectl]をインストールします。
+====
+
+. ウェブブラウザを開き、 https://github.com/rancher/rancher/blob/main/cleanup/user-cluster.sh[GitHub]に移動して`user-cluster.sh`をダウンロードします。
+. `user-cluster.sh`と同じディレクトリから次のコマンドを実行して、スクリプトを実行可能にします：
++
+----
+chmod +x user-cluster.sh
+----
+
+. *エアギャップ環境のみ：*`user-cluster.sh`を開き、`yaml_url`を`user-cluster.yml`のURLに置き換えます。
++
+エアギャップ環境がない場合は、このステップをスキップしてください。
+
+. 同じディレクトリからスクリプトを実行し、クラスターを管理するために使用されるRancherのバージョンと等しい`rancher/rancher-agent`イメージバージョンを指定します。 (`<RANCHER_VERSION>`):
++
+[TIP]
+====
+スクリプトの結果を変更せずにプレビューするために、`-dry-run`フラグを追加します。
+
+----
+./user-cluster.sh rancher/rancher-agent:<RANCHER_VERSION>
+----
+====
+
+*結果:*スクリプトが実行されます。<<_what_gets_removed,削除されるものは？>>に登録されたクラスターのすべてのコンポーネントが削除されます。
+--
+====== 
+
+[#_cleaning_up_nodes]
+## ノードのクリーンアップ 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[NOTE]
+====
+RancherによってデプロイされていないRKE2クラスターのノードをクリーンアップする手順については、{url-rke2-uninstall}[公式RKE2ドキュメント]を参照してください。
+====
+
+Rancherが提供するRKE2ノードから以下のコンポーネントを削除する必要があります：
+
+* Rancherに接続し、RKE2をインストールおよび管理するrancher-system-agent。
+* RKE2自体。
+
+[pass]
+<h3><a id="_removing_rancher-system-agent"></a>rancher-system-agentの削除</h3>
+
+
+rancher-system-agentを削除するには、 https://github.com/rancher/system-agent/blob/main/system-agent-uninstall.sh[system-agent-uninstall.sh]スクリプトを実行してください。
+
+[source,shell]
+----
+curl https://raw.githubusercontent.com/rancher/system-agent/main/system-agent-uninstall.sh > system-agent-uninstall.sh
+sudo sh system-agent-uninstall.sh
+----
+
+[pass]
+<h3><a id="_removing_rke2"></a>RKE2の削除</h3>
+
+RKE2のインストールを削除するには、ノードに既に存在する`rke2-uninstall`スクリプトを実行してください。
+
+----
+sudo rke2-uninstall.sh
+----
+--
+
+K3s::
++
+--
+Rancherが提供するK3sノードから以下のコンポーネントを削除する必要があります。
+
+* Rancherに接続し、K3sをインストールおよび管理するrancher-system-agent。
+* K3s自体。
+
+[pass]
+<h3><a id="_removing_rancher-system-agent"></a>rancher-system-agentの削除</h3>
+
+
+rancher-system-agentを削除するには、 https://github.com/rancher/system-agent/blob/main/system-agent-uninstall.sh[system-agent-uninstall.sh]スクリプトを実行してください。
+
+[source,shell]
+----
+curl https://raw.githubusercontent.com/rancher/system-agent/main/system-agent-uninstall.sh > system-agent-uninstall.sh
+sudo sh system-agent-uninstall.sh
+----
+
+[pass]
+<h3><a id="_removing_k3s"></a>K3sの削除</h3>
+
+
+K3sのインストールを削除するには、ノードに既に存在する`k3s-uninstall`スクリプトを実行してください。
+
+```
+sudo k3s-uninstall.sh
+```
+--
+====== 
+
+[#_directories_and_files]
+=== ディレクトリとファイル
+
+以下のディレクトリは、クラスターにノードを追加する際に使用され、削除する必要があります。`rm -rf /directory_name`を使用してディレクトリを削除できます。
+
+[IMPORTANT]
+====
+
+ノードに割り当てた役割に応じて、特定のディレクトリがノードに存在する場合と存在しない場合があります。
+
+====
+
+[tabs]
+======
+RKE2::
++
+--
+[%autowidth]
+|===
+| ディレクトリ
+
+| `/etc/ceph`
+| `/etc/cni`
+| `/etc/kubernetes`
+| `/etc/rancher`
+| `/opt/cni`
+| `/run/calico`
+| `/run/flannel`
+| `/run/secrets/kubernetes.io`
+| `/var/lib/calico`
+| `/var/lib/cni`
+| `/var/lib/etcd`
+| `/var/lib/kubelet`
+| `/var/lib/rancher`
+| `/var/lib/weave`
+| `/var/log/containers`
+| `/var/log/pods`
+| `/var/run/calico`
+|===
+
+**ディレクトリをクリーンアップするには:**
+
+[source,shell]
+----
+rm -rf /etc/ceph \
+       /etc/cni \
+       /etc/kubernetes \
+       /etc/rancher \
+       /opt/cni \
+       /run/calico \
+       /run/flannel \
+       /run/secrets/kubernetes.io \
+       /var/lib/calico \
+       /var/lib/cni \
+       /var/lib/etcd \
+       /var/lib/kubelet \
+       /var/lib/rancher \
+       /var/lib/weave \
+       /var/log/containers \
+       /var/log/pods \
+       /var/run/calico
+----
+--
+
+K3s::
++
+--
+[%autowidth]
+|===
+| ディレクトリ
+
+| `/etc/ceph`
+| `/etc/cni`
+| `/etc/kubernetes`
+| `/etc/rancher`
+| `/etc/systemd/system/k3s`
+| `/opt/cni`
+| `/run/calico`
+| `/run/flannel`
+| `/run/secrets/kubernetes.io`
+| `/usr/local/bin/k3s`
+| `/var/lib/calico`
+| `/var/lib/cni`
+| `/var/lib/etcd`
+| `/var/lib/kubelet`
+| `/var/lib/rancher`
+| `/var/lib/weave`
+| `/var/log/containers`
+| `/var/log/pods`
+| `/var/run/calico`
+|===
+
+**ディレクトリをクリーンアップするには:**
+
+[source,shell]
+----
+rm -rf /etc/ceph \
+       /etc/cni \
+       /etc/kubernetes \
+       /etc/rancher \
+       /etc/systemd/system/k3s \
+       /opt/cni \
+       /run/calico \
+       /run/flannel \
+       /run/secrets/kubernetes.io \
+       /usr/local/bin/k3s \
+       /var/lib/calico \
+       /var/lib/cni \
+       /var/lib/etcd \
+       /var/lib/kubelet \
+       /var/lib/rancher \
+       /var/lib/weave \
+       /var/log/containers \
+       /var/log/pods \
+       /var/run/calico
+----
+--
+====== 
+
+[#_network_interfaces_and_iptables]
+=== ネットワークインタフェースとiptables
+
+変更または構成される残りの2つのコンポーネントは、(仮想)ネットワークインタフェースとiptablesルールです。どちらもノードに対して非永続的であり、ノードの再起動後にクリアされます。これらのコンポーネントを削除するには、再起動をお勧めします。
+
+*ノードを再起動するには:*
+
+----
+# using reboot
+$ sudo reboot
+
+# using shutdown
+$ sudo shutdown -r now
+----
+
+(仮想)ネットワークインタフェースやiptablesルールについて詳しく知りたい場合は、以下の特定のトピックをご覧ください。
+
+[#_network_interfaces]
+=== ネットワークインタフェース
+
+[NOTE]
+====
+
+クラスターのために構成されたネットワークプロバイダーに応じて、ノードにいくつかのネットワークインタフェースが存在する場合と存在しない場合があります。
+====
+
+
+|===
+| インタフェース
+
+| `flannel.1`
+| `cni0`
+| `tunl0`
+| `caliXXXXXXXXXXX`（ランダムなネットワークインタフェース名）
+| `vethXXXXXXXX`（ランダムなネットワークインタフェース名）
+|===
+
+*すべてのネットワークインタフェースを一覧表示するには：*
+
+----
+# Using ip
+ip address show
+
+# Using ifconfig
+ifconfig -a
+----
+
+*ネットワークインタフェースを削除するには：*
+
+----
+ip link delete interface_name
+----
+
+[#_iptables]
+=== Iptables
+
+[NOTE]
+====
+
+クラスターに設定されたネットワークプロバイダーによって、ノードに存在するチェーンがある場合とない場合があります。
+====
+
+
+Iptablesルールは、コンテナからのトラフィックをルーティングするために使用されます。作成されたルールは永続的ではないため、ノードを再起動するとiptablesは元の状態に戻ります。
+
+|===
+| チェーン
+
+| `cali-failsafe-in`
+| `cali-failsafe-out`
+| `cali-fip-dnat`
+| `cali-fip-snat`
+| `cali-from-hep-forward`
+| `cali-from-host-endpoint`
+| `cali-from-wl-dispatch`
+| `cali-fw-caliXXXXXXXXXXX`（ランダムなチェーン名）
+| `cali-nat-outgoing`
+| `cali-pri-kns.NAMESPACE`（ネームスペースごとのチェーン）
+| `cali-pro-kns.NAMESPACE`（ネームスペースごとのチェーン）
+| `cali-to-hep-forward`
+| `cali-to-host-endpoint`
+| `cali-to-wl-dispatch`
+| `cali-tw-caliXXXXXXXXXXX`（ランダムなチェーン名）
+| `cali-wl-to-host`
+| `KUBE-EXTERNAL-SERVICES`
+| `KUBE-FIREWALL`
+| `KUBE-MARK-DROP`
+| `KUBE-MARK-MASQ`
+| `KUBE-NODEPORTS`
+| `KUBE-SEP-XXXXXXXXXXXXXXXX`（ランダムなチェーン名）
+| `KUBE-SERVICES`
+| `KUBE-SVC-XXXXXXXXXXXXXXXX`（ランダムなチェーン名）
+|===
+
+*すべてのiptablesルールを一覧表示するには：*
+
+----
+iptables -L -t nat
+iptables -L -t mangle
+iptables -L
+----

@@ -1,30 +1,83 @@
-= Configure Rancher as an OIDC provider
+= 将 Rancher 配置为 OIDC 提供者
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-09-22
+endif::[]
+:revdate: 2026-04-08
 :page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/configure-oidc-provider.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-oidc-provider.adoc
 
-Rancher can function as a standard OpenID Connect (OIDC) provider, allowing external applications to use Rancher for authentication.
-This can be used for enabling single sign-on (SSO) across Rancher Prime components. For example, see the https://documentation.suse.com/cloudnative/suse-observability/latest/en/setup/security/authentication/oidc.html[documentation] for configuring the OIDC provider for SUSE Observability.
+Rancher 可以作为其他应用程序的 OpenID Connect (OIDC) 身份提供者 (IdP)。这使您能够使用 Rancher 的集中身份验证和基于角色的访问控制 (RBAC) 来管理对外部第三方应用程序的访问。这可以用于在 Rancher 组件之间启用单点登录 (SSO)。例如，请参阅 https://documentation.suse.com/cloudnative/suse-observability/latest/en/setup/security/authentication/oidc.html[文档] 以配置 SUSE Observability 的 OIDC 提供者。
 
-The OIDC provider can be enabled with the `oidc-provider` feature flag. When this flag is on the following endpoints are available:
+[NOTE]
+====
+由于 OIDC 是 OAuth2 的超集，您可以将 Rancher 用作 OAuth2 服务器，而无需完全支持 OIDC。这确保了利用 OAuth2 方面的客户端，例如 `rancher-ai-mcp` 服务器，得到全面支持。
+====
 
-- `+https://{rancher-url}/oidc/authorize+`: This endpoint initiates the authentication flow. If a user is already logged into Rancher, it returns an authorization code. Otherwise, it redirects the user to the Rancher login page. Authorization codes and related request information are securely stored in session secrets. Codes are single-use and expire after 10 minutes.
+Rancher OIDC 提供者为 OAuth2 和 OIDC 发放访问令牌，这些令牌可以作为标准的 Bearer 令牌 (根据 RFC6750) 用于与 Rancher 进行身份验证。之前，仅能使用 ID 令牌来冒充和验证用户。
 
-- `+https://{rancher-url}/oidc/token+`: This endpoint exchanges an authorization code for an `id_token`, `access_token`, and `refresh_token`.
+可以通过 `oidc-provider` 功能标志启用 OIDC 提供者。当此标志开启时，以下端点可用：
 
-- `+https://{rancher-url}/oidc/.well-known/openid-configuration+`: This endpoint returns a JSON document containing the OIDC provider's configuration, including endpoint URLs, supported scopes, claims, and other relevant details.
+- `https://{rancher-url}/oidc/authorize`：此端点启动身份验证流程。如果用户已经登录到 Rancher，它将返回一个授权代码。否则，它会将用户重定向到 Rancher 登录页面。授权代码和相关请求信息安全地存储在会话密钥中。代码为一次性使用，并在 10 分钟后过期。
 
-- `+https://{rancher-url}/oidc/userinfo+`: This endpoint provides information about the authenticated user.
+- `https://{rancher-url}/oidc/token`：此端点将授权代码交换为 `id_token`、`access_token` 和 `refresh_token`。
 
-The OIDC provider supports the OIDC Authentication Code Flow with PKCE.
+- `https://{rancher-url}/oidc/.well-known/openid-configuration`：此端点返回一个 JSON 文档，包含 OIDC 提供者的配置，包括端点 URL、支持的范围、声明和其他相关细节。
 
-== Configure OIDCClient
+- `https://{rancher-url}/oidc/userinfo`：此端点提供有关已验证用户的信息。
 
-An `OIDCClient` represents an external application that will be authenticating against Rancher.
+OIDC 提供者支持带 PKCE 的 OIDC 身份验证代码流程。
 
-=== Programmatically
+[#_configuring_an_oidc_client]
+== 配置 OIDC 客户端
 
-Create an `OIDCClient`:
+`OIDCClient` 代表一个将对 Rancher 进行身份验证的外部应用程序。要注册客户端应用程序，您必须创建一个 `OIDCClient` 自定义资源。
+
+[#_configuration_fields]
+=== 配置字段
+
+在定义您的 `OIDCClient` 清单时，必须包含特定字段以通过 CRD 验证：
+
+- `spec.tokenExpirationSeconds`：此字段是严格必需的，如果省略将导致验证错误。它定义了访问令牌的有效期。
+- `spec.refreshTokenExpirationSeconds`：此字段也是严格必需的，如果省略将导致验证错误。它定义了刷新令牌的有效期。
+- `scopes`（可选）：此字段允许您限制客户端可以请求的范围。如果未明确配置，允许的范围将默认为 `openid`、`profile` 和 `offline_access`。
+
+[#_example_oidc_client_manifest]
+=== 示例 OIDC 客户端清单
+
+下面是 `OIDCClient` 配置的示例：
+
+[NOTE]
+====
+您必须包含过期字段才能成功应用资源。
+====
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: OIDCClient
+metadata:
+  name: example-client
+spec:
+  description: "Example OIDC Client"
+  redirectUris:
+    - "https://example-app.com/callback"
+  tokenExpirationSeconds: 3600
+  refreshTokenExpirationSeconds: 86400
+  # scopes:
+  #   - openid
+  #   - profile
+  #   - offline_access
+----
+
+将此配置保存到文件（例如，`oidcclient.yaml`）并应用到您的 Rancher 本地群集：
+
+[,sh]
+----
+kubectl apply -f oidcclient.yaml
+----
+
+Rancher 会为每个 `OIDCClient` 自动生成客户端 ID 和客户端密钥。一旦资源创建，Rancher 会用客户端 ID 填充状态字段：
 
 [,yaml]
 ----
@@ -37,22 +90,10 @@ spec:
   refreshTokenExpirationSeconds: 3600 # expiration of the refresh_token
   redirectURIs:
     - "https://myredirecturl.com" # replace with your redirect url
-----
-
-Rancher automatically generates a client ID and client secret for each `OIDCClient`.
-Once the resource is created, Rancher populates the status field with the client id:
-
-[,yaml]
-----
-apiVersion: management.cattle.io/v3
-kind: OIDCClient
-metadata:
-  name: oidc-client-test
-spec:
-  tokenExpirationSeconds: 600 # expiration of the id_token and access_token
-  refreshTokenExpirationSeconds: 3600 # expiration of the refresh_token
-  redirectURIs:
-    - "https://myredirecturl.com" # replace with your redirect url
+  scopes: # Optional: Restricts the scopes the client can request. Defaults to openid, profile, and offline_access if omitted.
+    - openid
+    - profile
+    - offline_access
 status:
   clientID: client-xxx
   clientSecrets:
@@ -61,59 +102,63 @@ status:
       lastFiveCharacters: xxx
 ----
 
-Rancher automatically generates a Kubernetes `Secret` in the `cattle-oidc-client-secrets` namespace for each `OIDCClient` resource. The Secret's name matches the `OIDCClient` client ID.
-Initially, the `Secret` contains a single client secret.
+Rancher 会为每个 `OIDCClient` 资源在 `cattle-oidc-client-secrets` 名称空间中自动生成一个 Kubernetes `Secret`。Secret 的名称与 `OIDCClient` 客户端 ID 匹配。最初，`Secret` 包含一个客户端密钥。
 
-To retrieve the client secret:
+要检索客户端密钥：
 
 [,bash]
 ----
 kubectl get secret client-xxx -n cattle-oidc-client-secrets -o jsonpath="{.data.client-secret-1}" | base64 -d
 ----
 
-Output:
+输出：
 
 [,bash]
 ----
 secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ----
 
-You can now use this client ID and client secret in your OIDC client application.
+您现在可以在您的 OIDC 客户端应用程序中使用此客户端 ID 和客户端密钥。
 
-==== Managing Client Secrets
+[#_managing_client_secrets]
+==== 管理客户端密钥
 
-You can manage multiple client secrets per `OIDCClient`. Use annotations on the `OIDCClient` resource to perform secret operations:
+您可以为每个 `OIDCClient` 管理多个客户端密钥。在 `OIDCClient` 资源上使用注释以执行密钥操作：
 
-- Creation: Adding the `cattle.io/oidc-client-secret-create: true` annotation triggers the creation of a new client secret.
-- Removal: Adding the `cattle.io/oidc-client-secret-remove:client-secret-1` annotation removes the specified client secrets.
-- Regeneration: Adding the `cattle.io/oidc-client-secret-regenerate:client-secret-1` annotation regenerates the specified client secrets.
+- 创建：添加 `cattle.io/oidc-client-secret-create: true` 注释会触发创建新的客户端密钥。
+- 去除：添加 `cattle.io/oidc-client-secret-remove:client-secret-1` 注释会移除指定的客户端密钥。
+- 重新生成：添加`cattle.io/oidc-client-secret-regenerate:client-secret-1`注释会重新生成指定的客户端密钥。
 
+[#_rancher_ui]
 === Rancher UI
 
-Create an OIDCClient:
+创建一个OIDCClient：
 
-. In the top left corner, click **☰ > Users & Authentication**.
-. In the left navigation menu, click **OIDC Apps**.
-. Click **Add Application**. Fill out the **Create OIDC App** form.
-. Click **Add Application**.
+. 在左上角，点击**☰ > 用户与身份验证**。
+. 在左侧导航菜单中，点击**OIDC应用**。
+. 点击**添加应用**。填写**创建OIDC应用**表单。
+. 点击**添加应用**。
 
-==== Managing Client Secrets
+[#_managing_client_secrets_1]
+==== 管理客户端密钥
 
-In the OIDC App page:
+在 OIDC 应用页面：
 
-- Creation: Click **Add new secret**.
-- Removal: Click **⋮ > Delete**.
-- Regeneration: Click **⋮ > Regenerate**.
+- 创建：点击 **添加新密钥**。
+- 去除：点击 **⋮ > 删除**。
+- 重新生成：点击 **⋮ > 重新生成**。
 
-== Signing key
+[#_signing_key]
+== 签名密钥
 
-A default key pair for signing the `id_token`, `access_token`, and `refresh_token` tokens is created by Rancher in a `Secret` called `oidc-signing-key` in the `cattle-system` namespace. Only one key will be used for signing, but multiple public keys can be returned in the JWKS endpoint in order to avoid disruption when doing a key rotation.
+Rancher 在 `cattle-system` 名称空间中创建一个名为 `oidc-signing-key` 的 `Secret`，用于签名 `id_token`、`access_token` 和 `refresh_token` 令牌的默认密钥对。将只使用一个密钥进行签名，但可以在 JWKS 端点返回多个公钥，以避免在进行密钥轮换时造成中断。
 
-=== Rotation without disruption
+[#_rotation_without_disruption]
+=== 无中断的轮换
 
-In order to create a new key pair for signing you need to manually create a new keypair and add it to the `oidc-signing-key` `Secret`.
+为了创建一个新的签名密钥对，您需要手动创建一个新的密钥对并将其添加到 `oidc-signing-key` `Secret` 中。
 
-Example:
+示例：
 
 [,yaml]
 ----
@@ -128,15 +173,14 @@ data:
  key2.pub: <base64-encoded-new-public-key>
 ----
 
-Rancher will sign tokens using `key2.pem`, while the JWKS endpoint will serve both `key1.pub` and `key2.pub`. This ensures a smooth 
-key rotation from `key1` to `key2` without disrupting existing token verification. Note that only one private key (.pem) can be stored in the 
-secret at a time, and each key pair must share the same base name, differing only by their suffix: .pem for the private key and .pub for the public key.
+Rancher 将使用 `key2.pem` 签名令牌，而 JWKS 端点将同时提供 `key1.pub` 和 `key2.pub`。这确保了从 `key1` 到 `key2` 的平滑密钥轮换，而不会干扰现有的令牌验证。请注意，Secret 中一次只能存储一个私钥 (.pem)，并且每个密钥对必须共享相同的基本名称，仅通过后缀不同：私钥为 .pem，公钥为 .pub。
 
-=== Rotation with disruption
+[#_rotation_with_disruption]
+=== 有中断的轮换
 
-Removing the `oidc-signing-key` `Secret` will cause Rancher to regenerate the signing key on the next restart.
+删除 `oidc-signing-key` `Secret` 将导致 Rancher 在下次重启时重新生成签名密钥。
 
 [WARNING]
 ====
-This will invalidate all previously issued `id_token`, `access_token`, and `refresh_token` tokens making them unusable.
+这将使所有先前发出的 `id_token`、`access_token` 和 `refresh_token` 令牌失效，使其无法使用。
 ====

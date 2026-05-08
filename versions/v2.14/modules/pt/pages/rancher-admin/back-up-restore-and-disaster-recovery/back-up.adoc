@@ -1,0 +1,119 @@
+= Fazendo backup {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-backup-storage-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/storage.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-rancher-backup-config: xref:guias-de-referência/configuração-de-backup-e-restauração/configuração-de-backup.adoc
+:xref-rancher-backup-storage-config: xref:guias-de-referência/configuração-de-backup-e-restauração/configuração-de-storage.adoc
+:xref-migrate-cluster: xref:procedimentos/novos-usuários/backup-restore-and-disaster-recovery/migrar-rancher-para-novo-cluster.adoc
+:xref-back-restore-example-configs: xref:guias-de-referência/backup-restaurar-configuração/exemplos.adoc
+endif::[]
+
+Nesta seção, você aprenderá como fazer backup do Rancher em qualquer cluster Kubernetes. Para fazer backup do Rancher instalado com Docker, consulte as instruções para xref:[backups de nó único]
+
+O operador de backup e restauração precisa ser instalado no cluster local e faz backup somente do app Rancher. As operações de backup e restauração são realizadas apenas no cluster Kubernetes local.
+
+Observe que a versão 2.x.x do operador rancher-backup é para o Rancher v2.6.x.
+
+[CAUTION]
+====
+
+Ao restaurar um backup em uma nova configuração do Rancher, a versão da nova configuração deve ser a mesma que foi utilizada para fazer o backup. A versão do Kubernetes também deve ser considerada ao restaurar um backup, uma vez que a apiVersion suportada no cluster e no arquivo de backup pode ser diferente.
+====
+
+
+[#_prerequisites]
+== Pré-requisitos
+
+A versão do Rancher deve ser v2.5.0 ou superior.
+
+Consulte {xref-migrate-cluster}#_2_restore_from_backup_using_a_restore_custom_resource[aqui] para obter ajuda sobre como restaurar um arquivo de backup existente em um cluster v1.22 no Rancher v2.6.3.
+
+[#_1_install_the_rancher_backup_operator]
+== 1. Instale o operador de backup do Rancher
+
+O local de armazenamento do backup é uma configuração em nível de operador, portanto, precisa ser configurado quando o aplicativo Backups do Rancher é instalado ou atualizado.
+
+Os backups são criados como arquivos .tar.gz. Esses arquivos podem ser enviados para S3 ou Minio, ou podem ser armazenados em um volume persistente.
+
+. No canto superior esquerdo, clique em *☰ > Gerenciamento de Cluster*.
+. Na página *Clusters*, vá para o cluster `local` e clique em *Explorar*. O cluster `local` executa o servidor Rancher.
+. Clique menu:Apps[Charts].
+. Clique em *Rancher Backups*.
+. Clique em *Instalar*.
+. Configure o local de armazenamento padrão. Para ajuda, consulte a {xref-rancher-backup-storage-config}[seção de configuração de armazenamento.]
+. Clique em *Instalar*.
+
+[NOTE]
+====
+
+Há um problema conhecido no Fleet que ocorre após realizar uma restauração usando o operador de backup e restauração: Segredos usados para clientSecretName e helmSecretName não estão incluídos nos gitrepos do Fleet. Consulte {xref-fleet-overview}#_troubleshooting[aqui] para uma solução alternativa.
+====
+
+
+[#_2_perform_a_backup]
+== 2. Realizar um backup
+
+Para realizar um backup, um recurso personalizado do tipo Backup deve ser criado.
+
+. No canto superior esquerdo, clique em *☰ > Gerenciamento de Cluster*.
+. Na página *Clusters*, vá para o cluster `local` e clique em *Explorar*.
+. Na barra de navegação à esquerda, clique em menu:Rancher Backups[Backups].
+. Clique em *Criar*.
+. Crie o backup com o formulário ou com o editor YAML.
+. Para configurar os detalhes do backup usando o formulário, clique em *Criar* e consulte a {xref-rancher-backup-config}[referência de configuração] e os {xref-back-restore-example-configs}#_backup[exemplos.]
+. Para usar o editor YAML, podemos clicar em menu:Criar[Criar a partir do YAML]. Insira o YAML do backup. Este recurso personalizado de backup criaria backups recorrentes criptografados no S3. O app usa o valor `credentialSecretNamespace` para determinar onde procurar o segredo de backup do S3:
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Backup
+ metadata:
+   name: s3-recurring-backup
+ spec:
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+   resourceSetName: rancher-resource-set-full
+   encryptionConfigSecretName: encryptionconfig
+   schedule: "@every 1h"
+   retentionCount: 10
+----
++
+
+[NOTE]
+====
+Ao criar o recurso de backup usando o editor YAML, o `resourceSetName` deve ser definido como `rancher-resource-set-full` ou `rancher-resource-set-basic`.
+====
+
++
+Para ajuda na configuração do backup, consulte a {xref-rancher-backup-config}[referência de configuração] e os {xref-back-restore-example-configs}#_backup[exemplos.]
++
+
+[CAUTION]
+====
+O operador `rancher-backup` não salva o arquivo EncryptionConfiguration. O conteúdo do arquivo EncryptionConfiguration deve ser salvo quando um backup criptografado é criado, e o mesmo arquivo deve ser usado ao restaurar a partir deste backup.
+====
+
+
+. Clique em *Criar*.
+
+*Resultado:* O arquivo de backup é criado na localização de armazenamento configurada no recurso personalizado de Backup. O nome deste arquivo é usado ao realizar uma restauração.

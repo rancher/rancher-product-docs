@@ -1,0 +1,367 @@
+= 4. Installieren Sie {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-22
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/install-rancher-ha.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/install-rancher-ha.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-tls-secrets: xref:installation-and-upgrade/resources/tls-secrets.adoc
+:xref-upgrade-certmanager: xref:installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+:xref-helm-reqs: xref:installation-and-upgrade/requirements/helm-version-requirements.adoc
+:xref-rancher-extensions: xref:integrations/rancher-extensions.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-tls-secrets: xref:getting-started/installation-and-upgrade/resources/add-tls-secrets.adoc
+:xref-upgrade-certmanager: xref:getting-started/installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+:xref-helm-reqs: xref:getting-started/installation-and-upgrade/resources/helm-version-requirements.adoc
+:xref-rancher-extensions: xref:integrations-in-rancher/rancher-extensions.adoc
+endif::[]
+
+
+In diesem Abschnitt erfahren Sie, wie Sie Rancher in einer Air-Gapped-Umgebung mit hoher Verfügbarkeit auf Kubernetes bereitstellen. Eine Air-Gapped-Umgebung ist eine Umgebung, in der der Rancher-Server offline, hinter einer Firewall oder hinter einem Proxy installiert wird.
+
+[#_privileged_access_for_rancher]
+== Privilegierter Zugriff für Rancher
+
+Wenn der Rancher-Server im Docker-Container bereitgestellt wird, wird ein lokaler Kubernetes-Cluster innerhalb des Containers für die Nutzung durch Rancher installiert. Da viele Funktionen von Rancher als Deployment ausgeführt werden und der privilegierte Modus erforderlich ist, um Container innerhalb von Containern auszuführen, müssen Sie Rancher mit der Option `--privileged` installieren.
+
+[#_docker_instructions]
+== Docker-Anweisungen
+
+Wenn Sie die Air-Gapped-Installation mit Docker-Befehlen fortsetzen möchten, überspringen Sie den Rest dieser Seite und folgen Sie den Anweisungen auf xref:[dieser Seite.]
+
+[#_kubernetes_instructions]
+== Kubernetes-Anweisungen
+
+Rancher empfiehlt, Rancher auf einem Kubernetes-Cluster zu installieren. Eine hochverfügbare Kubernetes-Installation besteht aus drei Knoten, die die Rancher-Serverkomponenten auf einem Kubernetes-Cluster ausführen. Die Persistenzschicht (etcd) wird ebenfalls auf diesen drei Knoten repliziert, um Redundanz und Datenreplikation im Falle eines Ausfalls eines der Knoten bereitzustellen.
+
+[#_1_add_the_helm_chart_repository]
+=== 1. Fügen Sie das Helm-Chart-Repository hinzu
+
+Holen Sie sich von einem System mit Internetzugang das neueste Helm-Chart und kopieren Sie die resultierenden Manifeste auf ein System, das Zugriff auf den Rancher-Server-Cluster hat.
+
+. Wenn Sie es noch nicht getan haben, installieren Sie `helm` lokal auf einem Arbeitsplatz, der Internetzugang hat. Hinweis: Beziehen Sie sich auf die {xref-helm-reqs}[Helm-Version-Anforderungen], um eine Version von Helm auszuwählen, um Rancher zu installieren.
+
+ifeval::["{build-type}" == "product"]
+. Verwenden Sie den `helm repo add` Befehl, um das Helm-Chart-Repository hinzuzufügen, das Charts zum Installieren von Rancher Prime enthält.
++
+[,shell]
+----
+helm repo add rancher-prime <helm-chart-repo-url>
+----
++
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
+endif::[]
+
+ifeval::["{build-type}" == "community"]
+. Verwenden Sie den `helm repo add` Befehl, um das Helm-Chart-Repository hinzuzufügen, das Charts zum Installieren von Rancher enthält. Für weitere Informationen zu den Repository-Optionen und welches am besten für Ihren Anwendungsfall geeignet ist, siehe xref:getting-started/installation-and-upgrade/resources/choose-a-rancher-version.adoc[Wahl einer Rancher-Version].
+
+** Neuestes: Empfohlen, um die neuesten Funktionen auszuprobieren.
++
+----
+helm repo add rancher-latest https://releases.rancher.com/server-charts/latest
+----
+
+** Stabil: Empfohlen für Produktionsumgebungen.
++
+----
+helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+----
+
+** Alpha: Experimentelle Vorschau auf kommende Versionen.
++
+----
+helm repo add rancher-alpha https://releases.rancher.com/server-charts/alpha
+----
++
+[NOTE]
+====
+Upgrades werden nicht unterstützt zu, von oder zwischen Alphas.
+====
+endif::[]
+
+. Laden Sie das {rancher-product-name} Chart herunter. Dies wird das Chart herunterladen und im aktuellen Verzeichnis als\&nbsp;`.tgz` Datei speichern.
+** Um die neueste Version abzurufen:
+ifeval::["{build-type}" == "product"]
+endif::[]
++
+[,shell,subs="attributes+"]
+----
+helm fetch {rancher-helm-repo}/rancher
+----
+** Um eine bestimmte Version abzurufen:
++
+.. Überprüfen Sie, welche Versionen von Rancher Prime verfügbar sind.
++
+[,shell,subs="attributes+"]
+----
+helm search repo --versions {rancher-helm-repo}
+----
+
+.. Holen Sie sich eine bestimmte Version, indem Sie den `--version` Parameter angeben:
++
+[,shell,subs="attributes+"]
+----
+helm fetch {rancher-helm-repo}/rancher --version=<version>
+----
+
+[#_2_choose_your_ssl_configuration]
+=== 2. Wählen Sie Ihre SSL-Konfiguration
+
+Rancher Server ist standardmäßig sicher gestaltet und erfordert eine SSL/TLS-Konfiguration.
+
+Wenn Rancher auf einem Air-Gapped-Kubernetes-Cluster installiert ist, gibt es zwei empfohlene Optionen für die Quelle des Zertifikats.
+
+[NOTE]
+====
+
+Wenn Sie SSL/TLS extern beenden möchten, siehe {xref-helm-chart-options}#_external_tls_termination[TLS-Beendigung auf einem externen Load Balancer].
+====
+
+
+|===
+| Konfiguration | Diagrammoption | Beschreibung | Benötigt cert-manager
+
+| Von Rancher generierte selbstsignierte Zertifikate
+| `ingress.tls.source=rancher`
+| Verwenden Sie Zertifikate, die von der von Rancher generierten CA (selbstsigniert) ausgestellt wurden. +
+Dies ist der *Standard* und muss beim Rendern der Helm-Vorlage nicht hinzugefügt werden.
+| Ja
+
+| Zertifikate aus Dateien
+| `ingress.tls.source=secret`
+| Verwenden Sie Ihre eigenen Zertifikatdateien, indem Sie Kubernetes-Geheimnisse erstellen. +
+Diese Option muss beim Rendern der Rancher Helm-Vorlage übergeben werden.
+| Nein
+|===
+
+[#_helm_chart_options_for_air_gap_installations]
+=== Helm-Chart-Optionen für Air-Gap-Installationen
+
+Bei der Einrichtung der Rancher Helm-Vorlage gibt es mehrere Optionen im Helm-Chart, die speziell für Air-Gap-Installationen entwickelt wurden.
+
+|===
+| Diagrammoption | Diagrammwert | Beschreibung
+
+| `certmanager.version`
+| `<version>`
+| Konfigurieren Sie den richtigen Rancher TLS-Issuer, abhängig von der verwendeten cert-manager-Version.
+
+| `systemDefaultRegistry`
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| Konfigurieren Sie den Rancher-Server so, dass er beim Bereitstellen von Clustern immer aus Ihrem privaten Repository zieht.
+
+| `useBundledSystemChart`
+| `true`
+| Konfigurieren Sie den Rancher-Server so, dass er die verpackte Kopie der Helm-Systemcharts verwendet. Das https://github.com/rancher/system-charts[Systemcharts]-Repository enthält alle Katalogelemente, die für Funktionen wie Überwachung, Protokollierung, Alarmierung und globales DNS erforderlich sind. Diese https://github.com/rancher/system-charts[Helm-Charts] befinden sich auf GitHub, aber da Sie sich in einer Air-Gap-Umgebung befinden, ist die Verwendung der in Rancher gebündelten Charts viel einfacher, als ein Git-Mirror einzurichten.
+|===
+
+[#_3_fetch_the_cert_manager_chart]
+=== 3. Laden Sie das Cert-Manager-Chart herunter
+
+Basierend auf der Wahl, die Sie in <<_2_choose_your_ssl_configuration,2 getroffen haben. Wählen Sie Ihre SSL-Konfiguration>> und vervollständigen Sie eines der Verfahren unten.
+
+[#_option_a_default_self_signed_certificate]
+==== Option A: Standardmäßig selbstsigniertes Zertifikat
+
+Standardmäßig erstellt Rancher eine CA und verwendet cert-manager, um das Zertifikat für den Zugriff auf die Rancher-Serveroberfläche auszustellen.
+
+[NOTE]
+====
+
+Aktuelle Änderungen an cert-manager erfordern ein Upgrade. Wenn Sie Rancher aktualisieren und eine Version von cert-manager verwenden, die älter als v0.11.0 ist, lesen Sie bitte unsere {xref-upgrade-certmanager}[Upgrade-Dokumentation für cert-manager].
+====
+
+
+[#_1_add_the_cert_manager_repo]
+===== 1. Fügen Sie das cert-manager-Repository hinzu
+
+Fügen Sie von einem mit dem Internet verbundenen System das cert-manager-Repository zu Helm hinzu:
+
+[,plain]
+----
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+----
+
+[#_2_fetch_the_cert_manager_chart]
+===== 2. Laden Sie das cert-manager-Chart herunter.
+
+Laden Sie das neueste verfügbare cert-manager-Chart aus dem https://artifacthub.io/packages/helm/cert-manager/cert-manager[Helm-Chart-Repository] herunter.
+
+[,plain]
+----
+helm fetch jetstack/cert-manager --version v1.11.0
+----
+
+[#_3_retrieve_the_cert_manager_crds]
+===== 3. Rufen Sie die cert-manager-CRDs ab
+
+Laden Sie die erforderliche CRD-Datei für cert-manager herunter:
+
+[,plain]
+----
+   curl -L -o cert-manager-crd.yaml https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.crds.yaml
+----
+
+[#_4_install_rancher]
+=== 4. Rancher installieren
+
+Kopieren Sie die abgerufenen Charts auf ein System, das Zugriff auf den Rancher-Server-Cluster hat, um die Installation abzuschließen.
+
+[#_1_install_cert_manager]
+==== 1. Installieren Sie cert-manager
+
+Installieren Sie cert-manager mit denselben Optionen, die Sie verwenden würden, um das Chart zu installieren. Denken Sie daran, die `image.repository` Option festzulegen, um das Image aus Ihrem privaten Registry abzurufen.
+
+[NOTE]
+====
+
+Um Optionen zu sehen, wie Sie die Installation von cert-manager anpassen können (einschließlich für Fälle, in denen Ihr Cluster PodSecurityPolicies verwendet), siehe die https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[Dokumentation zu cert-manager].
+====
+
+
+.Klicken Sie zum Aufklappen
+[%collapsible]
+======
+Wenn Sie selbstsignierte Zertifikate verwenden, installieren Sie cert-manager:
+
+. Erstellen Sie den Namespace für cert-manager.
++
+[,plain]
+----
+ kubectl create namespace cert-manager
+----
+
+. Erstellen Sie die CustomResourceDefinitions (CRDs) für cert-manager.
++
+[,plain]
+----
+ kubectl apply -f cert-manager-crd.yaml
+----
+
+. Installieren Sie cert-manager.
++
+[,plain]
+----
+ helm install cert-manager ./cert-manager-v1.11.0.tgz \
+     --namespace cert-manager \
+     --set image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-controller \
+     --set webhook.image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-webhook \
+     --set cainjector.image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-cainjector \
+     --set startupapicheck.image.repository=<REGISTRY.YOURDOMAIN.COM:PORT>/quay.io/jetstack/cert-manager-ctl
+----
++
+======
+
+[#_2_install_rancher]
+==== 2. Rancher installieren
+
+Zuerst beziehen Sie sich auf {xref-tls-secrets}[TLS-Geheimnisse hinzufügen], um die Zertifikatdateien zu veröffentlichen, damit Rancher und der Ingress-Controller sie verwenden können.
+
+Erstellen Sie dann den Namespace für Rancher mit kubectl:
+
+[,plain]
+----
+kubectl create namespace cattle-system
+----
+
+Installieren Sie als Nächstes Rancher und geben Sie Ihre gewählten Optionen an. Verwenden Sie die Referenztabelle unten, um jeden Platzhalter zu ersetzen. Rancher muss konfiguriert werden, um das private Registry zu verwenden, um alle von Rancher gestarteten Kubernetes-Cluster oder Rancher-Tools bereitzustellen.
+
+|===
+| Placeholder | Beschreibung
+
+| `<VERSION>`
+| Die Versionsnummer des ausgegebenen Tarballs.
+
+| `<RANCHER.YOURDOMAIN.COM>`
+| Der DNS-Name, den Sie auf Ihren Lastenausgleichsserver verwiesen haben.
+
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| Der DNS-Name für Ihr privates Registry.
+
+| `<CERTMANAGER_VERSION>`
+| Die cert-manager-Version, die im k8s-Cluster ausgeführt wird.
+|===
+
+[,plain]
+----
+   helm install rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set certmanager.version=<CERTMANAGER_VERSION> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+*Optional*: Um eine bestimmte Rancher-Version zu installieren, setzen Sie den `image.tag`-Wert, Beispiel: `--set image.tag=v{current-patch-version}`
+
+[#_option_b_certificates_from_files_using_kubernetes_secrets]
+==== Option B: Zertifikate aus Dateien mithilfe von Kubernetes-Geheimnissen
+
+[#_1_create_secrets]
+===== 1. Geheimnisse erstellen
+
+Erstellen Sie Kubernetes-Geheimnisse aus Ihren eigenen Zertifikaten, die Rancher verwenden kann. Der allgemeine Name für das Zertifikat muss mit der `hostname`-Option im folgenden Befehl übereinstimmen, andernfalls kann der Ingress-Controller die Site für Rancher nicht bereitstellen.
+
+[#_2_install_rancher_1]
+===== 2. Rancher installieren
+
+Installieren Sie Rancher und geben Sie Ihre gewählten Optionen an. Verwenden Sie die Referenztabelle unten, um jeden Platzhalter zu ersetzen. Rancher muss konfiguriert werden, um das private Registry zu verwenden, um alle von Rancher gestarteten Kubernetes-Cluster oder Rancher-Tools bereitzustellen.
+
+|===
+| Placeholder | Beschreibung
+
+| `<VERSION>`
+| Die Versionsnummer des ausgegebenen Tarballs.
+
+| `<RANCHER.YOURDOMAIN.COM>`
+| Der DNS-Name, den Sie auf Ihren Lastenausgleichsserver verwiesen haben.
+
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| Der DNS-Name für Ihr privates Registry.
+|===
+
+[,plain]
+----
+   helm install rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+Wenn Sie ein von einer privaten CA signiertes Zertifikat verwenden, fügen Sie `--set privateCA=true` nach `--set ingress.tls.source=secret` hinzu:
+
+[,plain]
+----
+   helm install rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set privateCA=true \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+Die Installation ist abgeschlossen.
+
+[#_additional_resources]
+== Zusätzliche Ressourcen
+
+Diese Ressourcen könnten hilfreich sein, wenn Sie Rancher installieren:
+
+* {xref-rancher-extensions}#_Importieren_und_Installieren_von_Erweiterungen_in_einer_Air-Gapped-Umgebung[Importieren und Installieren von Erweiterungen in einer Air-Gapped-Umgebung]
+* {xref-helm-chart-options}[Rancher_Helm_Chart_Optionen]
+* {xref-tls-secrets}[TLS-Geheimnisse_hinzufügen]
+* {xref-install-upgrade-troubleshooting}[Troubleshooting Rancher Kubernetes Installations]

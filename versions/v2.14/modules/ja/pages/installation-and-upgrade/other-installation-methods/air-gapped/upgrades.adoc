@@ -1,0 +1,126 @@
+= エアギャップ(された)環境でのアップグレード
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-22
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/air-gapped-upgrades.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/upgrades.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-upgrades: xref:installation-and-upgrade/upgrades.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-upgrades: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/upgrades.adoc
+endif::[]
+
+[NOTE]
+====
+
+これらの手順は、{xref-rancher-upgrades}の[このページ]に記載されているKubernetesのアップグレード手順を、前提条件を含めて、ステップ3まで実行したことを前提としています。Rancherをアップグレードします。
+====
+
+
+[#_rancher_helm_upgrade_options]
+== Rancher Helmアップグレードオプション
+
+Helmを使用してアップグレードするには、Rancherをインストールする際に使用したのと同じオプションを適用します。各プレースホルダーを置き換えるために、以下の参照表を参照してください。Rancherが、Rancherが起動したKubernetesクラスターやRancherツールをプロビジョニングするためにプライベートレジストリを使用するように構成する必要があります。
+
+インストール中に行った選択に基づいて、以下の手順のいずれかを完了してください。
+
+|===
+| Placeholder | 説明
+
+| `<VERSION>`
+| 出力tarのバージョン番号。
+
+| `<RANCHER.YOURDOMAIN.COM>`
+| ロードバランサーを指しているDNS名。
+
+| `<REGISTRY.YOURDOMAIN.COM:PORT>`
+| プライベートレジストリのDNS名。
+
+| `<CERTMANAGER_VERSION>`
+| k8sクラスターで実行されているCert-managerのバージョン。
+|===
+
+[#_option_a_default_self_signed_certificate]
+=== オプションA：デフォルトの自己署名証明書
+
+----
+helm upgrade rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set certmanager.version=<CERTMANAGER_VERSION> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Rancherで使用するデフォルトのプライベートレジストリを設定します。
+    --set useBundledSystemChart=true # パッケージ化されたRancherシステムチャートを使用します。
+----
+
+[#_resolving_upgrade_failed_error]
+==== UPGRADE FAILEDエラーの解決
+
+エラーメッセージ`Error: UPGRADE FAILED: "rancher" has no deployed releases`が表示された場合、Rancherは`helm template`コマンドを介してインストールされた可能性があります。Rancherを正常にアップグレードするには、代わりに以下のコマンドを使用してください：
+
+----
+helm template rancher ./rancher-<VERSION>.tgz --output-dir . \
+    --no-hooks \ # prevent files for Helm hooks from being generated
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set certmanager.version=<CERTMANAGER_VERSION> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+Helmコマンドを実行した後、レンダリングされたテンプレートを適用します。
+
+----
+kubectl -n cattle-system apply -R -f ./rancher
+----
+
+[#_option_b_certificates_from_files_using_kubernetes_secrets]
+=== オプションB：Kubernetes Secretsを使用したファイルからの証明書
+
+[,plain]
+----
+helm upgrade rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+プライベートCA署名の証明書を使用している場合は、`--set privateCA=true`を`--set ingress.tls.source=secret`の後に追加してください：
+
+[,plain]
+----
+helm upgrade rancher ./rancher-<VERSION>.tgz \
+    --namespace cattle-system \
+    --set hostname=<RANCHER.YOURDOMAIN.COM> \
+    --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+    --set ingress.tls.source=secret \
+    --set privateCA=true \
+    --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \ # Set a default private registry to be used in Rancher
+    --set useBundledSystemChart=true # Use the packaged Rancher system charts
+----
+
+[#_verify_the_upgrade]
+== アップグレードを確認する
+
+Rancherにログインして、アップグレードが成功したことを確認します。
+
+[TIP]
+====
+
+アップグレード後にネットワークの問題がありますか？
+
+xref:[クラスターのネットワーキングを復元する]を参照してください。
+====
+
+
+[#_known_upgrade_issues]
+== 既知のアップグレードの問題
+
+各Rancherバージョンの既知の問題のリストは、 https://github.com/rancher/rancher/releases[GitHub]のリリースノートおよび https://forums.rancher.com/c/announcements/12[Rancherフォーラム]で確認できます。

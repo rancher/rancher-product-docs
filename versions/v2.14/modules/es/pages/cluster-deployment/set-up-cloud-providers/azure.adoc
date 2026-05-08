@@ -1,0 +1,615 @@
+= Configurando el proveedor de nube de Azure
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/azure.adoc 
+:product-path: cluster-deployment/set-up-cloud-providers/azure.adoc
+ifeval::["{build-type}" != "community"]
+:xref-migrate-out-of-tree-azure: xref:cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/azure.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-migrate-out-of-tree-azure: xref:guías-prácticas/nuevos-usuarios/guías-de-kubernetes-en-rancher/configuración/migrar-a-un-proveedor-de-nube-externo/migrar-a-azure-externo.adoc
+endif::[]
+
+[NOTE]
+.Importante:
+====
+En Kubernetes 1.30 y versiones posteriores, debes usar un proveedor de nube de Azure externo. El proveedor de nube de Azure ha sido https://github.com/kubernetes/kubernetes/pull/122857[eliminado completamente], y no funcionará después de actualizar a Kubernetes 1.30. Los pasos que se enumeran a continuación siguen siendo necesarios para configurar un proveedor de nube de Azure. Puedes <<_using_the_out_of_tree_azure_cloud_provider,configurar un proveedor de nube externo>> tras completar los requisitos previos para Azure.
+
+También puedes {xref-migrate-out-of-tree-azure}[migrar de un proveedor de nube interno a un proveedor de nube externo de Azure] en Kubernetes 1.29 y versiones anteriores. Todos los clústeres existentes deben migrar antes de actualizar a v1.30 para seguir siendo funcionales.
+
+A partir de Kubernetes 1.29, los proveedores de nube internos se han deshabilitado. Debes establecer `DisableCloudProviders` y `DisableKubeletCloudCredentialProviders` feature gates a `false` para usar el proveedor de nube interno de Azure. Puedes hacer esto configurando `feature-gates=DisableCloudProviders=false,DisableKubeletCloudCredentialProviders=false` como un argumento adicional para el Kubelet, el Administrador de Controladores y el Servidor API del cluster en la configuración avanzada del cluster. Configurar `DisableKubeletCloudCredentialProviders=false` en los argumentos del Kubelet, el Administrador de Controladores y el Servidor API habilita la funcionalidad integrada para autenticarse en los registros de contenedores de Azure para las credenciales de extracción de imágenes. Consulta las https://kubernetes.io/blog/2023/12/13/kubernetes-v1-29-release/#in-tree-cloud-provider-integration-removal[notas de la versión de Kubernetes 1.29: Mandala] y este https://kubernetes.io/blog/2023/12/14/cloud-provider-integration-changes/#continue-using-in-tree-provider-code[artículo de blog] para más detalles.
+
+A partir de la versión 1.26 de Kubernetes, los tipos de volumen persistente internos `kubernetes.io/azure-disk` y `kubernetes.io/azure-file` quedan obsoletos y ya no serán compatibles. Para nuevos clústeres, <<_installing_csi_drivers,instala los controladores CSI>>, o migra a los controladores CSI correspondientes `disk.csi.azure.com` y `file.csi.azure.com` siguiendo la https://learn.microsoft.com/en-us/azure/aks/csi-migrate-in-tree-volumes[documentación de migración en sentido ascendente].
+====
+
+Al usar el proveedor de nube `Azure`, puedes aprovechar las siguientes capacidades:
+
+* *Balanceadores de Carga:* Lanza un equilibrador de carga de Azure dentro de un grupo de seguridad de red específico.
+* *Volúmenes persistentes:* Soporta el uso de discos de Blob de Azure y discos administrados de Azure con cuentas de almacenamiento estándar y premium.
+* *Almacenamiento de red:* Soporta Azure Files a través de montajes CIFS.
+
+Los siguientes tipos de cuentas no son compatibles con las suscripciones de Azure:
+
+* Cuentas de un solo inquilino (es decir, cuentas sin suscripciones).
+* Cuentas con varias suscripciones.
+
+[#_prerequisites_for_rke_and_rke2_product_name]
+== Requisitos previos para RKE y {rke2-product-name}
+
+Para configurar el proveedor de nube de Azure para RKE y RKE2, es necesario configurar las siguientes credenciales:
+
+. <<_1_set_up_the_azure_tenant_id,Configurar el ID de inquilino de Azure>>
+. <<_2_set_up_the_azure_client_id_and_azure_client_secret,Configurar el ID de cliente de Azure y el secreto de cliente de Azure>>
+. <<_3_configure_app_registration_permissions,Configurar permisos de inscripción de aplicación>>
+. <<_4_set_up_azure_network_security_group_name,Configurar el nombre del grupo de seguridad de red de Azure>>
+
+[#_1_set_up_the_azure_tenant_id]
+=== 1. Configurar el ID de inquilino de Azure
+
+Visita https://portal.azure.com[el portal de Azure], inicia sesión y ve a *Azure Active Directory* y selecciona *Propiedades*. Tu *ID de directorio* es tu *ID de inquilino* (tenantID).
+
+Si deseas usar la CLI de Azure, puedes ejecutar el comando `az account show` para obtener la información.
+
+[#_2_set_up_the_azure_client_id_and_azure_client_secret]
+=== 2. Configurar el ID de cliente de Azure y el secreto de cliente de Azure
+
+Visita https://portal.azure.com[el portal de Azure], inicia sesión y sigue los pasos a continuación para crear una *inscripción de aplicación* y el correspondiente *ID de cliente de Azure* (aadClientId) y *secreto de cliente de Azure* (aadClientSecret).
+
+. Seleccione *Azure Active Directory*.
+. Seleccione *Registros de aplicaciones*.
+. Seleccione *Nueva inscripción de aplicación*.
+. Elija un *Nombre*, seleccione `Web app / API` como *Tipo de aplicación* y un *URL de inicio de sesión* que puede ser cualquier cosa en este caso.
+. Selecciona *Crear*.
+
+En la vista de *Registros de aplicaciones*, deberías ver tu inscripción de aplicación creada. El valor mostrado en la columna *IDENTIFICADOR DE APLICACIÓN* es el que debes usar como *ID de cliente de Azure*.
+
+El siguiente paso es generar el *Secreto de cliente de Azure*:
+
+. Abre tu inscripción de aplicación creada.
+. En la vista de *Ajustes*, abre *Claves*.
+. Introduce una *Descripción de clave*, selecciona un tiempo de expiración y pulsa *Guardar*.
+. El valor generado mostrado en la columna *Valor* es el que debes usar como *Secreto de cliente de Azure*. Este valor solo se mostrará una vez.
+
+[#_3_configure_app_registration_permissions]
+=== 3. Configurar permisos de inscripción de aplicación
+
+Lo último que necesitas hacer es asignar los permisos apropiados a tu inscripción de aplicación.
+
+. Ve a *Más servicios*, busca *Suscripciones* y ábrelo.
+. Abre *Control de acceso (IAM)*.
+. Selecciona *Añadir*.
+. Para *Rol*, selecciona `Contributor`.
+. Para *Seleccionar*, selecciona el nombre de tu inscripción de aplicación creada.
+. Selecciona *Guardar*.
+
+[#_4_set_up_azure_network_security_group_name]
+=== 4. Configura el nombre del grupo de seguridad de red de Azure.
+
+Se necesita un Grupo de Seguridad de Red de Azure personalizado (securityGroupName) para permitir que los Balanceadores de Carga de Azure funcionen.
+
+Si aprovisionas hosts utilizando el controlador de Azure de Rancher Machine, deberás editarlos manualmente para asignarlos a este Grupo de Seguridad de Red.
+
+Ya deberías haber asignado hosts personalizados a este Grupo de Seguridad de Red durante el aprovisionamiento.
+
+Solo los hosts que se espera que sean los sistemas secundarios del balanceador de carga necesitan estar en este grupo.
+
+[#__rke2_product_name_cluster_set_up_in_rancher]
+== {rke2-product-name} Configuración del Clúster en Rancher
+
+[NOTE]
+.Importante:
+====
+Esta sección es válida solo para crear clústeres con el proveedor de nube interno.
+====
+
+
+. Elige "Azure" del menú desplegable del Proveedor de Nube en la sección de Configuración del Clúster.
+. Proporciona la Configuración del Proveedor de Nube. Ten en cuenta que Rancher crea automáticamente un nuevo Grupo de Seguridad de Red, Grupo de Recursos, Conjunto de Disponibilidad, Subred y Red Virtual. Si ya tienes algunos o todos estos creados, debes especificarlos antes de crear el clúster.
+ ** Haz clic en *Mostrar Avanzado* para ver o editar estos nombres generados automáticamente. Tu Configuración del Proveedor de Nube *debe* coincidir con los campos en la sección *Grupos de Máquinas*. Si tienes múltiples grupos, todos deben usar el mismo Grupo de Recursos, Conjunto de Disponibilidad, Subred, Red Virtual y Grupo de Seguridad de Red.
+ ** A continuación se proporciona un ejemplo. Modifícalo según sea necesario.
+
++
+.Ejemplo de Configuración del Proveedor de Nube
+[%collapsible]
+======
++
+[,yaml]
+----
+ {
+     "cloud":"AzurePublicCloud",
+     "tenantId": "YOUR TENANTID HERE",
+     "aadClientId": "YOUR AADCLIENTID HERE",
+     "aadClientSecret": "YOUR AADCLIENTSECRET HERE",
+     "subscriptionId": "YOUR SUBSCRIPTIONID HERE",
+     "resourceGroup": "docker-machine",
+     "location": "westus",
+     "subnetName": "docker-machine",
+     "securityGroupName": "rancher-managed-KA4jV9V2",
+     "securityGroupResourceGroup": "docker-machine",
+     "vnetName": "docker-machine-vnet",
+     "vnetResourceGroup": "docker-machine",
+     "primaryAvailabilitySetName": "docker-machine",
+     "routeTableResourceGroup": "docker-machine",
+     "cloudProviderBackoff": false,
+     "useManagedIdentityExtension": false,
+     "useInstanceMetadata": true
+ }
+----
++
+======
+. En la sección menu:Configuración del Clúster[Avanzado], haz clic en *Añadir* bajo *Argumentos Adicionales del Gestor de Controladores* y añade esta bandera: `--configure-cloud-routes=false`
+. Haz clic en *Crear* para enviar el formulario y crear el clúster.
+
+[#_cloud_provider_configuration]
+== Configuración del Proveedor de Nube
+
+Rancher crea automáticamente un nuevo Grupo de Seguridad de Red, Grupo de Recursos, Conjunto de Disponibilidad, Subred y Red Virtual. Si ya tienes algunos o todos estos creados, necesitarás especificarlos antes de crear el clúster. Puedes consultar *Plantillas de Nodo RKE1* o *Grupos de Máquinas RKE2* para ver o editar estos nombres generados automáticamente.
+
+*Consulta la lista completa de opciones de configuración en la https://cloud-provider-azure.sigs.k8s.io/install/configs/[documentación upstream].*
+
+[NOTE]
+====
+
+. `useInstanceMetadata` debe estar configurado en `true` para que el proveedor de la nube configure correctamente `providerID`.
+. `excludeMasterFromStandardLB` debe estar configurado en `false` si necesitas añadir nodos etiquetados como `node-role.kubernetes.io/master` al sistema secundario del Balanceador de Carga de Azure (ALB).
+. `loadBalancerSku` puede configurarse en `basic` o `standard`. El SKU básico quedará obsoleto en septiembre de 2025. Consulta la https://learn.microsoft.com/en-us/azure/virtual-network/ip-services/public-ip-basic-upgrade-guidance#basic-sku-vs-standard-sku[documentación upstream de Azure] para más información.
+====
+
+
+Azure admite la lectura de la configuración de la nube desde secretos de Kubernetes. El secreto es una versión serializada del archivo azure.json. Cuando se cambia el secreto, el administrador del controlador de la nube se reconstruye sin reiniciar el pod. Se recomienda que el gráfico de Helm lea la Configuración del Proveedor de Nube desde el secreto.
+
+Ten en cuenta que el chart lee la configuración del proveedor de nube desde un nombre de secreto dado en el espacio de nombres `kube-system`. Dado que Azure lee secretos de Kubernetes, también es necesario configurar RBAC. A continuación se muestra un ejemplo de secreto para la configuración del proveedor de nube. Modifícalo según sea necesario y crea el secreto.
+
+[,yaml]
+----
+# azure-cloud-config.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-cloud-config
+  namespace: kube-system
+type: Opaque
+stringData:
+  cloud-config: |-
+    {
+      "cloud": "AzurePublicCloud",
+      "tenantId": "<tenant-id>",
+      "subscriptionId": "<subscription-id>",
+      "aadClientId": "<client-id>",
+      "aadClientSecret": "<client-secret>",
+      "resourceGroup": "docker-machine",
+      "location": "westus",
+      "subnetName": "docker-machine",
+      "securityGroupName": "rancher-managed-kqmtsjgJ",
+      "securityGroupResourceGroup": "docker-machine",
+      "vnetName": "docker-machine-vnet",
+      "vnetResourceGroup": "docker-machine",
+      "primaryAvailabilitySetName": "docker-machine",
+      "routeTableResourceGroup": "docker-machine",
+      "cloudProviderBackoff": false,
+      "useManagedIdentityExtension": false,
+      "useInstanceMetadata": true,
+      "loadBalancerSku": "standard",
+      "excludeMasterFromStandardLB": false,
+    }
+----
+
+[#_using_the_out_of_tree_azure_cloud_provider]
+== Usando el Proveedor de Nube de Azure fuera del árbol.
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. Selecciona *Externo* del menú desplegable *Proveedor de Nube* en la sección *Configuración del Clúster*.
+. Bajo menu:Configuración del Clúster[Avanzado], haz clic en *Añadir* bajo *Argumentos Adicionales del Administrador de Controladores* y añade esta bandera: `--configure-cloud-routes=false`.
+. Prepara la configuración del proveedor de nube para establecerla en el siguiente paso. Ten en cuenta que Rancher crea automáticamente un nuevo Grupo de Seguridad de Red, Grupo de Recursos, Conjunto de Disponibilidad, Subred y Red Virtual. Si ya tienes algunos o todos estos creados, debes especificarlos antes de crear el clúster.
++
+Haz clic en *Mostrar Avanzado* para ver o editar estos nombres generados automáticamente. Tu configuración del proveedor de nube *debe* coincidir con los campos en la sección *Grupos de Máquinas*. Si tienes múltiples grupos de máquinas, todos deben usar el mismo Grupo de Recursos, Conjunto de Disponibilidad, Subred, Red Virtual y Grupo de Seguridad de Red.
++
+. Bajo *Configuración del Clúster > Configuración de Complementos*, añade el manifiesto del gestor de controladores de nube que se muestra a continuación en *Manifiesto Adicional*.
++
+Ten en cuenta que este chart lee la Configuración del Proveedor de Nube del secreto en el espacio de nombres `kube-system`. Un ejemplo de secreto para la configuración del proveedor de nube se muestra a continuación; modifícalo según sea necesario. Consulta la lista completa de opciones de configuración en la https://cloud-provider-azure.sigs.k8s.io/install/configs/[documentación de sentido ascendente].
++
+Alternativamente, también puedes instalar el gestor de controladores de nube utilizando el <<_helm_chart_installation_from_cli,CLI de Helm>>.
++
+[,yaml]
+----
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: azure-cloud-controller-manager
+  namespace: kube-system
+spec:
+  chart: cloud-provider-azure
+  repo: https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo
+  targetNamespace: kube-system
+  bootstrap: true
+  valuesContent: |-
+    infra:
+      clusterName: <cluster-name>
+    cloudControllerManager:
+      cloudConfigSecretName: azure-cloud-config
+      cloudConfig: null
+      clusterCIDR: null
+      enableDynamicReloading: 'true'
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: 'true'
+      allocateNodeCidrs: 'false'
+      hostNetworking: true
+      caCertDir: /etc/ssl
+      configureCloudRoutes: 'false'
+      enabled: true
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/master
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          value: 'true'
+        - effect: NoSchedule
+          key: node.cloudprovider.kubernetes.io/uninitialized
+          value: 'true'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-cloud-config
+  namespace: kube-system
+type: Opaque
+stringData:
+  cloud-config: |-
+    {
+      "cloud": "AzurePublicCloud",
+      "tenantId": "<tenant-id>",
+      "subscriptionId": "<subscription-id>",
+      "aadClientId": "<client-id>",
+      "aadClientSecret": "<client-secret>",
+      "resourceGroup": "docker-machine",
+      "location": "westus",
+      "subnetName": "docker-machine",
+      "securityGroupName": "rancher-managed-kqmtsjgJ",
+      "securityGroupResourceGroup": "docker-machine",
+      "vnetName": "docker-machine-vnet",
+      "vnetResourceGroup": "docker-machine",
+      "primaryAvailabilitySetName": "docker-machine",
+      "routeTableResourceGroup": "docker-machine",
+      "cloudProviderBackoff": false,
+      "useManagedIdentityExtension": false,
+      "useInstanceMetadata": true,
+      "loadBalancerSku": "standard",
+      "excludeMasterFromStandardLB": false,
+    }
+----
+
+. Haz clic en *Crear* para enviar el formulario y crear el clúster.
+--
+
+RKE1::
++
+--
+. Elige *Externo* del menú desplegable *Proveedor de Nube* en la sección *Opciones del Clúster*. Esto establece `--cloud-provider=external` para los componentes de Kubernetes.
+. Instala el chart `cloud-provider-azure` después de que el clúster termine de aprovisionarse. Ten en cuenta que el clúster no se ha aprovisionado con éxito y los nodos siguen en un estado `uninitialized` hasta que despliegues el gestor de controladores de nube. Esto se puede hacer <<_helm_chart_installation_from_cli,manualmente usando CLI>>, o a través de <<_helm_chart_installation_from_ui,charts de Helm en la interfaz de usuario>>.
+
+Consulta la https://cloud-provider-azure.sigs.k8s.io/install/azure-ccm/[documentación oficial de Azure de sentido ascendente] para más detalles sobre el despliegue del Gestor de Controladores de Nube.
+--
+======
+
+[#_helm_chart_installation_from_cli]
+=== Instalación del Chart de Helm desde CLI
+
+La documentación oficial de sentido ascendente para https://github.com/kubernetes-sigs/cloud-provider-azure/tree/master/helm/cloud-provider-azure[la instalación del chart de Helm] se puede encontrar en Github.
+
+. Crea un secreto de `azure-cloud-config` con la <<_cloud_provider_configuration,configuración del proveedor de nube>> requerida.
++
+[,shell]
+----
+kubectl apply -f azure-cloud-config.yaml
+----
+
+. Añade el repositorio de Helm:
++
+[,shell]
+----
+helm repo add azure-cloud-controller-manager https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo
+helm repo update
+----
+
+. Crea un archivo `values.yaml` con el siguiente contenido para sobrescribir el `values.yaml` por defecto:
++
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[,yaml]
+----
+# values.yaml
+infra:
+  clusterName: <cluster-name>
+cloudControllerManager:
+  cloudConfigSecretName: azure-cloud-config
+  cloudConfig: null
+  clusterCIDR: null
+  enableDynamicReloading: 'true'
+  configureCloudRoutes: 'false'
+  allocateNodeCidrs: 'false'
+  caCertDir: /etc/ssl
+  enabled: true
+  replicas: 1
+  hostNetworking: true
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: 'true'
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/master
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      value: 'true'
+    - effect: NoSchedule
+      key: node.cloudprovider.kubernetes.io/uninitialized
+      value: 'true'
+----
+--
+
+RKE::
++
+--
+[,yaml]
+----
+# values.yaml
+cloudControllerManager:
+  cloudConfigSecretName: azure-cloud-config
+  cloudConfig: null
+  clusterCIDR: null
+  enableDynamicReloading: 'true'
+  configureCloudRoutes: 'false'
+  allocateNodeCidrs: 'false'
+  caCertDir: /etc/ssl
+  enabled: true
+  replicas: 1
+  hostNetworking: true
+  nodeSelector:
+    node-role.kubernetes.io/controlplane: 'true'
+    node-role.kubernetes.io/control-plane: null
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/controlplane
+      value: 'true'
+    - effect: NoSchedule
+      key: node.cloudprovider.kubernetes.io/uninitialized
+      value: 'true'
+infra:
+  clusterName: <cluster-name>
+----
+--
+====== 
+
+. Instala el chart de Helm:
++
+[,shell]
+----
+helm upgrade --install cloud-provider-azure azure-cloud-controller-manager/cloud-provider-azure -n kube-system --values values.yaml
+----
++
+Verifica que el chart de Helm se haya instalado correctamente:
++
+[,shell]
+----
+helm status cloud-provider-azure -n kube-system
+----
+
+. (Opcional) Verifica que la actualización del gestor de controladores de nube haya tenido éxito:
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. El proveedor de la nube es responsable de establecer el ProviderID del nodo. Verifica si todos los nodos están inicializados con el ProviderID:
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_helm_chart_installation_from_ui]
+=== Instalación del Helm Chart desde la interfaz de usuario
+
+. Haz clic en *☰*, luego selecciona el nombre del clúster en la navegación izquierda.
+. Selecciona *Aplicaciones* > *Repositorios*.
+. Haz clic en el botón *Crear*.
+. Introduce `https://raw.githubusercontent.com/kubernetes-sigs/cloud-provider-azure/master/helm/repo` en el campo *URL del índice*.
+. Selecciona *Aplicaciones* > *Charts* en la navegación izquierda e instala el chart *cloud-provider-azure*.
+. Selecciona el espacio de nombres, `kube-system`, y habilita *Personalizar opciones de Helm antes de la instalación*.
+. Reemplaza `cloudConfig: /etc/kubernetes/azure.json` para leer desde el Cloud Config Secret y habilita la recarga dinámica:
++
+[,yaml]
+----
+  cloudConfigSecretName: azure-cloud-config
+  enableDynamicReloading: 'true'
+----
+
+. Actualiza los siguientes campos según sea necesario:
++
+[,yaml]
+----
+  allocateNodeCidrs: 'false'
+  configureCloudRoutes: 'false'
+  clusterCIDR: null
+----
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[start=9]
+. Los nodos RKE2 provisionados por Rancher tienen el selector `node-role.kubernetes.io/control-plane` establecido en `true`. Actualiza el nodeSelector:
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
+--
+
+RKE::
++
+--
+[start=9]
+. Los nodos RKE provisionados por Rancher tienen un taint `node-role.kubernetes.io/controlplane`. Actualiza las tolerancias y el nodeSelector:
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
+--
+====== 
+
+[start=10]
+. Instala el chart y confirma que el controlador de nube y el administrador de nodos de nube se desplegaron correctamente:
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. El proveedor de la nube es responsable de establecer el ProviderID del nodo. Verifica si todos los nodos están inicializados con el ProviderID:
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_installing_csi_drivers]
+=== Instalando controladores CSI
+
+Instala https://github.com/kubernetes-sigs/azuredisk-csi-driver[controlador CSI de Azure Disk] o https://github.com/kubernetes-sigs/azurefile-csi-driver[controlador CSI de Azure File] para acceder a https://azure.microsoft.com/en-us/services/storage/disks/[Azure Disk] o https://azure.microsoft.com/en-us/services/storage/disks/[Azure File] volúmenes respectivamente.
+
+Los pasos para instalar el controlador CSI de Azure Disk se muestran a continuación. Puedes instalar el controlador CSI de Azure File de manera similar siguiendo la https://github.com/kubernetes-sigs/azurefile-csi-driver/blob/master/charts/README.md[documentación de instalación de Helm].
+
+[NOTE]
+.Importante
+====
+Los clústeres deben ser aprovisionados utilizando `Managed Disk` para usar Azure Disk. Puedes configurar esto al crear *Plantillas de Nodo RKE1* o _*Grupos de Máquinas RKE2_.
+====
+
+La documentación oficial de sentido ascendente para https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md[la instalación del chart de Helm] se puede encontrar en Github.
+
+. Añade y actualiza el repositorio de Helm:
++
+[,shell]
+----
+helm repo add azuredisk-csi-driver https://raw.githubusercontent.com/kubernetes-sigs/azuredisk-csi-driver/master/charts
+helm repo update azuredisk-csi-driver
+----
+
+. Instala el chart como se muestra a continuación, actualizando el argumento de versión de -- según sea necesario. Consulta la lista completa de las últimas configuraciones del chart en la https://github.com/kubernetes-sigs/azuredisk-csi-driver/blob/master/charts/README.md#latest-chart-configuration[documentación de sentido ascendente].
++
+[,shell]
+----
+helm install azuredisk-csi-driver azuredisk-csi-driver/azuredisk-csi-driver --namespace kube-system --version v1.30.1 --set controller.cloudConfigSecretName=azure-cloud-config --set controller.cloudConfigSecretNamespace=kube-system --set controller.runOnControlPlane=true
+----
+
+. (Opcional) Verifica que la instalación del controlador azuredisk-csi-driver haya sido exitosa:
++
+[,shell]
+----
+kubectl --namespace=kube-system get pods --selector="app.kubernetes.io/name=azuredisk-csi-driver" --watch
+----
+
+. Aprovisiona una clase de almacenamiento de ejemplo:
++
+[,shell]
+----
+cat <<EOF | kubectl create -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: standard
+provisioner: kubernetes.io/azure-disk
+parameters:
+  storageaccounttype: Standard_LRS
+  kind: Managed
+EOF
+----
++
+Verifica que la clase de almacenamiento haya sido aprovisionada:
++
+[,shell]
+----
+kubectl get storageclasses
+----
+
+. Crea un PersistentVolumeClaim:
++
+[,shell]
+----
+cat <<EOF | kubectl create -f -
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: azure-disk-pvc
+spec:
+  storageClassName: standard
+  accessModes:
+ ** ReadWriteOnce
+  resources:
+ requests:
+storage: 5Gi
+EOF
+----
++
+Verifica que el PersistentVolumeClaim y el PersistentVolume han sido creados:
++
+[,shell]
+----
+kubectl get persistentvolumeclaim
+kubectl get persistentvolume
+----
+
+. Adjunta el nuevo Azure Disk:
++
+Ahora puedes montar el PersistentVolume de Kubernetes en un Pod de Kubernetes. El disco puede ser consumido por cualquier tipo de objeto de Kubernetes, incluyendo un Deployment, DaemonSet o StatefulSet. Sin embargo, el siguiente ejemplo simplemente monta el PersistentVolume en un Pod independiente.
++
+[,shell]
+----
+cat <<EOF | kubectl create -f -
+kind: Pod
+apiVersion: v1
+metadata:
+  name: mypod-dynamic-azuredisk
+spec:
+  containers:
+    - name: mypod
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "http-server"
+      volumeMounts:
+        - mountPath: "/usr/share/nginx/html"
+          name: storage
+  volumes:
+    - name: storage
+      persistentVolumeClaim:
+        claimName: azure-disk-pvc
+EOF
+----

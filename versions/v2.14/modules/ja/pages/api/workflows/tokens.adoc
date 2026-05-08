@@ -1,0 +1,143 @@
+= トークン
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-11-28
+:page-revdate: {revdate}
+:community-path: api/workflows/tokens.adoc 
+:product-path: api/workflows/tokens.adoc
+
+include::shared:ROOT:partial$en/v3-api-tokens-deprecation-warning.adoc[]
+
+[#_token_resource]
+== トークンリソース
+
+Rancherには、Rancherとの認証に使用するトークンを生成するための命令型APIリソース`tokens.ext.cattle.io`があります。
+
+[,shell]
+----
+kubectl api-resources --api-group=ext.cattle.io
+----
+
+トークンリソースのフィールドと構造の説明を取得するには、次のコマンドを実行してください:
+
+[,shell]
+----
+kubectl explain tokens.ext.cattle.io
+----
+
+[#_creating_a_token]
+== トークンの作成
+
+[CAUTION]
+====
+トークンの値は`status.value`フィールドに一度だけ返されます。
+====
+
+有効でアクティブな**Rancherユーザー**のみがトークンを作成できます。そうでない場合、トークンを作成しようとするとエラーが表示されます（`Error from server (Forbidden)...`）。
+
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+EOF
+Error from server (Forbidden): error when creating "STDIN": tokens.ext.cattle.io is forbidden: user system:admin is not a Rancher user
+----
+
+トークンは常にリクエストを行ったユーザーのために作成されます。異なる`spec.userID`を指定して別のユーザーのためにトークンを作成しようとすることは禁止されており、失敗します。
+
+* `spec.description`フィールドには、トークンの目的に関する任意の人間が読める説明を設定できます。デフォルト値は空です。
+* `spec.kind`フィールドには、トークンの種類を設定できます。値`session`はログイントークンを示します。他のすべての値（デフォルトの空文字列を含む）は、派生トークンの一種を示します。
+* `metadata.name`および`metadata.generateName`フィールドは無視され、新しいトークンの名前は接頭辞`token-`を使用して自動的に生成されます。
++
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+spec:
+  description: My Token
+EOF
+----
+
+* `spec.ttl`が指定されていない場合、トークンは`auth-token-max-ttl-minutes`設定で定義された有効期限で作成されます。デフォルトの有効期限は90日です。`spec.ttl`が指定されている場合、それは0より大きく、`auth-token-max-ttl-minutes`設定のミリ秒で表現された値以下である必要があります。
++
+[,bash]
+----
+kubectl create -o jsonpath='{.status.value}' -f -<<EOF
+apiVersion: ext.cattle.io/v1
+kind: Token
+spec:
+  ttl: 7200000 # 2 hours
+EOF
+----
+
+[#_listing_tokens]
+== トークンの一覧表示
+
+以前に生成されたトークンの一覧表示は、もはや必要のないトークンを整理するのに役立ちます（例：一時的に発行されたもの）。管理者はすべてのトークンを一覧表示できますが、一般ユーザーは自分のトークンのみを見ることができます。
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io
+NAME          KIND   TTL   AGE
+token-chjc9          90d   18s
+token-6fzgj          90d   16s
+token-8nbrm          90d   14s
+----
+
+詳細を取得するには、`-o wide`を使用してください:
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io -o wide
+NAME          USER         KIND   TTL   AGE   DESCRIPTION
+token-chjc9   user-jtghh          90d   24s   example
+token-6fzgj   user-jtghh          90d   22s   box
+token-8nbrm   user-jtghh          90d   20s   jinx
+----
+
+[#_viewing_a_token]
+== トークンの表示
+
+管理者は任意のトークンを取得できますが、一般ユーザーは自分のトークンのみ取得できます。
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io token-chjc9
+NAME          KIND   TTL   AGE
+token-chjc9          90d   18s
+----
+
+詳細を取得するには、`-o wide`を使用してください:
+
+[,shell]
+----
+kubectl get tokens.ext.cattle.io token-chjc9 -o wide
+NAME          USER         KIND   TTL   AGE   DESCRIPTION
+token-chjc9   user-jtghh          90d   24s   example
+----
+
+[#_deleting_a_token]
+== トークンの削除
+
+管理者は任意のトークンを削除できますが、一般ユーザーは自分のトークンのみ削除できます。
+
+[,shell]
+----
+kubectl delete tokens.ext.cattle.io token-chjc9
+token.ext.cattle.io "token-chjc9" deleted
+----
+
+[#_updating_a_token]
+== トークンの更新
+
+メタデータフィールドのうち、`spec.description`、`spec.ttl`、および`spec.enabled`のみが更新可能です。他のすべての`spec`フィールドは不変です。管理者は`spec.ttl`フィールドを拡張できますが、一般ユーザーは値を減少させることしかできません。
+
+トークンを編集するための例`kubectl`コマンド:
+
+[,shell]
+----
+kubectl edit tokens.ext.cattle.io token-zp786
+----

@@ -1,0 +1,131 @@
+= {rancher-product-name} HA
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/rancher-ha.adoc 
+:product-path: installation-and-upgrade/troubleshooting/rancher-ha.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+endif::[]
+
+Les commandes/étapes listées sur cette page peuvent être utilisées pour vérifier votre installation de Rancher Kubernetes.
+
+Assurez-vous d'avoir configuré le bon kubeconfig (par exemple, `export KUBECONFIG=$PWD/kube_config_cluster.yml`).
+
+[#_check_rancher_pods]
+== Vérifiez les Pods Rancher
+
+Les pods Rancher sont déployés en tant que déploiement dans l'espace de noms `cattle-system`.
+
+Vérifiez si les pods fonctionnent sur tous les nœuds{nbsp}:
+
+----
+kubectl -n cattle-system get pods -l app=rancher -o wide
+----
+
+Exemple de sortie :
+
+----
+NAME                       READY   STATUS    RESTARTS   AGE   IP          NODE
+rancher-7dbd7875f7-n6t5t   1/1     Running   0          8m    x.x.x.x     x.x.x.x
+rancher-7dbd7875f7-qbj5k   1/1     Running   0          8m    x.x.x.x     x.x.x.x
+rancher-7dbd7875f7-qw7wb   1/1     Running   0          8m    x.x.x.x     x.x.x.x
+----
+
+Si un pod ne peut pas s'exécuter (le statut n'est pas *Running*, le statut prêt n'affiche pas `1/1` ou vous voyez un nombre élevé de redémarrages), vérifiez les détails du pod, les journaux et les événements de l'espace de noms.
+
+[#_pod_details]
+=== Détails du pod
+
+----
+kubectl -n cattle-system describe pods -l app=rancher
+----
+
+[#_pod_container_logs]
+=== Journaux des conteneurs du pod
+
+----
+kubectl -n cattle-system logs -l app=rancher
+----
+
+[#_namespace_events]
+=== Événements de l'espace de noms
+
+----
+kubectl -n cattle-system get events
+----
+
+[#_check_ingress]
+== Vérifiez l'Ingress
+
+L'Ingress doit avoir le bon `HOSTS` (affichant le FQDN configuré) et le bon `ADDRESS` (adresse(s) hôte auxquelles il sera routé).
+
+----
+kubectl -n cattle-system get ingress
+----
+
+Exemple de sortie :
+
+----
+NAME      HOSTS                    ADDRESS                   PORTS     AGE
+rancher   rancher.yourdomain.com   x.x.x.x,x.x.x.x,x.x.x.x   80, 443   2m
+----
+
+[#_check_ingress_controller_logs]
+== Vérifiez les journaux du contrôleur d'ingress
+
+Lorsque l'accès à votre FQDN Rancher configuré ne vous montre pas l'interface utilisateur, vérifiez les journaux du contrôleur d'ingress pour voir ce qui se passe lorsque vous essayez d'accéder à Rancher{nbsp}:
+
+----
+kubectl -n traefik logs -l app=traefik
+----
+
+[#_leader_election]
+== Élection du leader
+
+Le leader est déterminé par un processus d'élection du leader. Une fois le leader déterminé, celui-ci (`holderIdentity`) est enregistré dans le bail `cattle-controllers` de l'espace de noms `kube-system` (dans cet exemple, `rancher-dbc7ff869-gvg6k`).
+
+----
+kubectl -n kube-system get lease cattle-controllers
+----
+
+Exemple de sortie :
+
+----
+NAME                 HOLDER                    AGE
+cattle-controllers   rancher-dbc7ff869-gvg6k   6h10m
+----
+
+[#_configuration]
+=== Configuration
+
+_Disponible depuis Rancher 2.8.3_
+
+Si l'API Kubernetes subit une latence, la réplique Rancher détenant le verrou du leader peut ne pas être en mesure de renouveler le bail avant que celui-ci ne devienne invalide, ce qui peut être observé dans les journaux de Rancher{nbsp}:
+
+----
+E0629 04:13:07.293461      34 leaderelection.go:364] Failed to update lock: Put "https://172.17.0.1:443/apis/coordination.k8s.io/v1/namespaces/kube-system/leases/cattle-controllers?timeout=15m0s": context deadline exceeded
+I0629 04:13:07.293594      34 leaderelection.go:280] failed to renew lease kube-system/cattle-controllers: timed out waiting for the condition
+...
+2024/06/29 04:13:10 [FATAL] leaderelection lost for cattle-controllers
+----
+
+Pour atténuer cela, vous pouvez définir des variables d'environnement dans le `rancher` déploiement pour modifier les paramètres par défaut de l'élection du leader{nbsp}:
+
+* `CATTLE_ELECTION_LEASE_DURATION` : La https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.LeaseDuration[durée du bail]. La valeur par défaut est 45s.
+* `CATTLE_ELECTION_RENEW_DEADLINE` : La https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.RenewDeadline[délai de renouvellement]. La valeur par défaut est 30s.
+* `CATTLE_ELECTION_RETRY_PERIOD` : La https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.RetryPeriod[période de réessai]. La valeur par défaut est 2s.
+
+Exemple :
+
+----
+kubectl -n cattle-system set env deploy/rancher CATTLE_ELECTION_LEASE_DURATION=2m CATTLE_ELECTION_RENEW_DEADLINE=90s CATTLE_ELECTION_RETRY_PERIOD=10s
+----
+
+Cela augmentera temporairement la durée du bail, le délai de renouvellement et la période de réessai à 120, 90 et 10 secondes respectivement.
+Alternativement, pour rendre ces changements permanents, ces variables d'environnement peuvent être définies par {xref-helm-chart-options}#_setting_extra_environment_variables[en utilisant les valeurs Helm] à la place.

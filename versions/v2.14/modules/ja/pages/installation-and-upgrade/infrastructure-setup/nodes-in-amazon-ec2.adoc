@@ -1,0 +1,99 @@
+= Amazon EC2でノードを設定する
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-set-up-cloud-providers: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/index.adoc
+endif::[]
+
+このチュートリアルでは、Rancher管理サーバーのためにLinuxノードを設定する方法の一つを学びます。これらのノードは、{xref-install-reqs}[OS、Docker、ハードウェア、ネットワーク]のノード要件を満たします。
+
+RancherサーバーがRKE Kubernetesクラスターにインストールされる場合、3つのインスタンスをプロビジョニングする必要があります。
+
+RancherサーバーがK3s Kubernetesクラスターにインストールされる場合、2つのインスタンスをプロビジョニングするだけで済みます。
+
+Rancherサーバーが単一のDockerコンテナにインストールされる場合、1つのインスタンスだけで済みます。
+
+[#_1_optional_preparation]
+== 1.オプションの準備
+
+* *IAMロールの作成：*Rancherが新しいストレージや新しいノードをプロビジョニングするなど、AWSリソースを操作できるようにするためには、Amazonをクラウドプロバイダーとして設定する必要があります。EC2でクラウドプロバイダーを設定するためにいくつかのことを行う必要がありますが、このプロセスの一部はRancherサーバーノードのためのIAMロールを設定することです。クラウドプロバイダーの設定に関する詳細については、この{xref-set-up-cloud-providers}[ページ]を参照してください。
+* *セキュリティグループの作成：*Rancherノードのために、{xref-install-reqs}#_port_requirements[ポート要件]に準拠したセキュリティグループを設定することをお勧めします。
+
+[#_2_provision_instances]
+== 2.インスタンスをプロビジョニングする
+
+. https://console.aws.amazon.com/ec2/[Amazon AWS EC2コンソール]にログインして始めましょう。EC2インスタンス（Linuxノード）が作成される*リージョン*をメモしておくことを忘れないでください。Rancher管理サーバーのインフラストラクチャはすべて同じリージョンにある必要があります。
+. 左のパネルで、*インスタンス*をクリックします。
+. *インスタンスの起動*をクリックします。
+. *ステップ1:というセクションAmazonマシンイメージ（AMI）を選択してください。*Linux OSとしてUbuntu 18.04を使用します。`ami-0d1cd67c26f5fca19 (64-bit x86)`を使用します。Ubuntu AMIに移動し、*選択*をクリックします。
+. *ステップ2:インスタンスタイプ*セクションで、`t2.medium`タイプを選択します。
+. *次へ:をクリックします。インスタンスの詳細*を設定します。
+. *インスタンスの数*フィールドに、インスタンスの数を入力します。高可用性のK3sクラスターには2つのインスタンスのみが必要ですが、高可用性のRKEクラスターには3つのインスタンスが必要です。
+. オプション:RancherがAWSリソースを操作するためのIAMロールを作成した場合は、*IAMロール*フィールドで新しいIAMロールを選択します。
+. *次へ:をクリックします。ストレージを追加し、* *次へ:をクリックします。タグを追加し、*および*次へ:をクリックします。セキュリティグループを設定します。*
+. *ステップ6:セキュリティグループを設定し、*Rancherノードの{xref-install-reqs}#_port_requirements[ポート要件]に準拠したセキュリティグループを選択します。
+. *レビューと起動*をクリックします。
+. *[起動]* をクリックします。
+. 後でインスタンスに接続するために使用する新しいまたは既存のキーペアを選択します。既存のキーペアを使用している場合は、プライベートキーへのアクセスがあることを確認してください。
+. *インスタンスを起動*をクリックします。
+
+*結果:*OS、ハードウェア、ネットワークの要件を満たすRancherノードを作成しました。
+
+[NOTE]
+====
+
+ノードがRKE Kubernetesクラスターに使用される場合は、次のステップで各ノードにDockerをインストールします。K3s Kubernetesクラスターの場合、ノードはK3sをインストールする準備が整いました。
+====
+
+
+[#_3_install_docker_and_create_user_for_rke_kubernetes_cluster_nodes]
+== 3.Dockerをインストールし、RKE Kubernetesクラスターのノード用のユーザーを作成します。
+
+. https://console.aws.amazon.com/ec2/[AWS EC2コンソール,]から、左のパネルで*インスタンス*をクリックします。
+. Dockerをインストールしたいインスタンスに移動します。インスタンスを選択し、menu:アクション[接続]をクリックします。
+. 表示される画面の指示に従ってインスタンスに接続します。インスタンスのパブリックDNSをコピーします。インスタンスにSSH接続するためのコマンドの例は以下の通りです：
++
+----
+sudo ssh -i [path-to-private-key] ubuntu@[public-DNS-of-instance]
+----
+
+. インスタンスで以下のコマンドを実行して、Rancherのインストールスクリプトの1つを使用してDockerをインストールします：
++
+----
+curl https://releases.rancher.com/install-docker/18.09.sh | sh
+----
+
+. インスタンスに接続したら、以下のコマンドを実行してユーザーを作成します：
++
+----
+sudo usermod -aG docker ubuntu
+----
+
+. これらの手順を繰り返して、最終的にRancher管理サーバーを実行する各ノードにDockerがインストールされるようにします。
+
+[TIP]
+====
+
+特定のDockerバージョンをインストールするためのスクリプトが利用可能かどうかを確認するには、RancherのDockerインストールスクリプトがすべて含まれている https://github.com/rancher/install-docker[GitHubリポジトリ,]を参照してください。
+====
+
+
+*結果:*OS、Docker、ハードウェア、ネットワークのすべてのノード要件を満たすRancherサーバーノードを設定しました。
+
+[#_next_steps_for_rke_kubernetes_cluster_nodes]
+== RKE Kubernetesクラスターのノードに関する次のステップ
+
+新しいノードにRKEクラスターをインストールする場合は、各ノードの*IPv4パブリックIP*と*プライベートIP*に注意してください。この情報は、ノードが作成された後の*説明*タブで見つけることができます。パブリックIPとプライベートIPは、RKEクラスター設定ファイルの各ノードの`address`と`internal_address`を埋めるために使用されます。`rancher-cluster.yml`
+
+RKEは、各ノードに接続するためにプライベートキーへのアクセスも必要です。したがって、ノードに接続するためのプライベートキーのパスをメモしておくことをお勧めします。これは、各ノードの`rancher-cluster.yml`ディレクティブの下の`ssh_key_path`に含めることもできます。

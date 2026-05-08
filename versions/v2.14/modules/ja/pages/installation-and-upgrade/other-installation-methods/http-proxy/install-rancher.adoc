@@ -1,0 +1,125 @@
+= 3.{rancher-product-name}をインストールします。
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-21
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/rancher-behind-an-http-proxy/install-rancher.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/http-proxy/install-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-tls-secrets: xref:installation-and-upgrade/resources/tls-secrets.adoc
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-tls-secrets: xref:getting-started/installation-and-upgrade/resources/add-tls-secrets.adoc
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+endif::[]
+
+
+RKE2/K3sクラスターが稼働しているので、そこにRancherをインストールできます。セキュリティ上の理由から、RancherへのすべてのトラフィックはTLSで暗号化する必要があります。このチュートリアルでは、 https://cert-manager.io/[cert-manager]を通じて自己署名証明書を自動的に発行します。実際の使用ケースでは、Let's Encryptを使用するか、自分の証明書を提供することになるでしょう。
+
+[#_install_the_helm_cli]
+== Helm CLIをインストールします。
+
+Kubernetesクラスターにアクセスするためのkubeconfigがあるホストに https://helm.sh/docs/intro/install/[Helm] CLIをインストールします。
+
+----
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod +x get_helm.sh
+sudo ./get_helm.sh
+----
+
+[#_install_cert_manager]
+== cert-managerをインストールします。
+
+cert-manager Helmリポジトリを追加します。
+
+----
+helm repo add jetstack https://charts.jetstack.io
+----
+
+cert-manager用のネームスペースを作成します。
+
+----
+kubectl create namespace cert-manager
+----
+
+cert-managerのCustomResourceDefinitionsをインストールします。
+
+----
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/<VERSION>/cert-manager.crds.yaml
+----
+
+Helmでインストールします。cert-managerはLet's Encryptや他の外部証明書発行者と通信する必要がある場合に備えて、プロキシの設定も必要です。
+
+[NOTE]
+====
+
+cert-managerのインストールをカスタマイズする方法についてのオプションを確認するには、 https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[cert-manager docs]を参照してください。
+====
+
+
+----
+helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --set http_proxy=http://${proxy_host} \
+  --set https_proxy=http://${proxy_host} \
+  --set no_proxy=127.0.0.0/8\\,10.0.0.0/8\\,cattle-system.svc\\,172.16.0.0/12\\,192.168.0.0/16\\,.svc\\,.cluster.local
+----
+
+cert-managerの起動が完了するまで待機してください。
+
+----
+kubectl rollout status deployment -n cert-manager cert-manager
+kubectl rollout status deployment -n cert-manager cert-manager-webhook
+----
+
+[#_install_rancher_product_name]
+== {rancher-product-name}をインストールします。
+
+次に、{rancher-product-name}自体をインストールできます。まず、Helmリポジトリを追加します。
+
+[sh,subs="attributes+"]
+----
+helm repo add {rancher-helm-repo} <helm-chart-repo-url>
+----
+
+ifeval::["{build-type}" == "product"]
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
+endif::[]
+
+ネームスペースを作成します。
+
+----
+kubectl create namespace cattle-system
+----
+
+Helmを使用してRancherをインストールします。Rancherは、外部アプリケーションカタログと通信したり、Kubernetesのバージョン更新メタデータを取得したりするために、プロキシ設定が必要です：
+
+[sh,subs="attributes+"]
+----
+helm upgrade --install rancher {rancher-helm-repo}/rancher \
+   --namespace cattle-system \
+   --set hostname=rancher.example.com \
+   --set proxy=http://${proxy_host} \
+   --set noProxy=127.0.0.0/8\\,10.0.0.0/8\\,cattle-system.svc\\,172.16.0.0/12\\,192.168.0.0/16\\,.svc\\,.cluster.local
+----
+
+デプロイメントの完了を待ってください。
+
+----
+kubectl rollout status deployment -n cattle-system rancher
+----
+
+`https://rancher.example.com`にアクセスして、Rancherの使用を開始できます。
+
+[#_additional_resources]
+== その他の資料
+
+これらのリソースは、Rancherをインストールする際に役立ちます。
+
+* {xref-helm-chart-options}[Rancher Helmチャートオプション]
+* {xref-tls-secrets}[TLSシークレットの追加]
+* {xref-install-upgrade-troubleshooting}[Rancher Kubernetesインストールのトラブルシューティング]

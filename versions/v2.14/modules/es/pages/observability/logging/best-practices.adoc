@@ -1,0 +1,98 @@
+= Prácticas recomendadas para el registro
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/logging-best-practices.adoc 
+:product-path: observabilidad/registro/prácticas-recomendadas.adoc
+
+En esta guía, recomendamos las mejores prácticas para el registro a nivel de clúster y el registro de aplicaciones.
+
+* <<_cluster_level_logging,Registro a nivel de clúster>>
+* <<_application_logging,Registro de aplicaciones>>
+* <<_general_best_practices,Mejores prácticas generales>>
+
+Antes de Rancher v2.5, el registro en Rancher ha sido históricamente una integración bastante estática. Había una lista fija de agregadores para elegir (ElasticSearch, Splunk, Kafka, Fluentd y Syslog), y solo dos puntos de configuración para elegir (a nivel de clúster y a nivel de proyecto).
+
+Rancher proporciona una experiencia flexible para la agregación de registros. Con la función de registro, tanto los administradores como los usuarios pueden desplegar un registro que cumpla con criterios de recopilación detallados, ofreciendo una mayor variedad de destinos y opciones de configuración.
+
+"Bajo el capó", el registro de Rancher utiliza el https://github.com/kube-logging/logging-operator[Operador de registro]. Proporcionamos la gestionabilidad de este operador (y sus recursos), y vinculamos esa experiencia con la gestión de sus clústeres de Rancher.
+
+[#_cluster_level_logging]
+== Registro a nivel de clúster
+
+[#_cluster_wide_scraping]
+=== Raspado a nivel de clúster
+
+Para algunos usuarios, es deseable raspar registros de cada contenedor que se ejecute en el clúster. Esto suele coincidir con la solicitud (o requisito) de su equipo de seguridad para recopilar todos los registros de todos los puntos de ejecución.
+
+En este escenario, se recomienda crear al menos dos objetos _ClusterOutput_ – uno para su equipo de seguridad (si tiene ese requisito) y otro para ustedes, los administradores del clúster. Al crear estos objetos, tenga cuidado de elegir un punto de salida que pueda manejar el tráfico significativo de registros que proviene de todo el clúster. También asegúrese de elegir un índice apropiado para recibir todos estos registros.
+
+Una vez que haya creado estos objetos _ClusterOutput_, cree un _ClusterFlow_ para recopilar todos los registros. No defina ninguna regla de _Incluir_ o _Excluir_ en este flujo. Esto asegurará que todos los registros de todo el clúster sean recopilados. Si tiene dos _ClusterOutputs_, asegúrese de enviar los registros a ambos.
+
+[#_kubernetes_components]
+=== Componentes de Kubernetes
+
+Los _ClusterFlows_ tienen la capacidad de recopilar registros de todos los contenedores en todos los hosts del clúster de Kubernetes. Esto funciona bien en casos donde esos contenedores son parte de un pod de Kubernetes.
+
+Una futura versión de Rancher incluirá el nombre del contenedor fuente, lo que permitirá filtrar estos registros de componentes. Una vez que se realice ese cambio, podrá personalizar un _ClusterFlow_ para recuperar *solo* los registros de componentes de Kubernetes y dirigirlos a una salida apropiada.
+
+[#_application_logging]
+== Registro de aplicaciones
+
+La mejor práctica, no solo en Kubernetes sino en todas las aplicaciones basadas en contenedores, es dirigir los registros de la aplicación a `stdout`/`stderr`. El entorno de ejecución de contenedor atrapará estos registros y hará *algo* con ellos, típicamente escribiéndolos en un archivo. Dependiendo del entorno de ejecución de contenedor (y su configuración), estos archivos de registro pueden terminar en cualquier número de ubicaciones.
+
+En el caso de escribir los registros en un archivo, Kubernetes ayuda creando un directorio `/var/log/containers` en cada host. Este directorio enlaza simbólicamente los archivos de registro a su destino real (que puede diferir según la configuración o el entorno de ejecución de contenedor).
+
+El registro de Rancher leerá todas las entradas de archivo de registro en `/var/log/containers`, asegurando que todas las entradas de archivo de registro de todos los contenedores (suponiendo una configuración predeterminada) tengan la oportunidad de ser recopiladas y procesadas.
+
+[#_specific_log_files]
+=== Archivos de Registro Específicos
+
+La recopilación de registros solo recupera registros de `stdout`/`stderr` de los pods en Kubernetes. ¿Pero qué pasa si queremos recopilar registros de otros archivos que son generados por aplicaciones? Aquí, un sidecar de transmisión de registros (o dos) puede ser útil.
+
+El objetivo de configurar un sidecar de transmisión es tomar archivos de registro que se escriben en disco y hacer que su contenido se transmita a `stdout`. De esta manera, el Operador de Registro puede recoger esos registros y enviarlos a la salida deseada.
+
+Para configurar esto, edite su recurso de carga de trabajo (por ejemplo, Despliegue) y añada la siguiente definición de sidecar:
+
+[,yaml]
+----
+...
+containers:
+- args:
+  - -F
+  - /path/to/your/log/file.log
+  command:
+  - tail
+  image: busybox
+  name: stream-log-file-[name]
+  volumeMounts:
+  - mountPath: /path/to/your/log
+    name: mounted-log
+...
+----
+
+Esto añadirá un contenedor a su definición de carga de trabajo que ahora transmitirá el contenido de (en este ejemplo) `/path/to/your/log/file.log` a `stdout`.
+
+Este flujo de registro se recoge automáticamente según cualquier _Flows_ o _ClusterFlows_ que haya configurado. También puede considerar crear un _Flow_ específicamente para este archivo de registro, apuntando al nombre del contenedor. Consulta el ejemplo:
+
+[,yaml]
+----
+...
+spec:
+  match:
+  - select:
+      container_names:
+      - stream-log-file-name
+...
+----
+
+[#_general_best_practices]
+== Mejores Prácticas Generales
+
+* Donde sea posible, genere entradas de registro estructuradas (por ejemplo, `syslog`, JSON). Esto facilita el manejo de la entrada de registro, ya que ya existen analizadores escritos para estos formatos.
+* Intente proporcionar el nombre de la aplicación que está creando la entrada de registro, en la propia entrada. Esto puede facilitar la resolución de problemas, ya que los objetos de Kubernetes no siempre llevan el nombre de la aplicación como nombre del objeto. Por ejemplo, un ID de pod puede ser algo como `myapp-098kjhsdf098sdf98`, lo que no proporciona mucha información sobre la aplicación que se está ejecutando dentro del contenedor.
+* Excepto en el caso de recoger todos los registros a nivel de clúster, intente limitar sus objetos _Flow_ y _ClusterFlow_ de manera estricta. Esto facilita la resolución de problemas cuando surgen, y también ayuda a asegurar que las entradas de registro no relacionadas no aparezcan en su agregador. Un ejemplo de un alcance estricto sería restringir un _Flow_ a un único _Deployment_ en un espacio de nombres, o quizás incluso a un único contenedor dentro de un _Pod_.
+* Mantenga la verbosidad del registro baja, excepto cuando esté resolviendo problemas. Una alta verbosidad del registro plantea una serie de problemas, siendo el principal *ruido*: eventos significativos pueden ahogarse en un mar de `DEBUG` mensajes. Esto se mitiga en cierta medida con alertas automatizadas y guiones, pero un registro altamente verboso aún coloca una cantidad desproporcionada de estrés en la infraestructura de registro.
+* Donde sea posible, intenta proporcionar un ID de transacción o solicitud con la entrada de registro. Esto puede facilitar el seguimiento de la actividad de la aplicación a través de múltiples fuentes de registro, especialmente al tratar con aplicaciones distribuidas.

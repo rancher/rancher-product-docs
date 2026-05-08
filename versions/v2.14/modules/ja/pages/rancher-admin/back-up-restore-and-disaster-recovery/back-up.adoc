@@ -1,0 +1,119 @@
+= バックアップの作成 {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-backup-storage-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/storage.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-rancher-backup-config: xref:reference-guides/backup-restore-configuration/backup-configuration.adoc
+:xref-rancher-backup-storage-config: xref:reference-guides/backup-restore-configuration/storage-configuration.adoc
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:xref-back-restore-example-configs: xref:reference-guides/backup-restore-configuration/examples.adoc
+endif::[]
+
+このセクションでは、任意のKubernetesクラスター上で実行されているRancherのバックアップの方法を学びます。DockerでインストールされたRancherのバックアップについては、xref:[単一ノードのバックアップ]の手順を参照してください。
+
+バックアップ・復元オペレーターはローカルクラスタにインストールする必要があり、Rancherアプリのみをバックアップします。バックアップおよび復元操作は、ローカルKubernetesクラスター内でのみ実行されます。
+
+rancher-backupオペレーターのバージョン2.x.xは、Rancher v2.6.x用です。
+
+[CAUTION]
+====
+
+新しいRancherセットアップにバックアップを復元する際は、新しいセットアップのバージョンがバックアップを作成したものと同じである必要があります。バックアップを復元する際は、Kubernetesのバージョンも考慮する必要があります。クラスター内およびバックアップファイル内のサポートされているapiVersionが異なる可能性があるためです。
+====
+
+
+[#_prerequisites]
+== 前提条件
+
+Rancherのバージョンはv2.5.0以上でなければなりません。
+
+Rancher v2.6.3のv1.22クラスターに既存のバックアップファイルを復元する方法については、{xref-migrate-cluster}#_2_restore_from_backup_using_a_restore_custom_resource[こちら]を参照してください。
+
+[#_1_install_the_rancher_backup_operator]
+== 1.Rancher Backupオペレーターをインストールします。
+
+バックアップストレージの場所はオペレーターの設定であるため、Rancher Backupsアプリケーションをインストールまたはアップグレードする際に構成する必要があります。
+
+バックアップは.tar.gzファイルとして作成されます。これらのファイルはS3またはMinioにプッシュすることができ、もしくは永続ボリュームに保存することもできます。
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、`local`クラスターに移動し、*探索*をクリックします。`local`クラスターはRancherサーバーを実行しています。
+. menu:アプリ[チャート]をクリックしてください。
+. *Rancher Backups*をクリックします。
+. ［*インストール］*をクリックします。
+. デフォルトストレージロケーションを設定します。ヘルプについては、{xref-rancher-backup-storage-config}[ストレージ設定セクション]を参照してください。
+. ［*インストール］*をクリックします。
+
+[NOTE]
+====
+
+バックアップ・復元オペレーターを使用して復元を実行した後に発生するFleetの既知の問題があります：clientSecretNameおよびhelmSecretNameに使用されるシークレットは、Fleetのgitreposに含まれていません。{xref-fleet-overview}#_トラブルシューティング[こちら]を参照して、回避策を確認してください。
+====
+
+
+[#_2_perform_a_backup]
+== 2.バックアップを実行します。
+
+バックアップを実行するには、Backupタイプのカスタムリソースを作成する必要があります。
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、`local`クラスターに移動し、*探索*をクリックします。
+. 左側のナビゲーションバーで、menu:Rancher Backups[バックアップ]をクリックします。
+. ［*作成*］をクリックします。
+. フォームまたはYAMLエディタを使用してバックアップを作成します。
+. フォームを使用してバックアップの詳細を構成するには、*作成*をクリックし、{xref-rancher-backup-config}[設定リファレンス]および{xref-back-restore-example-configs}#_バックアップ[例]を参照してください。
+. YAMLエディタを使用する場合は、menu:作成[YAMLから作成]をクリックできます。バックアップYAMLを入力します。この例のバックアップカスタムリソースは、S3に暗号化された定期的なバックアップを作成します。アプリは、S3バックアップシークレットを探す場所を決定するために`credentialSecretNamespace`値を使用します。
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Backup
+ metadata:
+   name: s3-recurring-backup
+ spec:
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+   resourceSetName: rancher-resource-set-full
+   encryptionConfigSecretName: encryptionconfig
+   schedule: "@every 1h"
+   retentionCount: 10
+----
++
+
+[NOTE]
+====
+YAMLエディタを使用してバックアップリソースを作成する際には、`resourceSetName`を`rancher-resource-set-full`または`rancher-resource-set-basic`に設定する必要があります。
+====
+
++
+バックアップの設定に関するヘルプについては、{xref-rancher-backup-config}[設定リファレンス]および{xref-back-restore-example-configs}#_backup[例]を参照してください。
++
+
+[CAUTION]
+====
+`rancher-backup`オペレーターは、EncryptionConfigurationファイルを保存しません。暗号化されたバックアップが作成されるとき、EncryptionConfigurationファイルの内容は保存されなければならず、このバックアップから復元する際には同じファイルを使用しなければなりません。
+====
+
+
+. ［*作成*］をクリックします。
+
+*結果:*バックアップファイルは、Backup カスタムリソースで設定されたストレージ場所に作成されます。このファイルの名前は、復元を行う際に使用されます。

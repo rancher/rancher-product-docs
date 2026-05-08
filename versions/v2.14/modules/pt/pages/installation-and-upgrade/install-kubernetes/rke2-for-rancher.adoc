@@ -1,0 +1,190 @@
+= Configurando um Cluster Kubernetes de Alta Disponibilidade {rke2-product-name} para {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-30
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-cluster-setup/rke2-for-rancher.adoc 
+:product-path: installation-and-upgrade/install-kubernetes/rke2-for-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:url-rke2-cluster-access: https://documentation.suse.com/cloudnative/rke2/latest/en/cluster_access.html
+:xref-arch-rec: xref:about-rancher/architecture/recommendations.adoc
+:xref-ha-rke2: xref:installation-and-upgrade/infrastructure-setup/ha-rke2-kubernetes-cluster.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-cluster-access: https://docs.rke2.io/cluster_access
+:xref-arch-rec: xref:reference-guides/rancher-manager-architecture/architecture-recommendations.adoc
+:xref-ha-rke2: xref:how-to-guides/new-user-guides/infrastructure-setup/ha-rke2-kubernetes-cluster.adoc
+endif::[]
+
+Esta seção descreve como instalar um cluster Kubernetes de acordo com as {xref-arch-rec}#_environment_for_kubernetes_installations[melhores práticas para o ambiente do servidor Rancher.]
+
+[#_prerequisites]
+== Pré-requisitos
+
+Estas instruções assumem que você configurou três nós, um balanceador de carga e um registro DNS, conforme descrito em {xref-ha-rke2}[esta seção.]
+
+Observe que, para que o RKE2 funcione corretamente com o balanceador de carga, você precisa configurar dois listeners: um para o supervisor na porta 9345 e um para a API do Kubernetes na porta 6443.
+
+O Rancher precisa ser instalado em uma versão suportada do Kubernetes. Para descobrir quais versões do Kubernetes são suportadas para a sua versão do Rancher, consulte os https://rancher.com/support-maintenance-terms/[termos de manutenção de suporte.] Para especificar a versão do RKE2, use a variável de ambiente INSTALL_RKE2_VERSION ao executar o script de instalação do RKE2.
+
+[#_installing_kubernetes]
+== Instalando o Kubernetes
+
+[#_1_install_kubernetes_and_set_up_the_rke2_product_name_server]
+=== 1. Instale o Kubernetes e configure o servidor {rke2-product-name}
+
+O servidor RKE2 é executado com etcd embutido, portanto, você não precisará configurar um armazenamento externo para operar em modo HA.
+
+No primeiro nó, você deve configurar o arquivo de configuração com seu próprio segredo pré-compartilhado como o token. O argumento do token pode ser definido na inicialização.
+
+Se você não especificar um segredo pré-compartilhado, o RKE2 gerará um e o colocará em /var/lib/rancher/rke2/server/node-token.
+
+Para evitar erros de certificado com o endereço de registro fixo, você deve iniciar o servidor com o parâmetro tls-san definido. Essa opção adiciona um nome de host ou IP adicional como um Nome Alternativo de Assunto no certificado TLS do servidor, e pode ser especificada como uma lista se você quiser acessar tanto pelo IP quanto pelo nome do host.
+
+Primeiro, você deve criar o diretório onde o arquivo de configuração do RKE2 será colocado:
+
+----
+mkdir -p /etc/rancher/rke2/
+----
+
+Em seguida, crie o arquivo de configuração do RKE2 em `/etc/rancher/rke2/config.yaml` usando o seguinte exemplo:
+
+----
+token: my-shared-secret
+tls-san:
+  - my-kubernetes-domain.com
+  - another-kubernetes-domain.com
+----
+
+Depois disso, você precisa executar o comando de instalação e habilitar e iniciar o rke2:
+
+----
+curl -sfL https://get.rke2.io | sh -
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+----
+
+. Para juntar-se aos demais nós, você precisa configurar cada nó adicional com o mesmo token compartilhado ou o gerado automaticamente. Aqui está um exemplo do arquivo de configuração:
++
+....
+ token: my-shared-secret
+ server: https://<DNS-DOMAIN>:9345
+ tls-san:
+   - my-kubernetes-domain.com
+   - another-kubernetes-domain.com After that, you need to run the installer and enable, then start, rke2:
+
+ curl -sfL https://get.rke2.io | sh -
+ systemctl enable rke2-server.service
+ systemctl start rke2-server.service
+....
+
+. Repita o mesmo comando no seu terceiro nó do servidor RKE2.
+
+[#_2_confirm_that_rke2_product_name_is_running]
+=== 2. Confirme que {rke2-product-name} está em execução
+
+Uma vez que você tenha iniciado o processo do servidor rke2 em todos os nós de servidor, certifique-se de que o cluster foi iniciado corretamente com
+
+----
+/var/lib/rancher/rke2/bin/kubectl \
+        --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes
+You should see your server nodes in the Ready state.
+----
+
+Então teste a saúde dos pods do cluster:
+
+----
+/var/lib/rancher/rke2/bin/kubectl \
+        --kubeconfig /etc/rancher/rke2/rke2.yaml get pods --all-namespaces
+----
+
+*Resultado:* Você configurou com sucesso um cluster Kubernetes RKE2.
+
+[#_3_save_and_start_using_the_kubeconfig_file]
+=== 3. Salve e comece a usar o arquivo kubeconfig
+
+Quando você instalou o RKE2 em cada nó do servidor Rancher, um arquivo `kubeconfig` foi criado no nó em `/etc/rancher/rke2/rke2.yaml`. Este arquivo contém credenciais para acesso total ao cluster, e você deve salvar este arquivo em um local seguro.
+
+Para usar este arquivo `kubeconfig`,
+
+. Instale https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl,], uma ferramenta de linha de comando do Kubernetes.
+. Copie o arquivo em `/etc/rancher/rke2/rke2.yaml` e salve-o no diretório `~/.kube/config` em sua máquina local.
+. No arquivo kubeconfig, a diretiva `server` é definida como localhost. Configure o servidor como o DNS do seu balanceador de carga do plano de controle, na porta 6443. (O servidor de API do Kubernetes RKE2 usa a porta 6443, enquanto o servidor Rancher será servido via Traefik Ingress nas portas 80 e 443. Consulte https://support.scc.suse.com/s/kb/Migrating-from-Ingress-NGINX-to-Traefik-in-a-Rancher-provisioned-RKE2-Cluster?language=en_US[Migrando do Ingress NGINX para Traefik em um Cluster RKE2 provisionado pelo Rancher] para mais detalhes.) Aqui está um exemplo `rke2.yaml`:
+
+[,yml]
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*Resultado:* Agora você pode usar `kubectl` para gerenciar seu cluster RKE2. Se você tiver mais de um arquivo kubeconfig, pode especificar qual deseja usar passando o caminho para o arquivo ao usar `kubectl`:
+
+----
+kubectl --kubeconfig ~/.kube/config/rke2.yaml get pods --all-namespaces
+----
+
+Para mais informações sobre o arquivo `kubeconfig`, consulte a {url-rke2-cluster-access}[documentação do RKE2] ou a https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[documentação oficial do Kubernetes] sobre como organizar o acesso ao cluster usando arquivos `kubeconfig`.
+
+[#_4_check_the_health_of_your_cluster_pods]
+=== 4. Verifique a saúde dos seus pods de cluster
+
+Agora que você configurou o arquivo `kubeconfig`, pode usar `kubectl` para acessar o cluster a partir de sua máquina local.
+
+Verifique se todos os pods e contêineres necessários estão saudáveis e prontos para continuar:
+
+----
+/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get pods -A
+NAMESPACE     NAME                                                    READY   STATUS      RESTARTS   AGE
+kube-system   cloud-controller-manager-rke2-server-1                  1/1     Running     0          2m28s
+kube-system   cloud-controller-manager-rke2-server-2                  1/1     Running     0          61s
+kube-system   cloud-controller-manager-rke2-server-3                  1/1     Running     0          49s
+kube-system   etcd-rke2-server-1                                      1/1     Running     0          2m13s
+kube-system   etcd-rke2-server-2                                      1/1     Running     0          87s
+kube-system   etcd-rke2-server-3                                      1/1     Running     0          56s
+kube-system   helm-install-rke2-canal-hs6sx                           0/1     Completed   0          2m17s
+kube-system   helm-install-rke2-coredns-xmzm8                         0/1     Completed   0          2m17s
+kube-system   helm-install-traefik-crd-z8vsz                          0/1     Completed   0          2m17s
+kube-system   helm-install-traefik-flwnl                              0/1     Completed   0          2m17s
+kube-system   helm-install-rke2-metrics-server-7sggn                  0/1     Completed   0          2m17s
+kube-system   kube-apiserver-rke2-server-1                            1/1     Running     0          116s
+kube-system   kube-apiserver-rke2-server-2                            1/1     Running     0          66s
+kube-system   kube-apiserver-rke2-server-3                            1/1     Running     0          48s
+kube-system   kube-controller-manager-rke2-server-1                   1/1     Running     0          2m30s
+kube-system   kube-controller-manager-rke2-server-2                   1/1     Running     0          57s
+kube-system   kube-controller-manager-rke2-server-3                   1/1     Running     0          42s
+kube-system   kube-proxy-rke2-server-1                                1/1     Running     0          2m25s
+kube-system   kube-proxy-rke2-server-2                                1/1     Running     0          59s
+kube-system   kube-proxy-rke2-server-3                                1/1     Running     0          85s
+kube-system   kube-scheduler-rke2-server-1                            1/1     Running     0          2m30s
+kube-system   kube-scheduler-rke2-server-2                            1/1     Running     0          57s
+kube-system   kube-scheduler-rke2-server-3                            1/1     Running     0          42s
+kube-system   rke2-canal-b9lvm                                        2/2     Running     0          91s
+kube-system   rke2-canal-khwp2                                        2/2     Running     0          2m5s
+kube-system   rke2-canal-swfmq                                        2/2     Running     0          105s
+kube-system   rke2-coredns-rke2-coredns-547d5499cb-6tvwb              1/1     Running     0          92s
+kube-system   rke2-coredns-rke2-coredns-547d5499cb-rdttj              1/1     Running     0          2m8s
+kube-system   rke2-coredns-rke2-coredns-autoscaler-65c9bb465d-85sq5   1/1     Running     0          2m8s
+kube-system   traefik-7c844b766f-m9p2w                                1/1     Running     0          52s
+kube-system   traefik-7c844b766f-s4l9k                                1/1     Running     0          52s
+kube-system   rke2-metrics-server-6564db4569-vdfkn                    1/1     Running     0          66s
+----
+
+*Resultado:* Você confirmou que pode acessar o cluster com `kubectl` e que o cluster RKE2 está funcionando com sucesso. Agora o servidor de gerenciamento Rancher pode ser instalado no cluster.

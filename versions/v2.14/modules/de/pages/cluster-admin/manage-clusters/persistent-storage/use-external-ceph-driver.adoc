@@ -1,0 +1,448 @@
+= Verwendung eines externen Ceph-Treibers
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/use-external-ceph-driver.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/use-external-ceph-driver.adoc
+:experimental:
+
+Diese Anweisungen beziehen sich auf die Verwendung des externen Ceph-Treibers in einem RKE2-Cluster. Wenn Sie RKE verwenden, sind zusätzliche Schritte erforderlich. Für Details siehe <<_using_the_ceph_driver_with_rke,diesen Abschnitt.>>
+
+[#_requirements]
+== Anforderungen
+
+Stellen Sie sicher, dass die Pakete ceph-common und xfsprogs auf den SLE-Worker-Knoten installiert sind.
+
+[#_using_the_ceph_driver_with_rke]
+== Verwendung des Ceph-Treibers mit RKE
+
+Die unten aufgeführten Ressourcen sind vollständig kompatibel mit RKE-basierten Clustern, jedoch ist eine zusätzliche Kubelet-Konfiguration für RKE erforderlich.
+
+In RKE-Clustern läuft die Kubelet-Komponente in einem Docker-Container und hat standardmäßig keinen Zugriff auf die Kernel-Module des Hosts wie rbd und libceph.
+
+Um diese Einschränkung zu beheben, können Sie entweder `modprobe rbd` auf den Worker-Knoten ausführen oder die Kubelet-Container so konfigurieren, dass sie automatisch das `/lib/modules`-Verzeichnis vom Host in den Container einbinden.
+
+Für die Kubelet-Konfiguration fügen Sie die folgenden Zeilen in die `cluster.yml`-Datei ein, bevor Sie den RKE-Cluster bereitstellen. Sie können auch das `cluster.yml` später in der Rancher-Benutzeroberfläche ändern, indem Sie auf menu:Cluster bearbeiten[Als YAML bearbeiten] klicken und die Worker-Knoten neu starten.
+
+[,yaml]
+----
+services:
+  kubelet:
+    extra_binds:
+      - '/lib/modules:/lib/modules:ro'
+----
+
+Für weitere Informationen zur `extra_binds`-Direktive siehe https://rancher.com/docs/rke/latest/en/config-options/services/services-extras/#extra-binds[diesen Abschnitt.]
+
+[#_installing_the_ceph_csi_driver_on_an_rke2_product_name_cluster]
+== Installation des ceph-csi-Treibers auf einem {rke2-product-name}-Cluster
+
+[NOTE]
+====
+
+Diese Schritte sind nur für die dynamische RBD-Bereitstellung erforderlich.
+====
+
+
+Für weitere Informationen zum `ceph-csi-rbd`-Chart siehe https://github.com/ceph/ceph-csi/blob/devel/charts/ceph-csi-rbd/README.md[diese Seite.]
+
+Um Details zu Ihrem SES-Cluster zu erhalten, führen Sie aus:
+
+----
+ceph mon dump
+----
+
+Lesen Sie die Ausgabe:
+
+----
+dumped monmap epoch 3
+epoch 3
+fsid 79179d9d-98d8-4976-ab2e-58635caa7235
+last_changed 2021-02-11T10:56:42.110184+0000
+created 2021-02-11T10:56:22.913321+0000
+min_mon_release 15 (octopus)
+0: [v2:10.85.8.118:3300/0,v1:10.85.8.118:6789/0] mon.a
+1: [v2:10.85.8.123:3300/0,v1:10.85.8.123:6789/0] mon.b
+2: [v2:10.85.8.124:3300/0,v1:10.85.8.124:6789/0] mon.c
+----
+
+Später benötigen Sie die Werte für fsid und mon-Adressen.
+
+[#_install_the_ceph_csi_driver_using_helm]
+== Installieren Sie den ceph-csi-Treiber mit Helm
+
+Führen Sie diese Befehle aus:
+
+----
+helm repo add ceph-csi https://ceph.github.io/csi-charts
+helm repo update
+helm search repo ceph-csi -l
+helm inspect values ceph-csi/ceph-csi-rbd > ceph-csi-rbd-values.yaml
+----
+
+Ändern Sie die `ceph-csi-rbd-values.yaml`-Datei und behalten Sie nur die erforderlichen Änderungen bei:
+
+[,yaml]
+----
+# ceph-csi-rbd-values.yaml
+csiConfig:
+  - clusterID: "79179d9d-98d8-4976-ab2e-58635caa7235"
+    monitors:
+      - "10.85.8.118:6789"
+      - "10.85.8.123:6789"
+      - "10.85.8.124:6789"
+provisioner:
+  name: provisioner
+  replicaCount: 2
+----
+
+Stellen Sie sicher, dass die Ceph-Monitore vom RKE2-Cluster erreichbar sind, zum Beispiel durch Ping.
+
+----
+kubectl create namespace ceph-csi-rbd
+helm install --namespace ceph-csi-rbd ceph-csi-rbd ceph-csi/ceph-csi-rbd --values ceph-csi-rbd-values.yaml
+kubectl rollout status deployment ceph-csi-rbd-provisioner -n ceph-csi-rbd
+helm status ceph-csi-rbd -n ceph-csi-rbd
+----
+
+Falls Sie die Konfiguration direkt über Helm ändern möchten, können Sie die `ceph-csi-rbd-values.yaml`-Datei anpassen und aufrufen:
+
+----
+helm upgrade \
+  --namespace ceph-csi-rbd ceph-csi-rbd ceph-csi/ceph-csi-rbd --values ceph-csi-rbd-values.yaml
+----
+
+[#_creating_rbd_ceph_resources]
+== Erstellen von RBD Ceph-Ressourcen
+
+----
+# Erstellen Sie einen Ceph-Pool:
+ceph osd pool create myPool 64 64
+
+# Erstellen Sie einen Blockgerätepool:
+rbd pool init myPool
+
+# Erstellen Sie ein Blockgeräte-Image:
+rbd create -s 2G myPool/image
+
+# Erstellen Sie einen Blockgerätebenutzer und notieren Sie den Schlüssel:
+ceph auth get-or-create-key client.myPoolUser mon "allow r" osd "allow class-read object_prefix rbd_children, allow rwx pool=myPool" | tr -d '\n' | base64
+QVFDZ0R5VmdyRk9KREJBQTJ5b2s5R1E2NUdSWExRQndhVVBwWXc9PQ==
+
+# Kodieren Sie den Ceph-Benutzer myPoolUser in einen base64-Hash:
+echo "myPoolUser" | tr -d '\n' | base64
+bXlQb29sVXNlcg==
+
+# Erstellen Sie einen Blockgeräte-Admin-Benutzer und notieren Sie den Schlüssel:
+ceph auth get-or-create-key client.myPoolAdmin mds 'allow *' mgr 'allow *' mon 'allow *' osd 'allow * pool=myPool' | tr -d '\n' | base64
+QVFCK0hDVmdXSjQ1T0JBQXBrc0VtcVhlZFpjc0JwaStIcmU5M3c9PQ==
+
+# Kodieren Sie den Ceph-Benutzer myPoolAdmin in einen base64-Hash:
+echo "myPoolAdmin" | tr -d '\n' | base64
+bXlQb29sQWRtaW4=
+----
+
+[#_configure_rbd_ceph_access_secrets]
+== Konfigurieren Sie die RBD Ceph-Zugriffsgeheimnisse
+
+[#_user_account]
+=== Benutzerkonto
+
+Für die statische RBD-Bereitstellung (das Image im Ceph-Pool muss vorhanden sein), führen Sie diese Befehle aus:
+
+----
+cat > ceph-user-secret.yaml << EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ceph-user
+  namespace: default
+type: kubernetes.io/rbd
+data:
+  userID: bXlQb29sVXNlcg==
+  userKey: QVFDZ0R5VmdyRk9KREJBQTJ5b2s5R1E2NUdSWExRQndhVVBwWXc9PQ==
+EOF
+
+kubectl apply -f ceph-user-secret.yaml
+----
+
+[#_admin_account]
+=== Admin-Konto
+
+Für die dynamische RBD-Bereitstellung (verwendet für die automatische Erstellung von Images in einem bestimmten Ceph-Pool), führen Sie diese Befehle aus:
+
+----
+cat > ceph-admin-secret.yaml << EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ceph-admin
+  namespace: default
+type: kubernetes.io/rbd
+data:
+  userID: bXlQb29sQWRtaW4=
+  userKey: QVFCK0hDVmdXSjQ1T0JBQXBrc0VtcVhlZFpjc0JwaStIcmU5M3c9PQ==
+EOF
+
+kubectl apply -f ceph-admin-secret.yaml
+----
+
+[#_create_rbd_testing_resources]
+== RBD-Testressourcen erstellen
+
+[#_using_rbd_in_pods]
+=== RBD in Pods verwenden
+
+[,yaml]
+----
+# pod
+cat > ceph-rbd-pod-inline.yaml << EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ceph-rbd-pod-inline
+spec:
+  containers:
+  - name: ceph-rbd-pod-inline
+    image: busybox
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - mountPath: /mnt/ceph_rbd
+      name: volume
+  volumes:
+  - name: volume
+    rbd:
+      monitors:
+      - 10.85.8.118:6789
+      - 10.85.8.123:6789
+      - 10.85.8.124:6789
+      pool: myPool
+      image: image
+      user: myPoolUser
+      secretRef:
+        name: ceph-user
+      fsType: ext4
+      readOnly: false
+EOF
+
+kubectl apply -f ceph-rbd-pod-inline.yaml
+kubectl get pod
+kubectl exec pod/ceph-rbd-pod-inline -- df -k | grep rbd
+----
+
+[#_using_rbd_in_persistent_volumes]
+=== RBD in persistenten Volumes verwenden
+
+[,yaml]
+----
+# pod-pvc-pv
+cat > ceph-rbd-pod-pvc-pv-allinone.yaml << EOF
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ceph-rbd-pv
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  rbd:
+    monitors:
+    - 10.85.8.118:6789
+    - 10.85.8.123:6789
+    - 10.85.8.124:6789
+    pool: myPool
+    image: image
+    user: myPoolUser
+    secretRef:
+      name: ceph-user
+    fsType: ext4
+    readOnly: false
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: ceph-rbd-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ceph-rbd-pod-pvc-pv
+spec:
+  containers:
+  - name: ceph-rbd-pod-pvc-pv
+    image: busybox
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - mountPath: /mnt/ceph_rbd
+      name: volume
+  volumes:
+  - name: volume
+    persistentVolumeClaim:
+      claimName: ceph-rbd-pvc
+EOF
+
+kubectl apply -f ceph-rbd-pod-pvc-pv-allinone.yaml
+kubectl get pv,pvc,pod
+kubectl exec pod/ceph-rbd-pod-pvc-pv -- df -k | grep rbd
+----
+
+[#_using_rbd_in_storage_classes]
+=== RBD in Storage-Klassen verwenden
+
+Dieses Beispiel ist für die dynamische Bereitstellung. Der Ceph-CSI-Treiber wird benötigt.
+
+[,yaml]
+----
+# pod-pvc-sc
+cat > ceph-rbd-pod-pvc-sc-allinone.yaml <<EOF
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ceph-rbd-sc
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: rbd.csi.ceph.com
+parameters:
+   clusterID: 79179d9d-98d8-4976-ab2e-58635caa7235
+   pool: myPool
+   imageFeatures: layering
+   csi.storage.k8s.io/provisioner-secret-name: ceph-admin
+   csi.storage.k8s.io/provisioner-secret-namespace: default
+   csi.storage.k8s.io/controller-expand-secret-name: ceph-admin
+   csi.storage.k8s.io/controller-expand-secret-namespace: default
+   csi.storage.k8s.io/node-stage-secret-name: ceph-admin
+   csi.storage.k8s.io/node-stage-secret-namespace: default
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+mountOptions:
+   - discard
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: ceph-rbd-sc-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: ceph-rbd-sc
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ceph-rbd-pod-pvc-sc
+spec:
+  containers:
+  - name:  ceph-rbd-pod-pvc-sc
+    image: busybox
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - mountPath: /mnt/ceph_rbd
+      name: volume
+  volumes:
+  - name: volume
+    persistentVolumeClaim:
+      claimName: ceph-rbd-sc-pvc
+EOF
+
+kubectl apply -f ceph-rbd-pod-pvc-sc-allinone.yaml
+kubectl get pv,pvc,sc,pod
+kubectl exec pod/ceph-rbd-pod-pvc-sc -- df -k | grep rbd
+----
+
+[#__rke2_product_name_server_master_provisioning]
+=== {rke2-product-name} Server/Master-Bereitstellung
+
+----
+sudo su +
+curl -sfL https://get.rke2.io | sh - +
+systemctl enable -- \--now rke2-server
+
+cat > /root/.bashrc << EOF
+export PATH=$PATH:/var/lib/rancher/rke2/bin/
+export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+EOF
+
+cat /var/lib/rancher/rke2/server/node-token
+token: K10ca0c38d4ff90d8b80319ab34092e315a8b732622e6adf97bc9eb0536REDACTED::server:ec0308000b8a6b595da000efREDACTED
+----
+
+[#__rke2_product_name_agent_worker_provisioning]
+=== {rke2-product-name} Agent/Worker-Bereitstellung
+
+----
+mkdir -p /etc/rancher/rke2/
+
+cat > /etc/rancher/rke2/config.yaml << EOF
+server: https://10.100.103.23:9345
+token: K10ca0c38d4ff90d8b80319ab34092e315a8b732622e6adf97bc9eb0536REDACTED::server:ec0308000b8a6b595da000efREDACTED
+EOF
+
+curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE="agent" sh - +
+systemctl enable -- \--now rke2-agent.service
+----
+
+Um den Cluster in Rancher zu importieren, klicken Sie auf *☰ > Clusterverwaltung*. Gehen Sie dann auf die Seite *Cluster* und klicken Sie auf *Bestehenden importieren*. Führen Sie dann den bereitgestellten kubectl-Befehl auf dem Server/master-Knoten aus.
+
+[#_tested_versions]
+== Getestete Versionen
+
+Betriebssystem für die Ausführung von RKE2-Knoten: JeOS SLE15-SP2 mit installiertem kernel-default-5.3.18-24.49
+
+----
+kubectl version
+Client Version: version.Info{Major:"1", Minor:"18", GitVersion:"v1.18.4", GitCommit:"c96aede7b5205121079932896c4ad89bb93260af", GitTreeState:"clean", BuildDate:"2020-06-22T12:00:00Z", GoVersion:"go1.13.11", Compiler:"gc", Platform:"linux/amd64"}
+Server Version: version.Info{Major:"1", Minor:"19", GitVersion:"v1.19.7+rke2r1", GitCommit:"1dd5338295409edcfff11505e7bb246f0d325d15", GitTreeState:"clean", BuildDate:"2021-01-20T01:50:52Z", GoVersion:"go1.15.5b5", Compiler:"gc", Platform:"linux/amd64"}
+
+helm version
+version.BuildInfo{Version:"3.4.1", GitCommit:"c4e74854886b2efe3321e185578e6db9be0a6e29", GitTreeState:"clean", GoVersion:"go1.14.12"}
+----
+
+Kubernetes-Version im RKE2-Cluster: v1.19.7+rke2r1
+
+[#_troubleshooting]
+== Fehlerbehebung
+
+Falls Sie SUSEs ceph-rook basierend auf SES7 verwenden, kann es nützlich sein, die Monitore im hostNetwork freizugeben, indem Sie `rook-1.4.5/ceph/cluster.yaml` bearbeiten und `spec.network.hostNetwork=true` festlegen.
+
+Auch für den Betrieb des ceph-rook-Clusters ist es nützlich, eine Toolbox auf dem Kubernetes-Cluster bereitzustellen, auf dem ceph-rook bereitgestellt wird, indem Sie `kubectl apply -f rook-1.4.5/ceph/toolbox.yaml` verwenden. Dann können alle ceph-bezogenen Befehle im Toolbox-Pod ausgeführt werden, zum Beispiel durch Ausführen von `kubectl exec -it -n rook-ceph rook-ceph-tools-686d8b8bfb-2nvqp -- bash`.
+
+Betrieb mit ceph - grundlegende Befehle:
+
+----
+ceph osd pool stats
+ceph osd pool delete myPool myPool --yes-i-really-really-mean-it
+rbd list -p myPool
+> csi-vol-f5d3766c-7296-11eb-b32a-c2b045952d38
+> image
+----
+
+Löschen Sie das Bild: `rbd rm csi-vol-f5d3766c-7296-11eb-b32a-c2b045952d38 -p myPool`
+
+CephFS-Befehle in der Rook-Toolbox:
+
+----
+ceph -s
+ceph fs ls
+ceph fs fail cephfs
+ceph fs rm cephfs --yes-i-really-mean-it
+ceph osd pool delete cephfs_data cephfs_data --yes-i-really-really-mean-it
+ceph osd pool delete cephfs_metadata cephfs_metadata --yes-i-really-really-mean-it
+----
+
+Um ein cephfs-Dateisystem vorzubereiten, können Sie diesen Befehl in einem Rook-Cluster ausführen:
+
+----
+kubectl apply -f rook-1.4.5/ceph/filesystem.yaml
+----

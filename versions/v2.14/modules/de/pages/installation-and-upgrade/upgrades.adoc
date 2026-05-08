@@ -1,0 +1,242 @@
+= Aufrüstungen
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-06
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/upgrades.adoc 
+:product-path: installation-and-upgrade/upgrades.adoc
+ifeval::["{build-type}" != "community"]
+:xref-air-gap: xref:installation-and-upgrade/other-installation-methods/air-gapped/air-gapped.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-upgrade-certmanager: xref:installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-air-gap-publish-images: xref:installation-and-upgrade/other-installation-methods/air-gapped/publish-images.adoc
+:xref-helm-chart-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+:xref-air-gap-upgrade: xref:installation-and-upgrade/other-installation-methods/air-gapped/upgrades.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-air-gap: xref:einsteiger/installation-und-upgrade/andere-installationsmethoden/air-gapped-helm-cli-install/index.adoc
+:xref-backup-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc
+:xref-upgrade-certmanager: xref:getting-started/installation-and-upgrade/resources/upgrade-cert-manager.adoc
+:xref-air-gap-publish-images: xref:einsteiger/installation-und-upgrade/andere-installationsmethoden/air-gapped-helm-cli-install/bilder-publizieren.adoc
+:xref-helm-chart-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+:xref-air-gap-upgrade: xref:einsteiger/installation-und-upgrade/installieren-upgrade-auf-einem-kubernetes-cluster/air-gapped-upgrades.adoc
+endif::[]
+
+Die folgenden Anweisungen führen Sie durch das Upgrade eines Rancher-Servers, der auf einem Kubernetes-Cluster mit Helm installiert wurde. Diese Schritte gelten auch für Air-Gapped-Installationen mit Helm.
+
+Für die Anweisungen zum Upgrade von Rancher, das mit Docker installiert wurde, siehe xref:[diese Seite.]
+
+[#_prerequisites]
+== Voraussetzungen
+
+[#_access_to_kubeconfig]
+=== Zugriff auf kubeconfig
+
+Helm sollte von demselben Ort aus ausgeführt werden wie Ihre kubeconfig-Datei oder von demselben Ort, an dem Sie Ihre kubectl-Befehle ausführen.
+
+Wenn Sie Kubernetes mit RKE2/K3s installiert haben, wird die Kubeconfig im `/etc/rancher/rke2/rke2.yaml` oder `/etc/rancher/k3s/k3s.yaml` Verzeichnis gespeichert, abhängig von Ihrer gewählten Distribution.
+
+Die kubeconfig kann auch manuell für den vorgesehenen Cluster mit dem `--kubeconfig`-Tag angesprochen werden (siehe https://helm.sh/docs/helm/helm/)).
+
+[#_review_known_issues]
+=== Bekannte Probleme überprüfen
+
+Überprüfen Sie die Liste der bekannten Probleme für jede Rancher-Version, die in den Versionshinweisen auf https://github.com/rancher/rancher/releases[GitHub] und in den https://forums.rancher.com/c/announcements/12[Rancher-Foren.] zu finden ist.
+
+[#_helm_version]
+=== Helm-Version
+
+Die Upgrade-Anweisungen setzen voraus, dass Sie Helm 3 verwenden.
+
+[#_for_air_gapped_installs_populate_private_registry]
+=== Für Air-Gapped-Installationen: Private Registry befüllen
+
+Für {xref-air-gap}[nur Air-Gapped-Installationen] sammeln und fügen Sie Bilder für die neue Rancher-Server-Version hinzu. Befolgen Sie die Anleitung, um {xref-air-gap-publish-images}[Ihr privates Repository] mit den Bildern für die Rancher-Version, auf die Sie upgraden möchten, zu befüllen.
+
+[#_for_upgrades_with_cert_manager_older_than_0_8_0]
+=== Für Upgrades mit cert-manager älter als 0.8.0
+
+https://community.letsencrypt.org/t/blocking-old-cert-manager-versions/98753[Let's Encrypt wird cert-manager-Instanzen, die älter als 0.8.0 sind, ab dem 1. November 2019 blockieren.] Upgrade cert-manager auf die neueste Version, indem Sie {xref-upgrade-certmanager}[diese Anweisungen.]
+
+[#_upgrade_outline]
+== Upgrade-Umriss
+
+Befolgen Sie die Schritte, um den Rancher-Server zu aktualisieren:
+
+[#_1_back_up_your_kubernetes_cluster_that_is_running_rancher_server]
+=== 1. Sichern Sie Ihren Kubernetes-Cluster, der den Rancher-Server ausführt
+
+Verwenden Sie die {xref-backup-cluster}[Backup-Anwendung], um Rancher zu sichern.
+
+Sie verwenden die Sicherung als Wiederherstellungspunkt, falls während des Upgrades etwas schiefgeht.
+
+[#_2_update_the_helm_chart_repository]
+=== 2. Aktualisieren Sie das Helm-Chart-Repository
+
+. Aktualisieren Sie den lokalen Helm-Repo-Cache.
++
+----
+helm repo update
+----
+
+. Holen Sie sich den Repository-Namen, den Sie zur Installation von Rancher verwendet haben.
++
+----
+helm repo list
+
+NAME                     URL
+rancher-prime          <helm-chart-repo-url>
+----
+
+. Laden Sie das neueste Chart zur Installation von Rancher aus dem Helm-Chart-Repository herunter.
++
+Dieser Befehl lädt die neuesten Charts herunter und speichert sie im aktuellen Verzeichnis als eine `.tgz`-Datei.
++
+[,plain]
+----
+ helm fetch rancher-prime/rancher
+----
++
+Sie können das Chart für die spezifische Version, auf die Sie ein Upgrade durchführen, abrufen, indem Sie das `--version=`-Tag hinzufügen.  Beispiel:
++
+[,plain]
+----
+ helm fetch rancher-prime/rancher --version={current-patch-version}
+----
+
+[#_3_review_rancher_feature_chart_versions_before_upgrade]
+=== 3. Überprüfen Sie die Versionen der Rancher-Feature-Charts vor dem Upgrade
+
+Rancher-Feature-Charts folgen spezifischen Release-Linien, die mit Rancher-Versionen übereinstimmen. Hauptversionen der Feature-Charts entsprechen den Minor-Versionen von Rancher und folgen einem definierten Versionsschema.
+
+Überprüfen Sie vor dem Upgrade von Rancher alle installierten Rancher-Feature-Charts und aktualisieren Sie diese auf die neueste verfügbare Version innerhalb ihrer aktuellen Chart-Release-Linie. Dies hilft, die Kompatibilität sicherzustellen und potenzielle Probleme während oder nach dem Rancher-Upgrade zu vermeiden.
+
+Um installierte Feature-Charts zu überprüfen:
+
+1. Gehen Sie in der Rancher-Benutzeroberfläche zu **Apps & Marketplace**.
+2. Wählen Sie **Installierte Apps** aus.
+3. Überprüfen Sie die Chart-Versionen und aktualisieren Sie bei Bedarf auf die neueste Patch-Version innerhalb derselben Hauptversion des Charts.
+
+Für weitere Informationen siehe das {xref-helm-chart-in-rancher}#_versioning_scheme[Helm Charts in Rancher – Versionierungsschema].
+
+[#_4_upgrade_rancher]
+=== 4. Rancher-Upgrade
+
+In diesem Abschnitt wird beschrieben, wie Sie internetverbundene oder Air-Gapped-Installationen von Rancher mit Helm aktualisieren können.
+
+[NOTE]
+.Anweisungen für Air-Gap-Umgebungen:
+====
+
+Wenn Sie Rancher in einer Air-Gapped-Umgebung installieren, überspringen Sie den Rest dieser Seite und rendern Sie die Helm-Vorlage, indem Sie die Anweisungen auf {xref-air-gap-upgrade}[dieser Seite] befolgen.
+====
+
+[IMPORTANT]
+.Upgrade von Rancher v2.13.1
+====
+In Rancher v2.13.2 wurde der Name des Helm-Charts von `rancher-prime` zurück zu `rancher` geändert. Wenn Sie von v2.13.1 aktualisieren, gibt es einen Konflikt zwischen der bestehenden Ingress-Ressource, die vom vorherigen Chart erstellt wurde, und dem neuen, was dazu führt, dass das Upgrade mit einem ähnlichen Fehler fehlschlägt:
+
+[,shell]
+----
+Error: UPGRADE FAILED: failed to create resource: admission webhook "validate.nginx.ingress.kubernetes.io" denied the request: host "rancher.my.org" and path "/" is already defined in ingress cattle-system/rancher-rancher-prime
+----
+
+Um dieses Problem zu verhindern oder zu lösen, müssen Sie die alte Ingress-Ressource manuell löschen, bevor Sie das Upgrade abschließen:
+
+[,shell]
+----
+kubectl delete ingress rancher-rancher-prime -n cattle-system
+----
+====
+
+Holen Sie sich die Werte, die mit `--set` übergeben wurden, aus dem aktuellen Rancher Helm-Chart, das installiert ist.
+
+----
+helm get values rancher -n cattle-system
+
+hostname: rancher.my.org
+----
+
+[NOTE]
+====
+
+Es werden weitere Werte aufgelistet, die mit diesem Befehl abgerufen werden. Dies ist nur ein Beispiel für einen der Werte.
+====
+
+
+[TIP]
+====
+
+Ihr Bereitstellungsname kann variieren; zum Beispiel, wenn Sie Rancher über den AWS Marketplace bereitstellen, lautet der Bereitstellungsname 'rancher-prime'.
+Somit:
+
+----
+helm get values rancher-prime -n cattle-system
+
+hostname: rancher.my.org
+----
+====
+
+
+Wenn Sie cert-manager auf die neueste Version von v1.5 oder darunter aktualisieren, folgen Sie der {xref-upgrade-certmanager}#_option_c_upgrade_cert_manager_from_versions_15_and_below[Dokumentation zum Upgrade von cert-manager], um zu erfahren, wie Sie cert-manager aktualisieren können, ohne Rancher deinstallieren oder neu installieren zu müssen. Andernfalls folgen Sie den <<_steps_to_upgrade_rancher,Schritten zum Upgrade von Rancher>> unten.
+
+[#_steps_to_upgrade_rancher]
+==== Schritte zum Upgrade von Rancher
+
+Führen Sie ein Upgrade von Rancher auf die neueste Version mit all Ihren Einstellungen durch.
+
+Nehmen Sie alle Werte aus dem vorherigen Schritt und fügen Sie sie dem Befehl mit `--set key=value` hinzu.
+
+----
+helm upgrade rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set hostname=rancher.my.org
+----
+
+[NOTE]
+====
+
+Das Obige ist ein Beispiel, es können weitere Werte aus dem vorherigen Schritt vorhanden sein, die hinzugefügt werden müssen.
+====
+
+
+[TIP]
+====
+Wenn Sie Rancher über den AWS Marketplace bereitstellen, lautet der Bereitstellungsname 'rancher-prime'.
+Somit:
+
+----
+helm upgrade rancher-prime rancher-prime/rancher \
+  --namespace cattle-system \
+  --set hostname=rancher.my.org
+----
+====
+
+
+Alternativ ist es möglich, die aktuellen Werte in eine Datei zu exportieren und diese Datei während des Upgrades zu referenzieren. Zum Beispiel, um nur die Rancher-Version zu ändern:
+
+. Exportieren Sie die aktuellen Werte in eine Datei:
++
+----
+ helm get values rancher -n cattle-system -o yaml > values.yaml
+----
+
+. Führen Sie nur ein Upgrade der Rancher-Version durch:
++
+----
+ helm upgrade rancher rancher-prime/rancher \
+   --namespace cattle-system \
+   -f values.yaml \
+   --version={current-patch-version}
+----
+
+[#_5_verify_the_upgrade]
+=== 5. Überprüfen Sie das Upgrade
+
+Melden Sie sich bei Rancher an, um zu bestätigen, dass das Upgrade erfolgreich war.
+
+[#_known_upgrade_issues]
+== Bekannte Upgrade-Probleme
+
+Eine Liste bekannter Probleme für jede Rancher-Version finden Sie in den Versionshinweisen auf https://github.com/rancher/rancher/releases[GitHub] und in den https://forums.rancher.com/c/announcements/12[Rancher-Foren.]

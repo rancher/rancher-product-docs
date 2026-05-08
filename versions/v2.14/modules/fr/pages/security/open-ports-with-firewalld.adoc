@@ -1,0 +1,132 @@
+= Ouverture des ports avec firewalld
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/open-ports-with-firewalld.adoc 
+:product-path: security/open-ports-with-firewalld.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+[WARNING]
+====
+
+L'activation de firewalld peut causer de graves problèmes de communication réseau.
+
+Pour un bon fonctionnement du réseau, firewalld doit être désactivé sur les systèmes exécutant RKE2. https://documentation.suse.com/cloudnative/rke2/latest/en/known_issues.html#_firewalld_conflicts_with_default_networking[Firewalld entre en conflit avec Canal], la pile réseau par défaut de RKE2.
+
+Firewalld doit également être désactivé sur les systèmes exécutant Kubernetes 1.19 et versions ultérieures.
+
+Si vous activez firewalld sur des systèmes exécutant Kubernetes 1.18 ou des versions antérieures, sachez que cela peut causer des problèmes de réseau. Les CNI dans Kubernetes mettent à jour dynamiquement les iptables et les règles de réseau indépendamment de toute passerelle de périmètre de sécurité externe, telle que firewalld. Cela peut provoquer un comportement inattendu lorsque le CNI et la passerelle de périmètre de sécurité externe sont en conflit.
+====
+
+
+Certaines distributions de Linux https://en.wikipedia.org/wiki/Red_Hat_Enterprise_Linux#Rebuilds[issues de RHEL,], y compris Oracle Linux, peuvent avoir des règles de passerelle de périmètre de sécurité par défaut qui bloquent la communication avec Helm.
+
+Par exemple, une image Oracle Linux dans AWS a des règles REJECT qui empêchent Helm de communiquer avec Tiller{nbsp}:
+
+----
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+ACCEPT     all  --  anywhere             anywhere             state RELATED,ESTABLISHED
+ACCEPT     icmp --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere
+ACCEPT     tcp  --  anywhere             anywhere             state NEW tcp dpt:ssh
+REJECT     all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination
+REJECT     all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+----
+
+Vous pouvez vérifier les règles de passerelle de périmètre de sécurité par défaut avec cette commande{nbsp}:
+
+----
+sudo iptables --list
+----
+
+Cette section décrit comment utiliser `firewalld` pour appliquer les {xref-install-reqs}#_exigences_de_port[les règles de port de la passerelle de périmètre de sécurité] pour les nœuds dans un cluster de serveurs Rancher en haute disponibilité.
+
+[#_prerequisite]
+== Conditions préalables
+
+Installez la version 7.x ou ultérieure de ``firewalld``{nbsp}:
+
+----
+yum install firewalld
+systemctl start firewalld
+systemctl enable firewalld
+----
+
+[#_applying_firewall_port_rules]
+== Application des règles de port de la passerelle de périmètre de sécurité
+
+Dans les instructions d'installation de Rancher en haute disponibilité, le serveur Rancher est configuré sur trois nœuds qui ont les trois rôles Kubernetes{nbsp}: etcd, controlplane et worker. Si vos nœuds de serveur Rancher ont les trois rôles, exécutez les commandes suivantes sur chaque nœud{nbsp}:
+
+----
+firewall-cmd --permanent --add-port=22/tcp
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=2379/tcp
+firewall-cmd --permanent --add-port=2380/tcp
+firewall-cmd --permanent --add-port=6443/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+----
+
+Si vos nœuds de serveur Rancher ont des rôles séparés, utilisez les commandes suivantes en fonction du rôle du nœud{nbsp}:
+
+----
+# For etcd nodes, run the following commands:
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=2379/tcp
+firewall-cmd --permanent --add-port=2380/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+
+# For control plane nodes, run the following commands:
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=6443/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+
+# For worker nodes, run the following commands:
+firewall-cmd --permanent --add-port=22/tcp
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+----
+
+Après que les `firewall-cmd` commandes ont été exécutées sur un nœud, utilisez la commande suivante pour activer les règles de la passerelle de périmètre de sécurité{nbsp}:
+
+----
+firewall-cmd --reload
+----
+
+*Résultat :* La passerelle de périmètre de sécurité est mise à jour afin que Helm puisse communiquer avec les nœuds du serveur Rancher.

@@ -1,0 +1,81 @@
+= ホストされたクラスターのsync
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-21
+:page-revdate: {revdate}
+:community-path: reference-guides/cluster-configuration/rancher-server-configuration/sync-clusters.adoc 
+:product-path: cluster-deployment/hosted-kubernetes/sync-clusters.adoc
+
+ifeval::["{build-type}" != "srfa"]
+syncにより、Rancherはクラスターの値を更新し、AKS、EKS、またはGKEでホストされている対応するクラスターオブジェクトと最新の状態に保つことができます。これにより、Rancher以外のソースがホストされたクラスターの状態を所有することが可能になります。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+syncにより、Rancherはクラスターの値を更新し、EKSでホストされている対応するクラスターオブジェクトと最新の状態に保つことができます。これにより、Rancher以外のソースがホストされたクラスターの状態を所有することが可能になります。
+endif::[]
+
+[CAUTION]
+====
+別のソースからの更新を同時に処理すると、意図せずに一つのソースからの状態を上書きしてしまう可能性があります。別のソースからの更新を処理した後、5分以内に一つのソースからの更新を処理すると、これが発生する可能性もあります。
+====
+
+[#_how_it_works]
+== 機能のしくみ
+
+同期の仕組みを理解するためには、Rancherクラスターオブジェクトにある2つのフィールドについて把握する必要があります：
+
+. クラスターのSpecにある構成オブジェクト：
+ifeval::["{build-type}" != "srfa"]
+ ** AKSの場合、このフィールドはAKSConfigと呼ばれます。
+ ** EKSの場合、このフィールドはEKSConfigと呼ばれます。
+ ** GKEの場合、このフィールドはGKEConfigと呼ばれます。
+. アップストリームSpecオブジェクト
+ ** AKSの場合、これはクラスターのStatusにあるAKSStatusフィールドにあります。
+ ** EKSの場合、これはクラスターのStatusにあるEKSStatusフィールドにあります。
+ ** GKEの場合、これはクラスターのStatusにあるGKEStatusフィールドにあります。
+
+これらのオブジェクトを定義する構造体の型は、それぞれのオペレータープロジェクトにあります：
+
+* https://github.com/rancher/aks-operator/blob/master/pkg/apis/aks.cattle.io/v1/types.go[aks-operator]
+* https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
+* https://github.com/rancher/gke-operator/blob/master/pkg/apis/gke.cattle.io/v1/types.go[gke-operator]
+
+以下のフィールドを除いて、すべてのフィールドはnil可能です：クラスター名、ロケーション（リージョンまたはゾーン）、インポート、およびクラウド資格情報参照。
+
+AKSConfig、EKSConfig、またはGKEConfigは、望ましい状態を表します。nil値は無視されます。構成オブジェクト内の非nilフィールドは、管理されていると考えることができます。Rancherでクラスターが作成されると、すべてのフィールドは非nilであり、したがって管理されます。既存のクラスターがRancherに登録されると、すべてのnil可能なフィールドはnilに設定され、管理されません。これらのフィールドは、Rancherによって値が変更されると管理されるようになります。
+
+アップストリームSpecは、ホストされたKubernetesプロバイダーにおけるクラスターの状態を表します。5分ごとに更新されます。アップストリームSpecが更新された後、Rancherはクラスターに進行中の更新があるかどうかを確認します。現在更新中であれば、これ以上の操作は行われません。現在更新中でない場合、AKSConfig、EKSConfig、またはGKEConfigの管理フィールドは、最近更新されたアップストリームSpecからの対応する値で上書きされます。
+
+[CAUTION]
+====
+クラウドプロバイダーからRancherにクラスターをインポートすると、UpstreamSpecはクラスターの状態を表し、Configは空です。その後、RancherのUIを通じてインポートされたクラスターを更新すると、UpstreamSpecとConfigの両方がnilでなくなります。クラスターへのさらなる更新は、Rancherを通じて更新する必要があります。これは、UpstreamSpecからの変更が望ましい状態を表しているのか、Configとの不一致に過ぎないのかを安全に判断する方法がないためです。RancherのUIを通じて更新を適用した後にクラウドプロバイダーのコンソールを通じてインポートされたクラスターを更新すると、コントローラーはロールバックをデプロイし、Configの内容が望ましい状態と見なされます。
+====
+
+
+効果的な望ましい状態は、UpstreamSpecに加え、AKSConfig、EKSConfig、またはGKEConfigのすべての非nilフィールドと考えることができます。これがUIに表示される内容です。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+ ** EKSの場合、このフィールドはEKSConfigと呼ばれます。
+.  UpstreamSpecオブジェクト
+ ** EKSの場合、これはクラスターのStatusにあるEKSStatusフィールドにあります。
+
+これらのオブジェクトを定義する構造体の型は、それぞれのオペレータープロジェクトにあります：
+
+* https://github.com/rancher/eks-operator/blob/master/pkg/apis/eks.cattle.io/v1/types.go[eks-operator]
+
+以下のフィールドを除いて、すべてのフィールドはnil可能です：クラスター名、ロケーション（リージョンまたはゾーン）、インポート、およびクラウド資格情報参照。
+
+EKSConfigは望ましい状態を表します。nil値は無視されます。構成オブジェクト内の非nilフィールドは、管理されていると考えることができます。Rancherでクラスターが作成されると、すべてのフィールドは非nilであり、したがって管理されます。既存のクラスターがRancherに登録されると、すべてのnil可能なフィールドはnilに設定され、管理されません。これらのフィールドは、Rancherによって値が変更されると管理されるようになります。
+
+UpstreamSpecは、ホストされたKubernetesプロバイダーにおけるクラスターの状態を表します。5分ごとに更新されます。UpstreamSpecが更新された後、Rancherはクラスターに進行中の更新があるかどうかを確認します。現在更新中であれば、これ以上の操作は行われません。現在更新中でない場合、EKSConfigの管理フィールドは、最近更新されたUpstreamSpecからの対応する値で上書きされます。
+
+[CAUTION]
+====
+クラウドプロバイダーからRancherにクラスターをインポートすると、UpstreamSpecはクラスターの状態を表し、Configは空です。その後、RancherのUIを通じてインポートされたクラスターを更新すると、UpstreamSpecとConfigの両方がnilでなくなります。クラスターへのさらなる更新は、Rancherを通じて適用する必要があります。これは、UpstreamSpecからの変更が望ましい状態を表しているのか、Configとの不一致に過ぎないのかを安全に判断する方法がないためです。RancherのUIを通じて更新を適用した後でクラウドプロバイダーのコンソールを通じてインポートされたクラスターを更新すると、コントローラーはロールバックをデプロイし、Configの内容が望ましい状態と見なされます。
+====
+
+
+効果的な望ましい状態は、UpstreamSpecに加え、EKSConfigのすべての非nilフィールドと考えることができます。これがUIに表示される内容です。
+endif::[]
+
+Rancherと他のソースが同時にクラスターを更新しようとする場合、または更新が完了してから5分以内に、管理フィールドは競合状態に巻き込まれる可能性があります。EKSを例に挙げると、クラスターにはPrivateAccessが管理フィールドとして存在する場合があります。もしPrivateAccessがfalseで、11:01にEKSコンソールで有効にされ、11:05前にRancherからタグが更新された場合、その値は上書きされる可能性があります。これは、クラスターがまだ更新を処理している間にタグが更新された場合にも発生する可能性があります。この例で説明されている問題は、クラスターが登録されており、PrivateAccessフィールドがnilである場合には発生しないはずです。

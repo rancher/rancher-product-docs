@@ -1,0 +1,120 @@
+= Wiederherstellung {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-11-04
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:url-continuous-delivery-gitreo-add: https://documentation.suse.com/cloudnative/continuous-delivery/{fleet-docs-version}/en/how-tos-for-users/gitrepo-add.html#_backing_up_and_restoring
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+:xref-rancher-rollback: xref:installation-and-upgrade/rollbacks.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-continuous-delivery-gitreo-add: https://fleet.rancher.io/{fleet-docs-version}/how-tos-for-users/gitrepo-add
+:xref-migrate-cluster: xref:how-to-guides/neue-anleitungen/sicherung-wiederherstellung-und-notfallwiederherstellung/migration-rancher-zu-neuem-cluster.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-back-restore-example-configs: xref:reference-guides/backup-restore-configuration/examples.adoc
+:xref-rancher-rollback: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc
+endif::[]
+
+Diese Seite beschreibt, wie man eine Wiederherstellung mit Rancher durchführt.
+
+Befolgen Sie die Anweisungen auf dieser Seite, wenn:
+
+* Die laufende Rancher-Instanz hat dieselbe Version wie zum Zeitpunkt der Sicherung.
+* Der Upstream (lokale) Cluster ist derselbe, auf dem die Sicherung erstellt wurde.
+
+[NOTE]
+.Wichtig
+====
+
+Beim Wiederherstellen von Rancher auf demselben Setup fährt der Rancher-Operator die Rancher-Implementierung beim Start der Wiederherstellung herunter und fährt sie nach Abschluss der Wiederherstellung wieder hoch. Rancher wird während der Wiederherstellung nicht verfügbar sein.
+====
+
+
+[NOTE]
+.Warnung für Fleet-Nutzer
+====
+Sie müssen berücksichtigen, wie Sie die Verfügbarkeit des Kubernetes-API-Servers und pausierte GitRepos handhaben, wenn Sie ein Rancher-Setup wiederherstellen, das Fleet-Arbeitslasten ausführt. Siehe die {url-continuous-delivery-gitreo-add}[{fleet-product-name} Dokumentation] für weitere Details.
+====
+
+[TIP]
+====
+
+* Befolgen Sie diese Schritte, um {xref-migrate-cluster}[Rancher zu migrieren].
+* Wenn Sie Rancher nach einem Upgrade auf eine vorherige Version wiederherstellen müssen, siehe die {xref-rancher-rollback}[Rollback-Dokumentation].
+====
+
+
+[#_create_the_restore_custom_resource]
+== Erstellen Sie die benutzerdefinierte Wiederherstellungsressource
+
+Eine Wiederherstellung erfolgt durch das Erstellen einer benutzerdefinierten Wiederherstellungsressource.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der Seite *Cluster* zum `local` Cluster und klicken Sie auf *Erkunden*. Der `local` Cluster führt den Rancher-Server aus.
+. Klicken Sie in der linken Navigationsleiste auf menu:Rancher-Backups[Wiederherstellungen].
+. Klicken Sie auf *Erstellen*.
+. Erstellen Sie die Wiederherstellung mit dem Formular oder mit YAML.  Für die Erstellung der Wiederherstellungsressource mit dem Formular, beziehen Sie sich auf die {xref-rancher-restore-config}[Konfigurationsreferenz] und auf die {xref-back-restore-example-configs}[Beispiele.]
+. Um den YAML-Editor zu verwenden, können wir auf menu:Erstellen[Aus YAML erstellen] klicken. Geben Sie das Wiederherstellungs-YAML ein.
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Restore
+ metadata:
+   name: restore-migration
+ spec:
+   backupFilename: backup-b0450532-cee1-4aa1-a881-f5f48a007b1c-2020-09-15T07-27-09Z.tar.gz
+   encryptionConfigSecretName: encryptionconfig
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+----
++
+Für Hilfe bei der Konfiguration der Wiederherstellung siehe die {xref-rancher-restore-config}[Konfigurationsreferenz] und die {xref-back-restore-example-configs}[Beispiele.]
+
+. Klicken Sie auf *Erstellen*.
+
+*Ergebnis:* Der Rancher-Operator fährt die Rancher-Implementierung während der Wiederherstellung herunter und fährt sie nach Abschluss der Wiederherstellung wieder hoch. Die Ressourcen werden in dieser Reihenfolge wiederhergestellt:
+
+. Benutzerdefinierte Ressourcenbeschreibungen (CRDs)
+. Cluster-spezifische Ressourcen
+. Namensraum-spezifische Ressourcen
+
+[#_logs]
+== Protokolle
+
+Um zu überprüfen, wie die Wiederherstellung voranschreitet, können Sie die Protokolle des Operators überprüfen. Führen Sie diesen Befehl aus, um die Protokolle zu verfolgen:
+
+----
+kubectl logs -n cattle-resources-system -l app.kubernetes.io/name=rancher-backup -f
+----
+
+[#_cleanup]
+== Löschoptionen
+
+Wenn Sie die Wiederherstellungsressource mit kubectl erstellt haben, entfernen Sie die Ressource, um einen Namenskonflikt mit zukünftigen Wiederherstellungen zu vermeiden.
+
+[#_known_issues]
+== Bekannte Probleme
+
+In einigen Fällen zeigen die Rancher-Protokolle nach der Wiederherstellung der Sicherung Fehler ähnlich den folgenden an:
+
+----
+2021/10/05 21:30:45 [ERROR] error syncing 'c-89d82/m-4067aa68dd78': handler rke-worker-upgrader: clusters.management.cattle.io "c-89d82" not found, requeuing
+----
+
+Dies geschieht, weil eine der Ressourcen, die gerade wiederhergestellt wurde, Finalizer hat, aber die zugehörigen Ressourcen gelöscht wurden, sodass der Handler sie nicht finden kann.
+
+Um die Fehler zu beseitigen, müssen wir die Ressource finden und löschen, die den Fehler verursacht. Weitere Informationen finden Sie https://github.com/rancher/rancher/issues/35050#issuecomment-937968556[hier]

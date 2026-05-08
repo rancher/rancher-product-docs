@@ -1,0 +1,152 @@
+= Installation de {rancher-product-name} sur Azure Kubernetes Service
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-09
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rancher-on-aks.adoc 
+:product-path: installation-and-upgrade/hosted-kubernetes/rancher-on-aks.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+Cette page explique comment installer Rancher sur le service Kubernetes d'Azure de Microsoft (AKS).
+
+Le guide utilise des outils de ligne de commande pour provisionner un cluster AKS avec un ingress. Si vous préférez provisionner votre cluster en utilisant le portail Azure, référez-vous à la https://docs.microsoft.com/en-us/azure/aks/kubernetes-walkthrough-portal[documentation officielle].
+
+Si vous avez déjà un cluster Kubernetes AKS, passez à l'étape concernant <<_5_install_an_ingress,l'installation d'un ingress.>> Ensuite, installez le chart Helm de Rancher en suivant les instructions sur {xref-install-rancher}#_installer_le_chart_helm_de_rancher[cette page.]
+
+[#_prerequisites]
+== Conditions préalables
+
+[CAUTION]
+====
+
+Le déploiement sur Microsoft Azure entraînera des frais.
+====
+
+
+* https://azure.microsoft.com/en-us/free/[Compte Microsoft Azure] : Un compte Microsoft Azure est requis pour créer des ressources pour déployer Rancher et Kubernetes.
+* https://docs.microsoft.com/en-us/azure/cost-management-billing/manage/create-subscription#create-a-subscription-in-the-azure-portal[Abonnement Microsoft Azure] : Utilisez ce lien pour suivre un tutoriel afin de créer un abonnement Microsoft Azure si vous n'en avez pas encore.
+* https://docs.microsoft.com/en-us/azure/active-directory/develop/quickstart-create-new-tenant[Locataire Microsoft Azure] : Utilisez ce lien et suivez les instructions pour créer un locataire Microsoft Azure.
+* Votre abonnement dispose d'un quota suffisant pour au moins 2 vCPUs. Pour des détails sur les exigences en ressources du serveur Rancher, référez-vous à {xref-install-reqs}[cette section]
+* Lors de l'installation de Rancher avec Helm sur Azure, utilisez le répartiteur de charge L7 pour éviter les problèmes de réseau. Pour plus d'informations, consultez la documentation sur https://docs.microsoft.com/en-us/azure/load-balancer/components#_limitations[les limitations du répartiteur de charge Azure].
+
+[#_1_prepare_your_workstation]
+== 1. Préparez votre station de travail
+
+Installez les outils de ligne de commande suivants sur votre station de travail :
+
+* The Azure CLI, *az:* Pour obtenir de l'aide, consultez ces https://docs.microsoft.com/en-us/cli/azure/[étapes d'installation.]
+* *kubectl:* Pour obtenir de l'aide, consultez ces https://kubernetes.io/docs/tasks/tools/#kubectl[étapes d'installation.]
+* *helm:* Pour obtenir de l'aide, consultez ces https://helm.sh/docs/intro/install/[étapes d'installation.]
+
+[#_2_create_a_resource_group]
+== 2. Créez un groupe de ressources
+
+Après avoir installé la CLI, vous devrez vous connecter avec votre compte Azure.
+
+----
+az login
+----
+
+Créez un https://docs.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-portal[groupe de ressources] pour contenir toutes les ressources pertinentes pour votre cluster. Utilisez un emplacement qui s'applique à votre cas d'utilisation.
+
+----
+az group create --name rancher-rg --location eastus
+----
+
+[#_3_create_the_aks_cluster]
+== 3. Créez le cluster AKS
+
+Pour créer un cluster AKS, exécutez la commande suivante. Utilisez une taille de VM qui s'applique à votre cas d'utilisation. Consultez https://docs.microsoft.com/en-us/azure/virtual-machines/sizes[cet article] pour les tailles et options disponibles. Lors du choix d'une version de Kubernetes, assurez-vous de consulter d'abord le https://rancher.com/support-matrix/[tableau de support] pour trouver la version la plus élevée de Kubernetes qui a été validée pour votre version de Rancher.
+
+----
+az aks create \
+  --resource-group rancher-rg \
+  --name rancher-server \
+  --kubernetes-version <VERSION> \
+  --node-count 3 \
+  --node-vm-size Standard_D2_v3
+----
+
+Le cluster mettra un certain temps à être déployé.
+
+[#_4_get_access_credentials]
+== 4. Obtenez les informations d'identification d'accès
+
+Après le déploiement du cluster, obtenez les informations d'identification d'accès.
+
+----
+az aks get-credentials --resource-group rancher-rg --name rancher-server
+----
+
+Cette commande fusionne les informations d'identification de votre cluster dans le kubeconfig existant et permet à `kubectl` d'interagir avec le cluster.
+
+[#_5_install_an_ingress]
+== 5. Installer un Ingress
+
+Le cluster a besoin d'un Ingress afin que Rancher puisse être accessible depuis l'extérieur du cluster. L'installation d'un Ingress nécessite l'attribution d'une adresse IP publique. Assurez-vous d'avoir un quota suffisant, sinon l'attribution de l'adresse IP échouera. Les limites pour les adresses IP publiques s'appliquent au niveau régional par abonnement. Vous pouvez utiliser un contrôleur d'ingress géré fourni par Azure ou un contrôleur d'ingress tiers comme Traefik.
+
+[WARNING]
+====
+Il n'est pas recommandé d'installer un contrôleur d'ingress tiers, comme Traefik, si un contrôleur d'ingress géré est déjà utilisé.
+====
+
+[WARNING]
+====
+**Ingress-NGINX EOL:** Le contrôleur `ingress-nginx` de la communauté atteindra la fin du service en mars 2026. Cette page utilise Traefik, qui est le chemin de migration recommandé pour les environnements Rancher.
+====
+
+Traefik inclut un fournisseur Ingress NGINX natif. Cela vous permet de migrer depuis NGINX sans réécrire vos objets Ingress existants, car Traefik interprétera automatiquement les annotations `nginx.ingress.kubernetes.io`. Si vous mettez à niveau un cluster qui utilise déjà `ingress-nginx`, suivez ce https://doc.traefik.io/traefik/migrate/nginx-to-traefik/[guide] pour plus d'informations.
+
+Pour installer Traefik, nous recommandons fortement d'utiliser l'application Traefik dans le https://apps.rancher.io/applications/traefik-proxy[Rancher Prime Application Collection]. Consultez leur https://docs.apps.rancher.io/howto-guides/integrate-with-rancher-manager[documentation pour intégrer avec Rancher Manager].
+
+
+[#_6_get_load_balancer_ip]
+== 6. Obtenir l'adresse IP du Load Balancer
+
+Pour obtenir l'adresse du load balancer, exécutez{nbsp}:
+
+----
+kubectl get service traefik --namespace=traefik
+----
+
+Le résultat doit ressembler à ce qui suit{nbsp}:
+
+----
+NAME                       TYPE           CLUSTER-IP     EXTERNAL-IP    PORT(S)
+ AGE
+traefik  LoadBalancer   10.0.116.18    40.31.180.83   80:31229/TCP,443:31050/TCP 67s
+----
+
+Enregistrez le `EXTERNAL-IP`.
+
+[#_7_set_up_dns]
+== 7. Configurer les DNS
+
+Le trafic externe vers le serveur Rancher devra être dirigé vers le répartiteur de charge que vous avez créé.
+
+Configurez un DNS pour pointer vers le `EXTERNAL-IP` que vous avez enregistré. Ce DNS sera utilisé comme l'URL du serveur Rancher.
+
+Il existe de nombreuses façons valides de configurer le DNS. Pour obtenir de l'aide, consultez la https://docs.microsoft.com/en-us/azure/dns/[documentation Azure DNS].
+
+[#_8_install_the_rancher_helm_chart]
+== 8. Installez le Rancher Helm Chart.
+
+Ensuite, installez le Rancher Helm chart en suivant les instructions sur {xref-install-rancher}#_install_the_rancher_helm_chart[cette page]. Les instructions Helm sont les mêmes pour installer Rancher sur n'importe quelle distribution Kubernetes.
+
+Utilisez ce nom DNS de l'étape précédente comme l'URL du serveur Rancher lors de l'installation de Rancher. Il peut être passé en tant qu'option Helm. Par exemple, si le nom DNS est `rancher.my.org`, vous pourriez exécuter la commande d'installation Helm avec l'option `--set hostname=rancher.my.org`.
+
+Lors de l'installation de Rancher sur cette configuration, vous devrez également passer la valeur ci-dessous dans la commande d'installation Helm de Rancher afin de définir le nom du contrôleur Ingress à utiliser avec la ressource Ingress de Rancher :
+
+----
+--set ingress.ingressClassName=traefik
+----
+
+Référez-vous {xref-install-rancher}#_5_install_rancher_with_helm_and_your_chosen_certificate_option[ici pour la commande d'installation Helm] pour votre option de certificat choisie.

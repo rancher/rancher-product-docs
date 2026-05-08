@@ -1,110 +1,130 @@
-= 在 vSphere 中配置 Kubernetes 集群
+= 在VMware vSphere中部署Kubernetes集群
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+endif::[]
+:revdate: 2026-03-19
 :page-revdate: {revdate}
+:community-path: xref:如何指南/新用户指南/使用Rancher启动Kubernetes/在基础设施提供商中使用新节点/vSphere/在vSphere中部署Kubernetes集群.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/provision-kubernetes-clusters-in-vsphere.adoc
 :experimental:
+ifeval::["{build-type}" != "community"]
+:url-rke2-landing-page: https://documentation.suse.com/cloudnative/rke2/
+:url-k3s-landing-page: https://documentation.suse.com/cloudnative/k3s/
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:cluster-deployment/infra-providers/infra-providers.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc
+:xref-cloud-provider-vsphere: xref:cluster-deployment/set-up-cloud-providers/configure-in-tree-vsphere.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+:xref-vsphere-node-template-config: xref:cluster-deployment/infra-providers/vsphere/node-template-configuration.adoc
+:xref-vsphere-create-credentials: xref:cluster-deployment/infra-providers/vsphere/create-credentials.adoc
+:xref-persistent-storage-examples: xref:cluster-admin/manage-clusters/persistent-storage/examples/examples.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-landing-page: https://docs.rke2.io/
+:url-k3s-landing-page: https://docs.k3s.io/
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc
+:xref-rke2-config: xref:参考指南/集群配置/Rancher服务器配置/rke2集群配置.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-infra-providers: xref:如何指南/新用户指南/使用Rancher启动Kubernetes/在基础设施提供商中使用新节点/index.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:如何指南/新用户指南/在Rancher中设置Kubernetes集群/设置云提供商/配置非树状vSphere.adoc
+:xref-cloud-provider-vsphere: xref:如何指南/新用户指南/在Rancher中设置Kubernetes集群/设置云提供商/配置树状vSphere.adoc
+:xref-k3s-config: xref:参考指南/集群配置/Rancher服务器配置/k3s集群配置.adoc
+:xref-vsphere-node-template-config: xref:参考指南/集群配置/下游集群配置/节点模板配置/vSphere.adoc
+:xref-vsphere-create-credentials: xref:如何指南/新用户指南/使用Rancher启动Kubernetes/在基础设施提供商中使用新节点/vSphere/创建凭据.adoc
+:xref-persistent-storage-examples: xref:how-to-guides/new-user-guides/manage-clusters/provisioning-storage-examples/index.adoc
+endif::[]
 
-在本节中，你将学习如何使用 Rancher 在 vSphere 中安装 https://rancher.com/docs/rke/latest/en/[RKE] Kubernetes 集群。
+在本节中，您将学习如何使用Rancher在VMware vSphere中部署{url-rke2-landing-page}[RKE2]或{url-k3s-landing-page}[K3s] Kubernetes集群。
 
-首先，在 Rancher 中设置你的 vSphere 云凭证。然后，使用云凭证创建一个节点模板，Rancher 将使用该模板在 vSphere 中配置节点。
+首先，您在Rancher中设置vSphere云凭据。
 
-然后，在 Rancher 中创建一个 vSphere 集群，并在配置新集群时为集群定义节点池。每个节点池都有一个 etcd、controlplane 或 worker 的 Kubernetes 角色。Rancher 会在新节点上安装 RKE Kubernetes，并为每个节点设置节点池定义的 Kubernetes 角色。
+然后，您在Rancher中创建一个vSphere集群，并在配置新集群时定义机器池。每个机器池都有一个Kubernetes角色，包括etcd、controlplane或worker。Rancher在新节点上安装Kubernetes，并根据机器池定义的Kubernetes角色设置每个节点。
 
-有关配置 vSphere 节点模板的详细信息，请参阅 xref:cluster-deployment/infra-providers/vsphere/node-template-configuration.adoc[vSphere 节点模板配置参考]。
+* <<_preparation_in_vmware_vsphere,在vSphere中的准备工作>>
+* <<_creating_a_vmware_vsphere_cluster,创建vSphere集群>>
 
-有关在 Rancher 中配置 RKE Kubernetes 集群的详细信息，请参阅xref:cluster-deployment/configuration/rke1.adoc#_rke_集群配置文件参考[集群配置参考]。
+[#_preparation_in_vmware_vsphere]
+== 在VMware vSphere中的准备工作
 
-* <<_vsphere_中的准备工作,vSphere 中的准备工作>>
-* <<_创建_vsphere_集群,创建 vSphere 集群>>
+本节描述了设置vSphere的要求，以便Rancher可以部署虚拟机和集群。
 
-== vSphere 中的准备工作
+[#_create_credentials_in_vmware_vsphere]
+=== 在VMware vSphere中创建凭据
 
-本节介绍设置 vSphere 的要求，以便 Rancher 可以配置虚拟机和集群。
+在创建集群之前，您必须确保拥有具有足够权限的vSphere用户。
 
-节点模板已使用 vSphere Web Services API 6.5 版本进行记录和测试。
+请参考此{xref-vsphere-create-credentials}[操作指南]，了解如何在vSphere中创建具有所需权限的用户。这些步骤将生成一个用户名和密码，您需要将其提供给Rancher，以便Rancher能够在vSphere中部署资源。
 
-=== 在 vSphere 中创建凭证
-
-在继续创建集群之前，确保你的 vSphere 用户拥有足够的权限。设置节点模板时，模板将需要使用这些 vSphere 凭证。
-
-有关如何在 vSphere 中创建具有所需权限的用户的说明，请参阅此xref:cluster-deployment/infra-providers/vsphere/create-credentials.adoc[操作指南]。这些步骤会产生需要向 Rancher 提供的用户名和密码，从而允许 Rancher 在 vSphere 中配置资源。
-
+[#_network_permissions]
 === 网络权限
 
-必须确保运行 Rancher Server 的主机能够建立以下网络连接：
+必须确保运行Rancher服务器的主机能够建立以下网络连接：
 
-* 连接到 vCenter Server 上的 vSphere API（通常是端口 443/TCP）。
-* 连接到用于实例化集群虚拟机的所有 ESXi 主机上的 Host API（端口 443/TCP）（_仅在使用 ISO 创建模式时需要_）。
-* 连接到创建的 VM 上的 22/TCP 和 2376/TCP 端口。
+* 到vCenter服务器上的vSphere API（通常是443/TCP端口）。
+* 到所有用于为集群实例化虚拟机的ESXi主机上的主机API（443/TCP端口）_仅在使用ISO创建方法时需要_。
+* 到创建的虚拟机上的22/TCP和2376/TCP端口
 
-有关在基础设施提供商上创建节点的端口要求，请参阅xref:cluster-deployment/node-requirements.adoc#_网络要求[节点网络要求]。
+请参见{xref-node-reqs}#_networking_requirements[节点网络要求]以获取适用于在基础设施提供商上创建节点的端口要求的详细列表。
 
-=== 用于 vSphere API 访问的有效 ESXi 许可证
+[#_valid_esxi_license_for_vmware_vsphere_api_access]
+=== 有效的ESXi许可证用于VMware vSphere API访问
 
-免费的 ESXi 许可证不支持 API 访问。vSphere Server 必须具有有效或评估的 ESXi 许可证。
+免费的ESXi许可证不支持API访问。vSphere服务器必须具有有效或评估版的ESXi许可证。
 
-=== 具有 DRS 的集群的 VM-VM 关联规则
+[#_vm_vm_affinity_rules_for_clusters_with_drs]
+=== 具有 DRS 的集群的 VM-VM 亲和性规则
 
-如果你的集群启用了 DRS，建议设置 https://docs.vmware.com/en/VMware-vSphere/6.5/com.vmware.vsphere.resmgmt.doc/GUID-7297C302-378F-4AF2-9BD6-6EDB1E0A850A.html[VM-VM 关联规则]。这些规则允许分配了 etcd 和 controlplane 角色的虚拟机在分配给不同节点池时，在单独的 ESXi 主机上运行。这种做法可确保单个物理机的故障不会影响这些平面的可用性。
+如果您有一个启用了 DRS 的集群，建议设置 https://docs.vmware.com/en/VMware-vSphere/6.5/com.vmware.vsphere.resmgmt.doc/GUID-7297C302-378F-4AF2-9BD6-6EDB1E0A850A.html[VM-VM 亲和性规则]。这些规则允许分配了 etcd 和控制平面角色的虚拟机在分配到不同节点池时在不同的 ESXi 主机上运行。这种做法确保单个物理机器的故障不会影响这些平面的可用性。
 
-== 创建 vSphere 集群
+[#_creating_a_vmware_vsphere_cluster]
+== 创建 VMware vSphere 集群
 
-. <<_1_创建云凭证,创建云凭证>>
-. <<_2_使用云凭证创建节点模板,使用云凭证创建节点模板>>
-. <<_3_使用节点模板创建具有节点池的集群,使用节点模板创建具有节点池的集群>>
-
-=== 1. 创建云凭证
-
-. 点击 *☰ > 集群管理*。
-. 单击**云凭证**。
-. 单击**创建**。
-. 单击 *VMware vSphere*。
-. 输入你的 vSphere 凭证。如需帮助，请参见xref:cluster-deployment/infra-providers/vsphere/node-template-configuration.adoc[节点模板配置参考]中的**账号访问**。
-. 单击**创建**。
-
-*结果*：已创建用于在集群中配置节点的云凭证。你可以在其他节点模板或集群中复用这些凭证。
-
-=== 2. 使用云凭证创建节点模板
-
-为 vSphere 创建xref:cluster-deployment/infra-providers/infra-providers.adoc#_节点模板[节点模板]会允许 Rancher 在 vSphere 中配置新节点。其他集群可以复用节点模板。
+[#_1_create_your_cloud_credentials]
+=== 1.创建您的云凭据
 
 . 点击 *☰ > 集群管理*。
-. 单击 menu:RKE1 配置[节点模板]。
-. 单击**创建**。
-. 单击**添加模板**。
-. 单击 *vSphere*。
-. 填写 vSphere 的节点模板。有关填写表格的帮助，请参阅 vSphere 节点模板xref:cluster-deployment/infra-providers/vsphere/node-template-configuration.adoc[配置参考]。
-. 单击**创建**。
+. 点击 *云凭据*。
+. 单击*创建*。
+. 点击 *VMware vSphere*。
+. 输入您的vSphere凭据。如需帮助，请参阅*账户访问*中的{xref-vsphere-node-template-config}[节点模板配置参考]
+. 单击*创建*。
 
-=== 3. 使用节点模板创建具有节点池的集群
+**结果：**您已创建用于在集群中配置节点的云凭据。
+
+[#_2_create_your_cluster]
+=== 2.创建您的集群
 
 使用 Rancher 在 vSphere 中创建 Kubernetes 集群。
 
-. 在左上角，单击 *☰ > 集群管理*。
-. 在**集群**页面上，单击**创建**。
-. 单击 *VMware vSphere*。
-. 输入**集群名称**并使用你的 vSphere 云凭证。点击**继续**。
-. 使用**成员角色**为集群配置用户授权。点击**添加成员**添加可以访问集群的用户。使用**角色**下拉菜单为每个用户设置权限。
-. 使用**集群选项**选择要安装的 Kubernetes 版本、要使用的网络提供商，以及是否启用项目网络隔离。要查看更多集群选项，请单击**显示高级选项**。如需获取配置集群的帮助，请参阅 xref:cluster-deployment/configuration/rke1.adoc[RKE 集群配置参考]。
-. 如果你想稍后动态配置持久存储或其他基础设施，你需要修改集群 YAML 文件来启用 vSphere 云提供商。有关更多信息，请参阅xref:cluster-deployment/set-up-cloud-providers/configure-in-tree-vsphere.adoc[树内 vSphere cloud provider 文档]和xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc[树外 vSphere cloud provider 文档]。
-. 将一个或多个节点池添加到你的集群。每个节点池都使用节点模板来配置新节点。有关节点池的更多信息，包括为节点分配 Kubernetes 角色的最佳实践，请参阅xref:cluster-deployment/infra-providers/infra-providers.adoc#_节点池[本节]。
-. 检查并确认你的选项。然后单击**创建**。
+. 在左上角，点击 *☰ > 集群管理*。
+. 在*集群*页面，点击*创建*。
+. 点击 *VMware vSphere*。
+. 输入*集群名称*并使用您的vSphere云凭据。
+. 为每个Kubernetes角色创建一个机器池。请参考{xref-infra-providers}#_节点角色[最佳实践]以获取角色分配和数量的建议。
+.. 为每个机器池定义机器配置。
+. 使用*集群配置*选择要安装的 Kubernetes 版本、使用的网络提供程序以及是否要启用项目网络隔离。 有关配置集群的帮助，请参考{xref-rke2-config}[RKE2]和{xref-k3s-config}[K3s]集群配置参考。
+. 使用*成员角色*配置集群的用户授权。点击*添加成员*以添加可以访问集群的用户。使用*角色*下拉菜单为每个用户设置权限。
+. 如果您希望稍后动态配置持久存储或其他基础设施，您需要通过修改集群YAML文件来启用vSphere云提供程序。有关详细信息，请参考{xref-cloud-provider-vsphere}[内置 vSphere 云提供程序文档]和{xref-cloud-provider-vsphere-out-of-tree}[外部 vSphere 云提供程序文档]。
+. 检查您的选项以确认它们是正确的。然后点击*创建*。
 
-*结果*：
+*结果：*
 
-你已创建集群，集群的状态是**配置中**。Rancher 已在你的集群中。
+您的集群已创建并被分配为*正在配置*状态。Rancher 正在启动您的集群。
 
-当集群状态变为 *Active* 后，你可访问集群。
+在集群状态更新为*活动*后，您可以访问您的集群。
 
-*Active* 状态的集群会分配到两个项目：
+*活动*集群被分配两个项目：
 
-* `Default`：包含 `default` 命名空间
-* `System`：包含 `cattle-system`，`ingress-nginx`，`kube-public` 和 `kube-system` 命名空间。
+* `Default`，包含`default`名称空间
+* `System`，包含 `cattle-system`、`traefik`、`kube-public` 和 `kube-system` 名称空间
 
+[#_optional_next_steps]
 == 可选的后续步骤
 
-创建集群后，你可以通过 Rancher UI 访问集群。最佳实践建议你设置以下访问集群的备用方式：
+创建集群后，您可以通过Rancher UI访问它。作为最佳实践，我们建议设置这些访问集群的替代方式：
 
-* *通过 kubectl CLI 访问你的集群*：按照xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc#_在工作站使用_kubectl_访问集群[这些步骤]在你的工作站上使用 kubectl 访问集群。在这种情况下，你将通过 Rancher Server 的身份验证代理进行身份验证，然后 Rancher 会让你连接到下游集群。此方法允许你在没有 Rancher UI 的情况下管理集群。
-* *通过 kubectl CLI 使用授权的集群端点访问你的集群*：按照xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc#_直接使用下游集群进行身份验证[这些步骤]直接使用 kubectl 访问集群，而无需通过 Rancher 进行身份验证。我们建议设置此替代方法来访问集群，以便在无法连接到 Rancher 时访问集群。
-* *配置存储*：有关如何使用 Rancher 在 vSphere 中配置存储的示例，请参阅xref:cluster-admin/manage-clusters/persistent-storage/examples/examples.adoc[本节]。要在 vSphere 中动态配置存储，你必须启用 vSphere 云提供商。有关更多信息，请参阅xref:cluster-deployment/set-up-cloud-providers/configure-in-tree-vsphere.adoc[树内 vSphere cloud provider 文档]和xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc[树外 vSphere cloud provider 文档]。
+* *使用kubectl CLI访问您的集群：*按照{xref-access-cluster-kubectl}#_accessing_clusters_with_kubectl_from_your_workstation[这些步骤]在您的工作站上使用kubectl访问集群。在这种情况下，您将通过Rancher服务器的身份验证代理进行身份验证，然后Rancher将连接您到下游集群。此方法允许您在没有Rancher UI的情况下管理集群。
+* *使用授权的集群端点，通过kubectl CLI访问您的集群：*按照{xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[这些步骤]直接使用kubectl访问您的集群，而无需通过Rancher进行身份验证。我们建议设置这种替代方法来访问您的集群，以便在无法连接到Rancher的情况下，您仍然可以访问集群。
+* *配置存储：*有关如何使用Rancher在vSphere中配置存储的示例，请参阅 {xref-persistent-storage-examples}[本节]。为了在vSphere中动态配置存储，必须启用vSphere提供程序。有关详细信息，请参阅{xref-cloud-provider-vsphere}[内置vSphere云提供程序文档]和{xref-cloud-provider-vsphere-out-of-tree}[外部vSphere云提供程序文档]。

@@ -1,0 +1,323 @@
+= WindowsクラスターでKubernetesを起動する
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-12-10
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/index.adoc 
+:product-path: cluster-deployment/custom-clusters/windows/use-windows-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-install-upgrade: xref:installation-and-upgrade/installation-and-upgrade.adoc
+:xref-cloud-provider-google-compute-engine: xref:cluster-deployment/set-up-cloud-providers/google-compute-engine.adoc
+:xref-custom-clusters-azure-storageclass-config: xref:cluster-deployment/custom-clusters/windows/azure-storageclass-configuration.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-set-up-cloud-providers: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/index.adoc
+:xref-custom-clusters: xref:reference-guides/cluster-configuration/rancher-server-configuration/use-existing-nodes/index.adoc
+:xref-install-upgrade: xref:getting-started/installation-and-upgrade/index.adoc
+:xref-cloud-provider-google-compute-engine: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/google-compute-engine.adoc
+:xref-custom-clusters-azure-storageclass-config: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/azure-storageclass-configuration.adoc
+endif::[]
+
+{xref-custom-clusters}[カスタムクラスター]のプロビジョニング時に、RancherはRKE2を使用して既存のノードにKubernetesをインストールします。
+
+RancherでプロビジョニングされたWindowsクラスターには、LinuxノードとWindowsノードの両方が含まれている必要があります。KubernetesのコントロールプレーンはLinuxノードでのみ実行でき、Windowsノードはワーカー役割のみを持つことができます。Windowsノードはワークロードのデプロイにのみ使用できます。
+
+WindowsでサポートされているKubernetes機能の概要については、 https://kubernetes.io/docs/setup/production-environment/windows/intro-windows-in-kubernetes/#supported-functionality-and-limitations[WindowsでKubernetesを使用するためのサポート機能と制限]に関するKubernetesのドキュメントまたは https://kubernetes.io/docs/setup/production-environment/windows/user-guide-windows-containers/[KubernetesでWindowsコンテナをスケジュールするためのガイド]を参照してください。
+
+[#__rke2_product_name_features_for_windows_clusters]
+== {rke2-product-name} Windowsクラスターの機能
+
+以下に、Windowsクラスターのプロビジョニングに関する主なRKE2機能を示します：
+
+* containerdで動作するRKE2を利用したWindowsコンテナ
+* Rancher UIから直接Windows RKE2カスタムクラスターのプロビジョニングが追加されました
+* Windows RKE2カスタムクラスター用のCalicoおよびFlannel CNI
+* Windows ServerのSACリリース（2004および20H2）が技術プレビューに含まれています
+
+[NOTE]
+====
+
+Rancherは、デフォルトでWindowsワークロードポッドをWindowsおよびLinuxワーカーノードの両方にデプロイできるようにします。RKE2で混合クラスターを作成する際は、ポッドを互換性のあるWindowsノードに配置するようにチャート内の`nodeSelector`を編集する必要があります。ポッドをノードに割り当てる方法についての詳細は、 https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector[Kubernetesのドキュメント]`nodeSelector`を参照してください。
+====
+
+
+* Windows RKE2のHostProcessコンテナはKubernetes v1.24.1以降でサポートされています。詳細については、 https://kubernetes.io/docs/tasks/configure-pod-container/create-hostprocess-pod/[アップストリームのドキュメント]を参照してください。
+
+[#_general_requirements]
+== 一般要件
+
+Windowsノードの一般的なネットワークおよびオペレーティングシステム要件は、他の{xref-install-reqs}[Rancherインストール]と同じです。
+
+[#_os_requirements]
+=== OS要件
+
+Windows ServerおよびWindowsコンテナに対する当社のサポートは、LTSC（長期サービスチャネル）およびSAC（半期チャネル）のMicrosoft公式ライフサイクルに一致します。
+
+Windows Serverのサポートライフサイクルの日付については、 https://docs.microsoft.com/en-us/windows-server/get-started/windows-server-release-info[Microsoft Documentation.]を参照してください。
+
+[#_kubernetes_version]
+=== Kubernetesバージョン
+
+Kubernetesコンポーネントのバージョンに関する詳細については、 https://www.suse.com/suse-rke2/support-matrix/all-supported-versions/[RKE2バージョンのサポートマトリックス]を参照してください。
+
+[#_node_requirements]
+=== ノード要件
+
+クラスター内のホストは、少なくとも次の要件を満たす必要があります：
+
+* 2コアCPU
+* 5 GBのメモリ
+* 50 GBのディスク容量
+
+ノードがこれらの要件を満たさない場合、Rancherはノードをプロビジョニングしません。
+
+[#_networking_requirements]
+=== ネットワーク要件
+
+新しいクラスターをプロビジョニングする前に、受信ネットワークトラフィックを受け入れるデバイスにRancherをすでにインストールしていることを確認してください。これは、クラスターのノードがRancherと通信するために必要です。まだRancherをインストールしていない場合は、このガイドを進める前に{xref-install-upgrade}[インストールドキュメント]を参照してください。
+
+Rancherは、CalicoとFlannelをネットワークプロバイダーとして使用してWindowsをサポートしています。
+
+AWSの仮想プライベートクラウド用にDHCPオプションセットを構成している場合、`domain-name`オプションフィールドには、1つのドメイン名のみを指定できます。DHCPオプションに関する https://docs.aws.amazon.com/vpc/latest/userguide/VPC_DHCP_Options.html[ドキュメント:]によると、
+
+[NOTE]
+====
+
+一部のLinux配布パッケージは、スペースで区切られた複数のドメイン名を受け入れます。ただし、他のLinux配布パッケージやWindowsは、その値を単一のドメインとして扱い、予期しない動作を引き起こします。DHCPオプションセットが複数のオペレーティングシステムを持つインスタンスを持つVPCに関連付けられている場合は、1つのドメイン名のみを指定してください。
+====
+
+
+[#_rancher_on_vmware_vsphere_with_esxi_6_7u2_and_above]
+=== ESXi 6.7u2以上のVMware vSphere上のRancher
+
+ESXi 6.7u2以降のVMware vSphere上でRancherを使用している場合、Red Hat Enterprise Linux 8.3、CentOS 8.3、またはSUSE Enterprise Linux 15 SP2以降を使用している場合は、`vmxnet3`仮想ネットワークアダプタのハードウェアオフロード機能を無効にする必要があります。これを行わないと、異なるクラスターのノード間のポッド間のすべてのネットワーク接続がタイムアウトエラーで失敗します。WindowsポッドからLinuxノード上で実行されている重要なサービス、例えばCoreDNSへのすべての接続が失敗します。外部接続が失敗する可能性もあります。この問題は、Linux配布パッケージが`vmxnet3`でハードウェアオフロード機能を有効にし、ゲストオーバーレイトラフィックのパケットを破棄する`vmxnet3`ハードウェアオフロード機能のバグが原因です。この問題に対処するためには、`vmxnet3`ハードウェアオフロード機能を無効にする必要があります。この設定は再起動後に持続しないため、毎回のブート時に無効にする必要があります。推奨される対策は、ブート時に`/etc/systemd/system/disable_hw_offloading.service`ハードウェアオフロード機能を無効にするsystemdユニットファイルを`vmxnet3`に作成することです。`vmxnet3`ハードウェアオフロード機能を無効にするサンプルのsystemdユニットファイルは以下の通りです。`<VM network interface>`はホスト`vmxnet3`ネットワークインタフェースに合わせてカスタマイズする必要があります。例えば、`ens192`のように：
+
+[source,shell]
+----
+[Unit]
+Description=Disable vmxnet3 hardware offloading feature
+
+[Service]
+Type=oneshot
+ExecStart=ethtool -K <VM network interface> tx-udp_tnl-segmentation off
+ExecStart=ethtool -K <VM network interface> tx-udp_tnl-csum-segmentation off
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target
+----
+
+次に、systemdユニットファイルに適切な権限を設定します。
+
+[source,shell]
+----
+chmod 0644 /etc/systemd/system/disable_hw_offloading.service
+----
+
+最後に、systemdサービスを有効にします。
+
+[source,shell]
+----
+systemctl enable disable_hw_offloading.service
+----
+
+[#_architecture_requirements]
+=== アーキテクチャ要件
+
+Kubernetesクラスター管理ノード（`etcd`および`controlplane`）はLinuxノード上で実行する必要があります。
+
+ワークロードがデプロイされる`worker`ノードは通常Windowsノードですが、Rancherクラスターエージェント、DNS、メトリクスサーバー、Ingress関連のコンテナを実行するためには、少なくとも1つの`worker`ノードがLinux上で実行されている必要があります。
+
+[#_recommended_architecture]
+==== 推奨アーキテクチャ
+
+以下の表に示す最小三ノードアーキテクチャを推奨しますが、冗長性のためにクラスターをスケールアップする場合は、LinuxおよびWindowsワーカーを追加できます。
+
+|===
+| ノード | オペレーティングシステム | Kubernetesクラスターの役割 | 目的
+
+| ノード1
+| Linux（Ubuntu Server 18.04推奨）
+| コントロールプレーン、etcd、ワーカー
+| Kubernetesクラスターを管理する
+
+| ノード2
+| Linux（Ubuntu Server 18.04推奨）
+| ワーカー
+| クラスターのためにRancherクラスターエージェント、メトリクスサーバー、DNS、Ingressをサポートする
+
+| ノード3
+| Windows（Windows Serverコアバージョン1809以上が必要、2022バージョン推奨）
+| ワーカー
+| Windowsコンテナを実行する
+|===
+
+[#_container_requirements]
+=== コンテナ要件
+
+Windowsでは、コンテナはデプロイされるWindows Serverの同じバージョンで構築される必要があります。したがって、コンテナはWindows Serverコアバージョン1809以上で構築される必要があります。以前のWindows Serverコアバージョン用に構築された既存のコンテナは、Windows Serverコアバージョン1809以上で再構築する必要があります。
+
+[#_cloud_provider_specific_requirements]
+=== クラウドプロバイダー特有の要件
+
+クラスターにKubernetesクラウドプロバイダーを設定する場合、追加の手順が必要です。クラウドプロバイダーの機能を活用したい場合、たとえば、ストレージ、ロードバランサー、またはクラスターの他のインフラストラクチャを自動的にプロビジョニングするために、クラウドプロバイダーを設定することをお勧めします。前提条件を満たすノードのクラウドプロバイダーのクラスターを構成する方法については、{xref-set-up-cloud-providers}[このページ]を参照してください。
+
+GCE（Google Compute Engine）クラウドプロバイダーを使用している場合、次のことを行う必要があります：
+
+* `cluster.yml`でGCEクラウドプロバイダーを有効にし、{xref-cloud-provider-google-compute-engine}[これらの手順]に従ってください。
+* Rancherでクラスターをプロビジョニングする際は、Rancher UIでクラウドプロバイダーとして*カスタムクラウドプロバイダー*を選択してください。
+
+[#_tutorial_how_to_create_a_cluster_with_windows_support]
+== チュートリアル:Windowsサポートを持つクラスターの作成方法
+
+このチュートリアルでは、<<_recommended_architecture,推奨アーキテクチャ>>の3つのノードを持つRancherプロビジョニングクラスターの作成方法を説明します。
+
+Windowsノードとコンテナをサポートするクラスターを設定するには、以下のタスクを完了する必要があります。
+
+[#_1_provision_hosts]
+=== 1.ホストをプロビジョニングする
+
+Windowsサポートを持つ既存のノードでクラスターのプロビジョニングを開始するには、ホストを準備してください。
+
+ホストは次のようになります：
+
+* クラウドホスト型VM
+* 仮想化クラスターからのVM
+* ベアメタルサーバー
+
+3つのノードをプロビジョニングします：
+
+* Kubernetesコントロールプレーンを管理し、`etcd`のデータを保存し、必要に応じてワーカーノードとしても利用可能な1つのLinuxノード
+* 別のワーカーノードとなる2つ目のLinuxノード
+* Windowsコンテナをワーカーノードとして実行するWindowsノード
+
+|===
+| ノード | オペレーティングシステム
+
+| ノード1
+| Linux（Ubuntu Server 18.04推奨）
+
+| ノード2
+| Linux（Ubuntu Server 18.04推奨）
+
+| ノード3
+| Windows（Windows Serverコアバージョン1809以上が必要、バージョン2022推奨）
+|===
+
+ノードが*クラウドプロバイダー*によってホストされており、ロードバランサーや永続ストレージデバイスなどの自動化サポートを希望する場合、ノードには追加の設定要件があります。詳細については、{xref-set-up-cloud-providers}[クラウドプロバイダーの選択]を参照してください。
+
+[#_2_create_the_cluster_on_existing_nodes]
+=== 2.既存のノードにクラスターを作成する
+
+既存のノードにWindowsクラスターを作成するための手順は、一般的な{xref-custom-clusters}[カスタムクラスターを作成するための手順]に非常に似ており、いくつかのWindows特有の要件があります。
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、*作成*をクリックします。
+. *カスタム*をクリックします。
+. *クラスター名*フィールドにクラスターの名前を入力します。
+. *Kubernetesバージョン*のドロップダウンメニューから、サポートされているKubernetesバージョンを選択します。
+. *コンテナネットワーク*フィールドで、*Calico*または*Flannel*のいずれかを選択します。
+. ［*作成*］をクリックします。
+
+[#_3_add_nodes_to_the_cluster]
+=== 3.クラスターにノードを追加する
+
+このセクションでは、Linuxノードとワーカーノードをクラスターに登録する方法について説明します。各ノードでコマンドを実行し、rancher-system-agentをインストールしてRancherが各ノードを管理できるようにします。
+
+[#_add_linux_master_node]
+==== Linuxマスターノードを追加する
+
+このセクションでは、Rancher UIでフォームに記入して、LinuxマスターノードにRancherエージェントをインストールするためのカスタムコマンドを取得します。その後、コマンドをコピーしてLinuxマスターノードで実行し、ノードをクラスターに登録します。
+
+クラスター内の最初のノードは、*コントロールプレーン*と*etcd*の両方の役割を持つLinuxホストである必要があります。このノードには、これらの両方の役割が有効でなければならず、Windowsホストを追加する前にこのノードをクラスターに追加する必要があります。
+
+. クラスター作成後、*登録*タブに移動します。
+. *ノードの役割*セクションの*ステップ1*で、3つの役割すべてを選択します。*etcd*と*コントロールプレーン*の役割のみを選択することもできますが、3つすべてを選択することをお勧めします。
+. オプション:*詳細設定を表示*をクリックすると、IPアドレスの指定、ノードのホスト名の上書き、またはノードに https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/[ラベル]や https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/[テイント]を追加するなどの追加設定を構成できます。
+. *ステップ2*の*登録*セクションで、画面に表示されたコマンドをクリップボードにコピーします。
+. LinuxホストにSSH接続し、クリップボードにコピーしたコマンドを実行します。
+
+*結果:*
+
+クラスターが作成され、状態が*更新中*に割り当てられました。Rancherがクラスターを立ち上げています。
+
+ノードが登録され、*マシン*タブに表示されるまでに数分かかる場合があります。
+
+状態が*アクティブ*に変わると、クラスターにアクセスできるようになります。
+
+[#_add_linux_worker_node]
+==== Linuxワーカーノードを追加
+
+このセクションでは、Linuxワーカーノードをクラスターに登録するためのコマンドを実行します。
+
+クラスターの初期プロビジョニング後、クラスターには単一のLinuxホストのみがあります。次に、Linux`worker`ホストをもう1つ追加します。これは、クラスターの_Rancherクラスターエージェント_、_メトリクスサーバー_、_DNS_、および_Ingress_をサポートするために使用されます。
+
+. クラスター作成後、*登録*タブに移動します。
+. *ノードの役割*セクションの*ステップ1*で、*ワーカー*を選択します。
+. オプション:*詳細設定を表示*をクリックすると、IPアドレスの指定、ノードのホスト名の上書き、またはノードに https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/[ラベル]や https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/[テイント]を追加するなどの追加設定を構成できます。
+. *ステップ2*の*登録*セクションで、画面に表示されたコマンドをクリップボードにコピーします。
+. LinuxホストにSSH接続し、クリップボードにコピーしたコマンドを実行します。
+
+*結果:*
+
+*ワーカー*の役割がLinuxホストにインストールされ、ノードがRancherに登録されます。ノードがクラスターに登録されるまでに数分かかる場合があります。
+
+[NOTE]
+====
+
+Linuxワーカーノードのテイント
+
+クラスターに追加された各Linuxワーカーには、以下のテイントが追加されます。このテイントをLinuxワーカーに追加することで、Windowsクラスターに追加されたワークロードは自動的にWindowsワーカーにスケジュールされます。特にLinuxワーカーにワークロードをスケジュールしたい場合は、それらのワークロードに対してトレランスを追加する必要があります。
+
+|===
+| テイントキー | テイント値 | テイント効果
+
+| `cattle.io/os`
+| `linux`
+| `NoSchedule`
+|===
+====
+
+
+[#_add_a_windows_worker_node]
+==== Windowsワーカーを追加する
+
+このセクションでは、Windowsワーカーをクラスターに登録するためのコマンドを実行します。
+
+[NOTE]
+====
+Windowsワーカーを追加するための登録コマンドは、クラスターがLinux etcd、コントロールプレーン、およびワーカーで実行されているときにのみ表示されます。
+====
+
+. クラスター作成後、*登録*タブに移動します。
+. *ノードの役割*セクションの*ステップ1*で、*ワーカー*を選択します。
+. オプション:*詳細設定を表示*をクリックすると、IPアドレスの指定、ノードのホスト名の上書き、またはノードに https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/[ラベル]や https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/[テイント]を追加するなどの追加設定を構成できます。
+. *ステップ2*の*登録*セクションで、画面に表示されたWindowsワーカー用のコマンドをクリップボードにコピーします。
+. https://docs.microsoft.com/en-us/windows-server/remote/remote-desktop-services/clients/remote-desktop-clients[Microsoft Remote Desktop]などの好みのツールを使用して、Windowsホストにログインします。*PowerShellコンソール*でクリップボードにコピーしたコマンドを管理者として実行します。
+. オプション:クラスターにさらにWindowsノードを追加したい場合は、これらの手順を繰り返してください。
+
+*結果:*
+
+*ワーカー*ロールがWindowsホストにインストールされ、ノードがRancherに登録されます。ノードがクラスターに登録されるまでに数分かかる場合があります。
+
+これでWindows Kubernetesクラスターが構築されました。
+
+[#_optional_next_steps]
+=== オプションの次のステップ
+
+クラスターを作成した後、Rancher UIを通じてアクセスできます。ベストプラクティスとして、クラスターにアクセスするためのこれらの代替方法を設定することをお勧めします：
+
+* *kubectl CLIを使用してクラスターにアクセスする:*{xref-access-cluster-kubectl}#_accessing_clusters_with_kubectl_from_your_workstation[これらの手順]に従って、ワークステーションでkubectlを使用してクラスターにアクセスしてください。この場合、Rancherサーバーの認証プロキシを通じて認証され、その後Rancherがダウンストリームクラスターに接続します。この方法を使用すると、Rancher UIなしでクラスターを管理できます。
+* *認可されたクラスターエンドポイントを使用して、kubectl CLIでクラスターにアクセスします:*{xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[これらの手順]に従って、Rancherサーバーを介さずにkubectlでダウンストリームクラスターに直接アクセスします。Rancherに接続できない場合でもクラスターにアクセスできるように、この代替方法を設定することをお勧めします。
+
+[#_configuration_for_storage_classes_in_azure]
+== Azureにおけるストレージクラスの設定
+
+ノードにAzure VMを使用している場合、クラスターのストレージクラスとして https://docs.microsoft.com/en-us/azure/aks/azure-files-dynamic-pv[Azure files]を使用できます。詳しくは、{xref-custom-clusters-azure-storageclass-config}[このセクションを参照してください。]

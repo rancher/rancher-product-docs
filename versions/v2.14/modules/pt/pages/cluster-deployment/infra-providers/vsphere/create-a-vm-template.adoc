@@ -1,0 +1,172 @@
+= Criando um modelo de máquina virtual VMware vSphere
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+:community-path: procedimentos/guias-para-novos-usuários/lançar-kubernetes-com-rancher/utilizar-novos-nós-em-um-provedor-infra/vsphere/criar-um-modelo-de-vm.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/create-a-vm-template.adoc
+
+Criar máquinas virtuais de forma repetível e confiável pode ser difícil. O VMware vSphere oferece a capacidade de construir uma VM que pode ser convertida em um modelo. O modelo pode então ser usado para criar VMs configuradas de forma idêntica. O Rancher aproveita essa capacidade para criar nós RKE/K3s idênticos.
+
+Para aproveitar o modelo para criar novas VMs, o Rancher tem alguns <<_requirements,requisitos específicos>> que a VM deve ter pré-instalados. Depois de configurar a VM com esses requisitos, você precisa <<_preparing_your_vm,preparar a VM>> antes de <<_creating_a_template,criar o modelo>>. Finalmente, uma vez que a preparação esteja completa, a VM pode ser <<_converting_to_a_template,convertida em um modelo>> e <<_moving_to_a_content_library,movida para uma biblioteca de conteúdo>>.
+
+[#_requirements]
+== Requisitos
+
+Há ferramentas específicas necessárias para que as VMs Linux e Windows sejam utilizáveis pelo driver de nó vSphere. A dependência mais crítica é https://cloud-init.io/[cloud-init] para Linux e https://cloudbase.it/cloudbase-init/[cloudbase-init] para Windows. Ambos são usados para provisionar as VMs configurando o nome do host e configurando o acesso SSH e o usuário padrão do Rancher. Os usuários podem adicionar mais conteúdo a esses conforme desejado, se outras configurações forem necessárias. Além disso, outros requisitos estão listados abaixo para referência.
+
+[NOTE]
+====
+
+Se você tiver regras ou configurações específicas de gateway de segurança, precisará adicionar isso à VM antes de criar um modelo.
+====
+
+
+[#_linux_dependencies]
+== Dependências do Linux
+
+Os pacotes que precisam ser instalados no modelo estão listados abaixo. Esses terão nomes ligeiramente diferentes com base na distribuição; por exemplo, algumas distribuições fornecem essas dependências por padrão. O provisionador de cluster instalará automaticamente as dependências necessárias para o Kubernetes. As dependências listadas abaixo são necessárias para o funcionamento do provisionador de cluster do Rancher (não para o Kubernetes):
+
+* curl
+* wget
+* git
+* net-tools
+* unzip
+* apparmor-parser
+* ca-certificates
+* cloud-init
+* cloud-guest-utils
+* cloud-image-utils
+* growpart (parte do cloud-guest-utils)
+* cloud-initramfs-growroot
+* open-iscsi
+* openssh-server
+* https://docs.vmware.com/en/VMware-Tools/11.3.0/com.vmware.vsphere.vmwaretools.doc/GUID-8B6EA5B7-453B-48AA-92E5-DB7F061341D1.html[open-vm-tools]
+
+[#_windows_dependencies]
+== Dependências do Windows
+
+A lista de pacotes que precisam ser instalados no modelo é a seguinte:
+
+* Recurso de Contêiner do Windows
+* https://cloudbase.it/cloudbase-init/#download[cloudbase-init]
+
+[#_creating_a_template]
+== Criando um modelo
+
+Você pode criar sua VM manualmente ou pode utilizar <<_alternatives_to_manual_creation,outras alternativas>> para criar sua VM.
+
+[#_manual_creation]
+=== Criação Manual
+
+. Crie sua VM manualmente seguindo https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AE8AFBF1-75D1-4172-988C-378C35C9FAF2.html[estas instruções] da VMware. Uma vez que você tenha uma VM em funcionamento, pode instalar manualmente as dependências listadas acima para configurar a VM corretamente para o driver de nó vSphere.
+. Personalize conforme necessário com base no seu ambiente e requisitos específicos.
+. Prossiga com a preparação final antes de criar seu modelo.
+
+[#_alternatives_to_manual_creation]
+=== Alternativas à Criação Manual
+
+Outras opções alternativas para criar VMs estão listadas abaixo:
+
+* https://developer.vmware.com/powercli[VMware PowerCLI]
+* https://www.packer.io/[Packer]
+* https://saltproject.io/[SaltStack]
+* https://www.ansible.com/[Ansible]
+
+Packer é uma alternativa frequentemente utilizada. Consulte esta https://github.com/vmware-samples/packer-examples-for-vsphere[referência] para exemplos de seu uso com vSphere.
+
+[#_preparing_your_vm]
+== Preparando sua VM
+
+Após criar uma VM com todas as dependências necessárias (e quaisquer itens adicionais exigidos), você deve realizar o passo mais crítico a seguir: preparar a VM para ser transformada em um modelo. Essa preparação irá redefinir dados críticos, como o nome da VM, IPs, etc., para evitar que essas informações sejam trazidas para uma nova VM. Se você não realizar este passo, poderá criar uma VM com o mesmo nome, endereço IP, etc.
+
+Observe que esses passos preparatórios diferem entre Linux e Windows.
+
+[#_linux_preparation]
+=== Preparação do Linux
+
+Os comandos abaixo irão redefinir sua VM no Linux:
+
+[,bash]
+----
+# Cleaning logs.
+if [ -f /var/log/audit/audit.log ]; then
+  cat /dev/null > /var/log/audit/audit.log
+fi
+if [ -f /var/log/wtmp ]; then
+  cat /dev/null > /var/log/wtmp
+fi
+if [ -f /var/log/lastlog ]; then
+  cat /dev/null > /var/log/lastlog
+fi
+
+# Cleaning udev rules.
+if [ -f /etc/udev/rules.d/70-persistent-net.rules ]; then
+  rm /etc/udev/rules.d/70-persistent-net.rules
+fi
+
+# Cleaning the /tmp directories
+rm -rf /tmp/*
+rm -rf /var/tmp/*
+
+# Cleaning the SSH host keys
+rm -f /etc/ssh/ssh_host_*
+
+# Cleaning the machine-id
+truncate -s 0 /etc/machine-id
+rm /var/lib/dbus/machine-id
+ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# Cleaning the shell history
+unset HISTFILE
+history -cw
+echo > ~/.bash_history
+rm -fr /root/.bash_history
+
+# Truncating hostname, hosts, resolv.conf and setting hostname to localhost
+truncate -s 0 /etc/{hostname,hosts,resolv.conf}
+hostnamectl set-hostname localhost
+
+# Clean cloud-init
+cloud-init clean -s -l
+----
+
+[#_windows_preparation]
+=== Preparação do Windows
+
+O Windows possui uma ferramenta chamada https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep\--generalize\--a-windows-installation?view=windows-11[sysprep] que é usada para generalizar uma imagem e redefinir os mesmos itens listados acima para o Linux. O comando é o seguinte:
+
+[,PowerShell]
+----
+sysprep.exe /generalize /shutdown /oobe
+----
+
+[#_converting_to_a_template]
+== Convertendo para um Modelo
+
+. Desligue e pare a VM.
+. Clique com o botão direito na VM na lista de inventário e selecione *Modelo*.
+. Clique em *Converter para Modelo*.
+
+*Resultado:* Uma vez que o processo tenha sido concluído, um modelo estará disponível para uso.
+
+Para informações adicionais sobre como converter uma VM em um modelo, consulte o https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-5B3737CC-28DB-4334-BD18-6E12011CDC9F.html[guia do VMware].
+
+[#_moving_to_a_content_library]
+== Mudando para uma biblioteca de conteúdo
+
+O Rancher tem a capacidade de usar modelos fornecidos por uma biblioteca de conteúdo. As bibliotecas de conteúdo armazenam e gerenciam conteúdo dentro do vSphere, e também oferecem a capacidade de publicar e compartilhar esse conteúdo.
+
+Abaixo estão alguns links úteis sobre bibliotecas de conteúdo:
+
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-2A0F1C13-7336-45CE-B211-610D39A6E1F4.html[Criar uma biblioteca de conteúdo]
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AC1545F0-F8BA-4CD2-96EB-21B3DFAA1DC1.html[Clonar o modelo para a biblioteca de conteúdo]
+
+[#_other_resources]
+== Outros Recursos
+
+Aqui está uma lista de recursos adicionais que podem ser úteis:
+
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-ubuntu-template[Tutorial para criar um modelo Linux]
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-windows-template[Tutorial para criar um modelo Windows]

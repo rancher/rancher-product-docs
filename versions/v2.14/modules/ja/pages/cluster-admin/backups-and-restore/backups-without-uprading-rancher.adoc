@@ -1,0 +1,122 @@
+= をアップグレードせずにKubernetesをアップグレードする{rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/upgrade-kubernetes-without-upgrading-rancher.adoc 
+:product-path: cluster-admin/backups-and-restore/backups-without-uprading-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-global-permissions: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/global-permissions.adoc
+:xref-air-gap-publish-images: xref:installation-and-upgrade/other-installation-methods/air-gapped/publish-images.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-global-permissions: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/global-permissions.adoc 
+:xref-air-gap-publish-images: xref:getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/publish-images.adoc
+endif::[]
+
+RKEメタデータ機能により、Rancherをアップグレードすることなく、新しいKubernetesバージョンがリリースされ次第、クラスターをプロビジョニングできます。この機能は、Kubernetesのパッチバージョンを活用するのに便利です。たとえば、Rancherサーバーが元々v1.14.6をサポートしている場合に、Kubernetes v1.14.7にアップグレードしたいときなどです。
+
+[NOTE]
+====
+
+Kubernetes APIはマイナーバージョンごとに変更されることがあります。したがって、Rancherが現在v1.14をサポートしている場合にv1.15などのマイナーKubernetesバージョンを導入することはサポートしていません。マイナーKubernetesバージョンに対応するには、Rancherをアップグレードする必要があります。
+====
+
+
+Rancherが{xref-launch-k8s-with-rancher}[RKEクラスター]をプロビジョニングするために使用するKubernetesバージョンに特有の情報が、RancherのKubernetesメタデータに含まれています。Rancherはデータを定期的にsyncし、*システムイメージ*、*サービスオプション*、*アドオンテンプレート*のカスタムリソース定義（CRD）を作成します。その結果、新しいKubernetesバージョンがRancherサーバーバージョンと互換性がある場合、Kubernetesメタデータは新しいバージョンをRancherで利用可能にし、クラスターのプロビジョニングができるようにします。メタデータは、 https://rancher.com/docs/rke/latest/en/[Rancher Kubernetes Engine]（RKE）がさまざまなKubernetesバージョンをデプロイする際に使用する情報の概要を提供します。
+
+以下の表は、定期的なデータsyncの影響を受けるCRDについて説明しています。
+
+[NOTE]
+====
+
+メタデータCRDを編集できるのは管理者のみです。明示的な指示がない限り、既存のオブジェクトを更新しないことを推奨します。
+====
+
+
+|===
+| リソースの作成 | 説明 | Rancher API URL
+
+| システムイメージ
+| RKEを使ってKubernetesをデプロイする際に使用されるシステムイメージの一覧。
+| `<RANCHER_SERVER_URL>/v3/rkek8ssystemimages`
+
+| サービスオプション
+| Kubernetesの`kube-api`、`scheduler`、`kubelet`、`kube-proxy`、`kube-controller-manager`などのコンポーネントに渡されるデフォルトオプション。
+| `<RANCHER_SERVER_URL>/v3/rkek8sserviceoptions`
+
+| アドオンテンプレート
+| Canal、Calico、Flannel、Weave、Kube-dns、CoreDNS、`metrics-server`、`nginx-ingress`などのアドオンコンポーネントをデプロイするために使用されるYAML定義。
+| `<RANCHER_SERVER_URL>/v3/rkeaddons`
+|===
+
+管理者は、RKEメタデータ設定を次のように構成することができます：
+
+* Kubernetesの新しいパッチバージョンがリリースされた場合、Rancherが最新のKubernetesバージョンでクラスターをプロビジョニングできるように、Kubernetesメタデータを更新します。
+* Rancherがメタデータをsyncするために使用するメタデータURLを変更します。これは、GitHubではなくローカルでRancherをsyncする必要があるエアギャップセットアップに役立ちます。
+* Rancherがメタデータを自動的にsyncするのを防ぎます。これは、新しいサポートされていないKubernetesバージョンがRancherで利用可能になるのを防ぐ方法の一つです。
+
+[#_refresh_kubernetes_metadata]
+== Kubernetesメタデータを更新する
+
+Kubernetesメタデータを更新するオプションは、デフォルトで管理者に利用可能であり、*クラスター ドライバーの管理* {xref-global-permissions}[グローバルロール]を持つ任意のユーザーにも利用可能です。
+
+RancherにKubernetesメタデータを強制的に更新させるために、手動更新アクションが利用可能です：
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. 左側のナビゲーションメニューで、*ドライバ*をクリックします。
+. *Kubernetesメタデータを更新*をクリックします。
+
+Rancherを必要に応じてのみメタデータを更新するように構成することができ、`refresh-interval-minutes`を`0`に設定し（下記参照）、必要に応じてこのボタンを使用してメタデータの手動更新を行います。
+
+[#_configuring_the_metadata_synchronization]
+=== メタデータ同期の構成
+
+[CAUTION]
+====
+
+これらの設定を変更できるのは管理者のみです。
+====
+
+
+RKEメタデータ構成は、Rancherがメタデータを同期する頻度と、データをダウンロードする場所を制御します。Rancher UIの設定から、またはエンドポイント`v3/settings/rke-metadata-config`を介してRancher APIを使用してメタデータを構成できます。
+
+メタデータの構成方法は、Rancherのバージョンによって異なります。
+
+Rancherでメタデータ構成を編集するには、
+
+. 左上隅で、*☰ > グローバル設定*をクリックします。
+. *rke-metadata-config*セクションに移動します。*⋮ > 設定を編集*をクリックします。
+. 次のパラメータを任意で入力できます：
+
+* `refresh-interval-minutes`:これは、Rancherがメタデータをsyncするまでの待機時間です。定期的な更新を無効にするには、`refresh-interval-minutes`を0に設定します。
+* `url`:これはRancherがデータを取得するHTTPパスです。パスはJSONファイルへの直接のパスでなければなりません。例えば、Rancher v2.4のデフォルトURLは`https://releases.rancher.com/kontainer-driver-metadata/release-v2.4/data.json`です。
+ .. ［*保存*］をクリックします。
+
+エアギャップ設定がない場合、Rancherがメタデータを取得するURLを指定する必要はありません。デフォルト設定は https://github.com/rancher/kontainer-driver-metadata/blob/dev-v2.5/data/data.json[RancherのメタデータGitリポジトリから取得することです。]
+
+ただし、<<_air_gap_setups,エアギャップ設定がある場合、>>KubernetesメタデータリポジトリをRancherが利用できる場所にミラーリングする必要があります。次に、URLをJSONファイルの新しい場所を指すように変更する必要があります。
+
+[#_air_gap_setups]
+== エアギャップ設定
+
+Rancherは、現在のRancherサーバーのバージョンでサポートされている場合、新しいKubernetesバージョンのメタデータをダウンロードするために`rke-metadata-config`の定期的な更新に依存しています。互換性のあるKubernetesとRancherのバージョンの表については、 https://rancher.com/support-maintenance-terms/all-supported-versions/rancher-v2.2.8/[サービス条件セクションを参照してください。]
+
+エアギャップセットアップがある場合、RancherのGitリポジトリからKubernetesメタデータの自動的な定期更新を取得できない可能性があります。その場合、ログにエラーが表示されないように定期更新を無効にするべきです。オプションで、RancherがRKEメタデータのローカルコピーと同期できるようにメタデータ設定を構成できます。
+
+RancherをRKEメタデータのローカルミラーと同期させるには、管理者が`rke-metadata-config`設定をミラーを指すように構成します。詳細については、<<_configuring_the_metadata_synchronization,メタデータ同期の設定を参照してください。>>
+
+新しいKubernetesバージョンがRancher設定に読み込まれた後、クラスターを起動するために追加の手順が必要になります。Rancherは更新されたシステムイメージにアクセスする必要があります。メタデータ設定は管理者のみが変更できますが、どのユーザーでもRancherのシステムイメージをダウンロードし、プライベートコンテナイメージレジストリを準備できます。
+
+プライベートレジストリ用のシステムイメージをダウンロードするには：
+
+. 左上隅の*☰*をクリックします。
+. 左のナビゲーションの下部にある*About*をクリックします。
+. LinuxまたはWindows用のOS特有のイメージリストをダウンロードしてください。
+. `rancher-images.txt`をダウンロードしてください。
+. {xref-air-gap-publish-images}[エアギャップインストール]中の同じ手順を使用してプライベートレジストリを準備しますが、リリースページからの`rancher-images.txt`の代わりに、前の手順から取得したものを使用してください。
+
+*結果:*Rancherのエアギャップインストールは、Kubernetesのメタデータを同期できるようになりました。Kubernetesの新しいバージョンがリリースされたときにプライベートレジストリを更新すれば、Rancherをアップグレードすることなく新しいバージョンでクラスターをプロビジョニングできます。

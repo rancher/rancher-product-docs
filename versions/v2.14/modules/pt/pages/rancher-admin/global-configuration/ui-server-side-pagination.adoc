@@ -1,0 +1,88 @@
+= Paginação do Lado do Servidor na interface do usuário
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/ui-server-side-pagination.adoc 
+:product-path: rancher-admin/global-configuration/ui-server-side-pagination.adoc
+
+A Paginação do Lado do Servidor (SSP) é um recurso do Rancher que proporciona melhorias significativas de desempenho na interface do usuário para recursos com contagens altas, restringindo a quantidade de recursos que o navegador busca e armazena na memória.
+
+Observe que a SSP é opcional, **ativada por padrão**, e pode ser desativada através da flag de recurso `ui-sql-cache`.
+
+[#_disk_space]
+== Espaço em Disco
+
+[IMPORTANT]
+====
+É crucial que você revise o espaço em disco disponível em seus nós e planeje adequadamente antes de atualizar para o Rancher v2.12.0 e versões posteriores para evitar potenciais problemas de pressão no disco e de despejo de pods.
+====
+
+A SSP depende de um mecanismo de cache que introduz um novo requisito de espaço em disco efêmero em seus nós do cluster. Esse cache, um banco de dados SQLite interno, é armazenado dentro do sistema de arquivos do contêiner. Isso afeta os nós que executam os **pods do servidor Rancher** (`rancher` no namespace `cattle-system` no cluster local) e os nós que executam os **pods do agente Rancher** (`cattle-cluster-agent` no namespace `cattle-system` em todos os clusters downstream).
+
+A quantidade de espaço em disco necessário é dinâmica e depende da quantidade e do tamanho dos recursos do Kubernetes visualizados na interface do usuário. Como diretriz, o cache pode consumir aproximadamente **o dobro do tamanho dos objetos brutos do Kubernetes** que armazena.
+
+Por exemplo, testes internos mostraram que o cache de 5000 ConfigMaps, totalizando 50 MB, consumiu 81 MB de espaço em disco. Para uma estimativa conservadora e de alto nível, você pode planejar que o espaço em disco disponível em cada nó relevante seja de pelo menos **o dobro do tamanho do seu instantâneo do etcd**. Para a maioria dos ambientes de produção, garantir que alguns gigabytes extras de armazenamento estejam disponíveis nos nós relevantes é um bom ponto de partida.
+
+Por favor, note que esse espaço conta contra https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#setting-requests-and-limits-for-local-ephemeral-storage[armazenamento efêmero] solicitações e limites que você possa ter definido para o contêiner Rancher por meio do valor `resource` no chart do Helm. Certifique-se de que essas configurações garantam espaço disponível em abundância.
+
+Se você ver o erro `database or disk is full (13)` nos logs do pod, isso é um sintoma de que mais espaço precisa ser alocado.
+
+O cache baseado em SQLite persiste cópias de quaisquer objetos do Kubernetes em cache no disco. Veja <<_encrypting_sqlite_backed_caches,Criptografando o Cache Baseado em SQLite>> se isso for uma preocupação de segurança.
+
+[#_enabling_server_side_pagination]
+== Habilitando a Paginação do Lado do Servidor
+
+. No canto superior esquerdo, clique em **☰ > Configurações Globais > Flags de Recursos**.
+. Encontre **`ui-sql-cache`** e selecione **⋮ > Ativar > Ativar**.
+. Aguarde o Rancher reiniciar. Isso também reinicia os agentes em todos os clusters downstream.
+. Recarregue a página com o botão do navegador (ou a combinação de teclas equivalente, tipicamente `CTRL + R` no Windows e Linux, e `⌘ + R` no macOS).
+
+[#_disabling_server_side_pagination]
+== Desabilitando a Paginação do Lado do Servidor
+
+. No canto superior esquerdo, clique em **☰ > Configurações Globais > Flags de Recursos**.
+. Encontre **`ui-sql-cache`** e selecione **⋮ > Desativar > Desativar**.
+. Aguarde o Rancher reiniciar. Isso também reinicia os agentes em todos os clusters downstream.
+. Recarregue a página com o botão do navegador (ou a combinação de teclas equivalente, tipicamente `CTRL + R` no Windows e Linux, e `⌘ + R` no macOS).
+
+[#_encrypting_sqlite_backed_caches]
+== Criptografando caches baseados em SQLite
+
+A paginação do lado do servidor da interface do usuário persiste cópias de quaisquer objetos do Kubernetes em cache no disco. Se você está preocupado com a segurança desses dados, pode criptografar todos os objetos antes que sejam persistidos no disco, definindo a variável de ambiente `CATTLE_ENCRYPT_CACHE_ALL` como `true` nos pods `rancher` no cluster upstream e nos pods `cattle-cluster-agent` nos clusters downstream.
+
+Segredos e Tokens de segurança são sempre criptografados, independentemente da configuração acima.
+
+[#_known_limitations_of_ui_server_side_pagination]
+== Limitações Conhecidas da Paginação do Lado do Servidor da Interface do Usuário
+
+Esta versão melhora o desempenho da maioria das páginas usadas para visualizar, criar ou editar recursos dentro do `local` ou clusters downstream, ou seja, a visualização do Cluster Explorer. No entanto, recursos relacionados ao RBAC e áreas fora do Cluster Explorer ainda não estão cobertos por esse recurso.
+
+Além disso, as seguintes limitações estão presentes quando o recurso está habilitado. Essas limitações giram principalmente em torno de diferentes comportamentos de ordenação ou filtragem em listas afetadas:
+
+* Recursos em listas são atualizados automaticamente, no entanto, não instantaneamente.
+* Todas as listas que utilizam Paginação do Lado do Servidor:
+** Os recursos de ordenação e filtragem da coluna `State` funcionam no campo `metadata.state.name` dos recursos em vez de um deduzido localmente pela interface do usuário.
+** As atualizações são mostradas a cada 5 segundos, em vez de instantaneamente.
+* Cluster Explorer:
+** O filtro de Projeto/namespace não suporta a filtragem de namespaces por todos os namespaces que não estão em um projeto via a entrada `Not in a Project`.
+** `Cluster` grupo --> `Nodes` página
+*** As seguintes colunas não são classificáveis ou filtráveis: `Roles`, `External/Internal IP`, `CPU`, `RAM` (a lógica para determinar seu valor é calculada no navegador)
+** `Workloads` lista:
+*** A lista `Workloads`, que mostrava múltiplos tipos de recursos diferentes, foi removida.
+**** A paginação do lado do servidor de múltiplos recursos não é atualmente possível.
+** `Workloads` grupo --> Todas as listas
+*** As colunas `Pod Restarts` e `Workload Health` foram removidas.
+**** https://github.com/rancher/dashboard/issues/14211[Reativar Contagem de Reinício de Pod e colunas de Saúde de Pod para listas de Carga de Trabalho #14211]
+** `Workloads` grupo / `Job` Lista
+*** `Duration` não é classificável (classificação em uma duração).
+**** https://github.com/rancher/dashboard/issues/12815[Implementar classificação de paginação do lado do servidor mais complexa #12815]
+** `Workloads` grupo / `Pod` Lista
+*** `Images` não é classificável (classificação em um array).
+** `Service Discovery` grupo / `Ingresses`
+*** `Default` não é classificável/filtrável (a lógica para determinar seu valor é calculada no navegador).
+** `Storage` grupo / `ConfigMaps`
+*** `Data` não é classificável/filtrável (a lógica para determinar seu valor é calculada no navegador).
+** `Storage` grupo / `Secrets`
+*** `Data` não é classificável/filtrável (a lógica para determinar seu valor é calculada no navegador).

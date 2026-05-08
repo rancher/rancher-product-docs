@@ -1,0 +1,87 @@
+= クラスタエージェントスケジューリングのカスタマイズを有効にする
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-cluster-agent-scheduling-customization.adoc 
+:product-path: cluster-deployment/enable-cluster-agent-scheduling-customization.adoc
+
+`cattle-cluster-agent`を使用すると、優先クラスとポッド中断予算の自動デプロイを有効にできます。
+
+この機能が有効になると、新しくプロビジョニングされたノードドライバー、カスタム、およびインポートされたRKE2およびK3sクラスタは、プロビジョニングプロセス中に自動的に優先クラスとポッド中断予算をデプロイします。既存のクラスタは、<<_updating_existing_clusters,Rancher UIを使用するか、クラスタオブジェクトに特定のアノテーションを設定する>>ことで、この新しい動作へ段階的に更新することができます。
+
+デフォルトでは、この機能は無効になっています。
+
+[#_enabling_cluster_agent_scheduling_customization]
+== クラスタエージェントスケジューリングのカスタマイズを有効にする
+
+[NOTE]
+====
+この機能の有効化または無効化は、新しいクラスタにのみ影響します。既存のダウンストリームクラスタは自動的に更新されません。<<_updating_existing_clusters,_既存のクラスタの更新_>>を参照してください。
+====
+
+. 左上隅で、**☰ > グローバル設定**をクリックします。
+. **機能フラグ**を選択します。
+. `cluster-agent-scheduling-customization`機能を見つけて、**⋮ > 有効化**をクリックします。
+
+[#_configuring_the_global_settings]
+== グローバル設定の構成
+
+Rancher UIで`cluster-agent-default-priority-class`および`cluster-agent-default-pod-disruption-budget`のグローバル設定を更新することで、デフォルトの優先クラス（PC）とポッド中断予算（PDB）をカスタマイズできます。優先クラスとポッド中断予算には、構成制限があることに注意してください：
+
+* デフォルトのPCに設定された`Value`は、マイナス10億未満または10億を超えてはなりません。
+* PCに設定された`PreemptionPolicy`は、`PreemptLowerPriority`または`Never`と等しくなければなりません。
+* PDBの`minAvailable`および`maxUnavailable`フィールドを両方ともゼロ以外の値に設定することはできません。
+* PDBの`minAvailable`は、非負の整数または非負の整数パーセント（例：`1`または`100%`）でなければなりません。
+* PDBの`maxUnavailable`は、非負の整数または非負の整数パーセント（例：`1`または`100%`）でなければなりません。
+
+
+[#_updating_existing_clusters]
+== 既存のクラスタの更新
+
+[NOTE]
+====
+この機能が無効になっている場合、既存のクラスタのクラスタエージェントスケジューリングカスタマイズフィールドを変更することはできません。ただし、機能の状態に関係なく、構成を常に削除することができます。
+====
+
+この機能を有効にした後、既存のクラスタのスケジューリングカスタマイズを2つの方法で設定できます。
+
+* **Rancher UIの使用**
+** 目的のクラスタを編集し、**クラスタ設定**セクション内の**クラスタエージェント**タブに移動します。
+** `Prevent Rancher cluster agent pod eviction`チェックボックスを有効にします。
+*** 関連する`clusters.provisioning.cattle.io`または`clusters.management.cattle.io`オブジェクトの必要なフィールドは、グローバル設定で設定された値を使用して自動的に設定されます。
+** クラスタを保存します。
+* **注釈を使用する**
+** `provisioning.cattle.io/enable-scheduling-customization`注釈を使用すると、Rancher UIを使用せずにクラスタを更新できます。この注釈は、優先クラスとポッド中断予算が構成された後、クラスタから自動的に削除されます。
+*** この注釈の値は、スケジューリングカスタマイズを自動的に追加または削除するために、`true`または`false`のいずれかになります。
+*** ノードドライバプロビジョニングおよびカスタムクラスタの場合、関連する`clusters.provisioning.cattle.io`オブジェクトにこの注釈を適用します。
+*** インポートされたクラスタの場合、関連する`clusters.management.cattle.io`オブジェクトに注釈を適用します。
+
+[#_applying_updated_global_settings]
+== 更新されたグローバル設定の適用
+
+スケジューラの動作に予期しない変更を防ぐために、Rancherは`cluster-agent-default-priority-class`および`cluster-agent-default-pod-disruption-budget`のグローバル設定が変更されたときに既存のダウンストリームクラスタを更新しません。既存のクラスタを最新のグローバル設定を使用するように更新する方法は2つあります：
+
+* **Rancher UIの使用**
+** クラスタを構成する際に、**クラスタエージェント**タブ内の**クラスタ設定**セクションに追加のチェックボックスが表示されます。`Apply global settings for Priority Class and Pod Disruption Budget`チェックボックスをチェックすると、クラスタが保存されると同時に、優先クラスとポッド中断予算がグローバル設定に合わせて自動的に更新されます。
+* **クラスタyamlの調整**
+** クラスタオブジェクト内の関連フィールドは、`kubectl`またはRancher UIの「YAMLとして編集」機能を使用して手動で調整できます。スケジューリングカスタマイズは、クラスタオブジェクトの`spec.ClusterAgentDeploymentCustomization.SchedulingCustomization`セクションにあります。
+** また、`provisioning.cattle.io/enable-scheduling-customization`注釈を使用して、特定のクラスタに設定された更新済みのスケジューリングカスタマイズフィールドを削除して再追加することができます。
+
+[#_downstream_objects]
+== 下流オブジェクト
+
+この機能が特定のクラスタで有効になると、Rancherによって2つの下流リソースが自動的に作成されます：
+
+* `cattle-system`ネームスペースに、`cattle-cluster-agent-pod-disruption-budget`という名前のポッド中断予算が自動的に作成されます。
+* `cattle-cluster-agent-priority-class`という名前の優先クラスが自動的に作成されます。
+
+これらのオブジェクトはRancherによって管理されており、変更または削除してはいけません。Rancherサーバーは、これらのオブジェクトをクラスタオブジェクトに設定された構成に一致させるために自動的に更新し、もはや必要でなくなった場合は削除します。
+
+[#_rbac_considerations]
+=== RBACに関する考慮事項
+
+下流クラスタでこの機能を有効にする前に、クラスタ管理者は一般的なアクセスを防ぐために現在のRBAC設定`cattle-cluster-agent-priority-class`を評価する必要があります。外部ユーザーがクラスタにアクセスできる場合、例えばクラスタをサービスとして提供する場合、変更や削除を防ぐために`cattle-cluster-agent-priority-class`オブジェクトへのアクセスを制限することをお勧めします。
+
+ポッド中断予算はネームスペースオブジェクトであるため、`cattle-cluster-agent-pod-disruption-budget` オブジェクトについては同様の考慮事項を行う必要はありません。Rancherは特権のある `cattle-system` ネームスペースに `cattle-cluster-agent-pod-disruption-budget` を作成します。

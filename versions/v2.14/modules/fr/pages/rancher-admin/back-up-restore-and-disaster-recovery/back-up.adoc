@@ -1,0 +1,119 @@
+= Sauvegarde {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-backup-storage-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/storage.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/examples.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-rancher-backup-config: xref:reference-guides/backup-restore-configuration/backup-configuration.adoc
+:xref-rancher-backup-storage-config: xref:reference-guides/backup-restore-configuration/storage-configuration.adoc
+:xref-migrate-cluster: xref:guides-pratiques/nouveaux-guides-utilisateurs/sauvegarde-restauration-et-récupération-en-cas-de-sinistre/migrer-rancher-vers-un-nouveau-cluster.adoc
+:xref-back-restore-example-configs: xref:guides-de-reference/sauvegarde-restauration-configuration/exemples.adoc
+endif::[]
+
+Dans cette section, vous apprendrez comment sauvegarder Rancher fonctionnant sur n'importe quel cluster Kubernetes. Pour sauvegarder Rancher installé avec Docker, consultez les instructions pour xref:[les sauvegardes de nœuds uniques]
+
+L'opérateur de sauvegarde-restauration doit être installé dans la grappe locale, et ne sauvegarde que l'appli Rancher. Les opérations de sauvegarde et de restauration ne sont effectuées que dans la grappe locale Kubernetes.
+
+Notez que la version 2.x.x de l'opérateur rancher-backup est pour Rancher v2.6.x.
+
+[CAUTION]
+====
+
+Lors de la restauration d'une sauvegarde dans une nouvelle configuration Rancher, la version de la nouvelle configuration doit être la même que celle où la sauvegarde a été effectuée. La version de Kubernetes doit également être prise en compte lors de la restauration d'une sauvegarde, car la version apiVersion prise en charge dans le cluster et dans le fichier de sauvegarde pourrait être différente.
+====
+
+
+[#_prerequisites]
+== Conditions préalables
+
+La version de Rancher doit être v2.5.0 ou supérieure.
+
+Consultez {xref-migrate-cluster}#_2_restore_from_backup_using_a_restore_custom_resource[ici] pour obtenir de l'aide sur la restauration d'un fichier de sauvegarde existant dans un cluster v1.22 dans Rancher v2.6.3.
+
+[#_1_install_the_rancher_backup_operator]
+== 1. Installez l'opérateur Rancher Backup
+
+L'emplacement de stockage de la sauvegarde est un paramètre au niveau de l'opérateur, il doit donc être configuré lors de l'installation ou de la mise à niveau de l'application Rancher Backups.
+
+Les sauvegardes sont créées sous forme de fichiers .tar.gz. Ces fichiers peuvent être envoyés vers S3 ou Minio, ou ils peuvent être stockés dans un volume persistant.
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster `local` et cliquez sur *Explorer*. Le cluster `local` exécute le serveur Rancher.
+. Cliquez sur menu:Apps[Charts].
+. Cliquez sur *Sauvegardes Rancher*.
+. Cliquez sur *Installer*.
+. Configurez l'emplacement de stockage par défaut. Pour obtenir de l'aide, consultez la {xref-rancher-backup-storage-config}[section de configuration de stockage.]
+. Cliquez sur *Installer*.
+
+[NOTE]
+====
+
+Il existe un problème connu dans Fleet qui se produit après avoir effectué une restauration en utilisant l'opérateur de sauvegarde-restauration{nbsp}: Les secrets utilisés pour clientSecretName et helmSecretName ne sont pas inclus dans les gitrepos de Fleet. Consultez {xref-fleet-overview}#_troubleshooting[ici] pour une solution de contournement.
+====
+
+
+[#_2_perform_a_backup]
+== 2. Effectuer une sauvegarde
+
+Pour effectuer une sauvegarde, une ressource personnalisée de type Backup doit être créée.
+
+. Dans le coin supérieur gauche, cliquez sur *☰ > Gestion des clusters*.
+. Sur la page *Clusters*, allez au cluster `local` et cliquez sur *Explorer*.
+. Dans la barre de navigation à gauche, cliquez sur menu:Sauvegardes Rancher[Sauvegardes].
+. Cliquez sur *Create*.
+. Créez la sauvegarde avec le formulaire ou avec l'éditeur YAML.
+. Pour configurer les détails de la sauvegarde à l'aide du formulaire, cliquez sur *Create* et référez-vous à la {xref-rancher-backup-config}[référence de configuration] et aux {xref-back-restore-example-configs}#_backup[exemples.]
+. Pour utiliser l'éditeur YAML, nous pouvons cliquer sur menu:Créer[Créer à partir de YAML]. Entrez le YAML de la sauvegarde. Cet exemple de ressource personnalisée de sauvegarde créerait des sauvegardes récurrentes chiffrées dans S3. L'appli utilise la valeur `credentialSecretNamespace` pour déterminer où chercher le secret de sauvegarde S3{nbsp}:
++
+[,yaml]
+----
+ apiVersion: resources.cattle.io/v1
+ kind: Backup
+ metadata:
+   name: s3-recurring-backup
+ spec:
+   storageLocation:
+     s3:
+       credentialSecretName: s3-creds
+       credentialSecretNamespace: default
+       bucketName: rancher-backups
+       folder: rancher
+       region: us-west-2
+       endpoint: s3.us-west-2.amazonaws.com
+   resourceSetName: rancher-resource-set-full
+   encryptionConfigSecretName: encryptionconfig
+   schedule: "@every 1h"
+   retentionCount: 10
+----
++
+
+[NOTE]
+====
+Lors de la création de la ressource de sauvegarde à l'aide de l'éditeur YAML, le `resourceSetName` doit être défini sur `rancher-resource-set-full` ou `rancher-resource-set-basic`.
+====
+
++
+Pour obtenir de l'aide sur la configuration de la sauvegarde, référez-vous à la {xref-rancher-backup-config}[référence de configuration] et aux {xref-back-restore-example-configs}#_backup[exemples.]
++
+
+[CAUTION]
+====
+L'opérateur `rancher-backup` ne sauvegarde pas le fichier EncryptionConfiguration. Le contenu du fichier EncryptionConfiguration doit être sauvegardé lorsqu'une sauvegarde chiffrée est créée, et le même fichier doit être utilisé lors de la restauration de cette sauvegarde.
+====
+
+
+. Cliquez sur *Create*.
+
+*Résultat :* Le fichier de sauvegarde est créé dans l'emplacement de stockage configuré dans la ressource personnalisée de sauvegarde. Le nom de ce fichier est utilisé lors de l'exécution d'une restauration.

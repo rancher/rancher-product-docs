@@ -1,0 +1,95 @@
+= Dicas para Executar {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/tips-for-running-rancher.adoc 
+:product-path: installation-and-upgrade/best-practices/tips-for-running-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-rancher-on-vsphere: xref:installation-and-upgrade/best-practices/rancher-on-vsphere.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-rancher-on-vsphere: xref:reference-guides/best-practices/rancher-server/on-premises-rancher-in-vsphere.adoc
+endif::[]
+
+Este guia é voltado para casos de uso onde o Rancher é utilizado para gerenciar clusters Kubernetes downstream. A configuração de alta disponibilidade é destinada a evitar a perda de acesso aos clusters downstream caso o servidor Rancher não esteja disponível.
+
+Uma instalação Kubernetes de alta disponibilidade, definida como uma instalação do Rancher em um cluster Kubernetes com pelo menos três nós, deve ser utilizada em qualquer instalação de produção do Rancher, assim como em qualquer instalação considerada "importante." Múltiplas instâncias do Rancher rodando em múltiplos nós garantem alta disponibilidade que não pode ser alcançada com um ambiente de nó único.
+
+Se você estiver instalando o Rancher em um ambiente vSphere, consulte as melhores práticas documentadas {xref-rancher-on-vsphere}[aqui.]
+
+Ao configurar sua instalação de alta disponibilidade do Rancher, considere o seguinte:
+
+[#_minimize_third_party_software_on_the_upstream_cluster]
+== Minimize Software de Terceiros no Cluster Upstream
+
+Recomendamos geralmente executar o Rancher em um cluster dedicado, livre de outras cargas de trabalho, para evitar potenciais problemas de desempenho e compatibilidade.
+
+O Rancher, especialmente ao gerenciar um número crescente de clusters, nós e cargas de trabalho, impõe uma carga significativa em componentes centrais do Kubernetes, como `etcd` e `kube-apiserver` no cluster upstream. Software de terceiros pode interferir no desempenho desses componentes e do Rancher, potencialmente levando à instabilidade.
+
+Além disso, software de terceiros pode interferir funcionalmente com o Rancher. Para minimizar riscos de compatibilidade, implante apenas componentes essenciais do sistema Kubernetes e o Rancher no cluster upstream.
+
+Os seguintes aplicativos e componentes geralmente não interferem com o Rancher ou o sistema Kubernetes, e a instalação deles no cluster upstream é suportada:
+
+* Componentes internos do Rancher, como Fleet
+* Extensões do Rancher
+* Componentes da API do Cluster
+* CNIs, CPIs, CSIs
+* Gerenciadores de controladores de nuvem
+* Ferramentas de observabilidade e monitoramento (exceto prometheus-rancher-exporter)
+
+Observe que cada um desses componentes possui seus próprios requisitos mínimos de recursos, que devem ser atendidos além dos requisitos do Rancher. Para implantações em grande escala, considere também dedicar nós separados para software que não seja do Rancher, utilizando https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/[taints and tolerations] para minimizar interferências.
+
+Outro software pode interferir no Rancher e, portanto, não é suportado no cluster upstream.
+
+Observe em particular que o seguinte software é conhecido por interferir no desempenho do Rancher:
+
+* https://www.crossplane.io/[CrossPlane]
+* https://argoproj.github.io/cd/[Argo CD]
+* https://fluxcd.io/[Flux]
+* https://github.com/David-VTUK/prometheus-rancher-exporter[prometheus-rancher-exporter] (veja https://github.com/David-VTUK/prometheus-rancher-exporter/issues/33[issue 33])
+* Registros de contêiner, como o SUSE Private Registry, que podem exigir largura de banda significativa para servir imagens
+
+[#_guidance_for_container_registries]
+=== Orientações para Registros de Contêiner
+
+Registros de contêiner, como o SUSE Private Registry, podem consumir largura de banda de rede significativa ao servir imagens. Essa demanda aumenta com o número de imagens, a frequência de downloads de imagens e a quantidade de clusters e tempos de execução do contêiner que eles atendem. Devido a esse potencial de interferência com a interface do usuário e o tráfego da API do Rancher, recomendamos não executar um registro de contêiner no mesmo cluster que o servidor de gerenciamento do Rancher.
+
+Independentemente da sua estratégia de implantação para um registro de contêiner, assegure-se de que largura de banda suficiente esteja disponível, idealmente reservada usando mecanismos de Qualidade de Serviço (QoS).
+
+Considere as seguintes recomendações com base em suas necessidades:
+
+* *Configurações Simples (Alta Disponibilidade Não é uma Preocupação Primária):* Um registro de contêiner implantado como uma única Máquina Virtual (VM) pode ser uma solução viável.
+* *Requisitos de Alta Disponibilidade:* Recomendamos executar o registro em um cluster Kubernetes dedicado. Todos os outros clusters devem ser configurados para baixar imagens deste registro centralizado e de alta disponibilidade.
+* *Topologias de rede de grande escala ou complexas:* Múltiplos clusters de registro de contêiner podem ser necessários. Esses registros podem ser implantados em um modelo hierárquico ou federado para distribuir imagens de forma eficiente e gerenciar o tráfego.
+
+[#_make_sure_nodes_are_configured_correctly_for_kubernetes]
+== Certifique-se de que os nós estão configurados corretamente para o Kubernetes.
+
+É importante seguir as melhores práticas do K8s e do etcd ao implantar seus nós, incluindo desativar a troca, verificar se você tem conectividade de rede total entre todas as máquinas no cluster, usar nomes de host, endereços MAC e UUIDs de produto exclusivos para cada nó, verificar se todas as portas corretas estão abertas e implantar com etcd suportado por SSD. Mais detalhes podem ser encontrados na https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#before-you-begin[documentação do Kubernetes] e na https://etcd.io/docs/v3.5/op-guide/performance/[guia de desempenho do etcd].
+
+[#_run_all_nodes_in_the_cluster_in_the_same_datacenter]
+== Execute Todos os Nós no Cluster no Mesmo Datacenter
+
+Para melhor desempenho, execute os três nós no mesmo datacenter geográfico. Se você estiver executando nós na nuvem, como AWS, execute cada nó em uma Zona de Disponibilidade separada. Por exemplo, inicie o nó 1 em us-west-2a, o nó 2 em us-west-2b e o nó 3 em us-west-2c.
+
+[#_development_and_production_environments_should_be_similar]
+== Ambientes de Desenvolvimento e Produção Devem Ser Semelhantes
+
+É altamente recomendável ter um ambiente de "staging" ou "pré-produção" do cluster Kubernetes que o Rancher executa. Esse ambiente deve espelhar seu ambiente de produção o mais próximo possível em termos de configuração de software e hardware.
+
+[#_monitor_your_clusters_to_plan_capacity]
+== Monitore Seus Clusters para Planejar Capacidade
+
+O cluster Kubernetes do servidor Rancher deve operar dentro dos {xref-install-reqs}[requisitos de sistema e hardware] o mais próximo possível. Quanto mais você se desviar dos requisitos de sistema e hardware, mais risco você corre.
+
+No entanto, a análise de planejamento de capacidade orientada por métricas deve ser a principal orientação para escalar o Rancher, pois os requisitos publicados levam em conta uma variedade de tipos de carga de trabalho.
+
+Usando o Rancher, você pode monitorar o estado e os processos dos nós do seu cluster, componentes do Kubernetes e implantações de software através da integração com Prometheus, uma solução de monitoramento de código aberto líder, e Grafana, que permite visualizar as métricas do Prometheus.
+
+Depois de {xref-monitoring-and-dashboards}[habilitar o monitoramento] no cluster, você pode configurar alertas para avisá-lo se o seu cluster estiver se aproximando da capacidade. Você também pode usar o framework de monitoramento Prometheus e Grafana para estabelecer uma linha de base para métricas-chave à medida que escala.

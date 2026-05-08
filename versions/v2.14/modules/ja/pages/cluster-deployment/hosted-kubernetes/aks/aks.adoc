@@ -1,0 +1,285 @@
+= AKSクラスターの作成
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-clusters-from-hosted-kubernetes-providers/aks.adoc 
+:product-path: cluster-deployment/hosted-kubernetes/aks/aks.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-sync-hosted-clusters: xref:cluster-deployment/hosted-kubernetes/sync-clusters.adoc
+:xref-gke-config: xref:cluster-deployment/hosted-kubernetes/gke/configuration.adoc
+:xref-deploy-aks-config: xref:cluster-deployment/hosted-kubernetes/aks/configuration.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-sync-hosted-clusters: xref:reference-guides/cluster-configuration/rancher-server-configuration/sync-clusters.adoc
+:xref-gke-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/gke-cluster-configuration/index.adoc
+:xref-deploy-aks-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/aks-cluster-configuration.adoc
+endif::[]
+
+Rancherを使用して、Microsoft Azure Kubernetes Service (AKS) にホストされるクラスターを作成できます。
+
+[#_prerequisites_in_microsoft_azure]
+== Microsoft Azureの前提条件
+
+[CAUTION]
+====
+
+AKSにデプロイすると、料金が発生します。
+====
+
+
+Azure APIと対話するには、AKSクラスターにAzure Active Directory (AD) サービスプリンシパルが必要です。サービスプリンシパルは、他のAzureリソースを動的に作成および管理するために必要であり、AKSと通信するためのクラスターの資格情報を提供します。サービスプリンシパルに関する詳細は、 https://docs.microsoft.com/en-us/azure/aks/kubernetes-service-principal[AKSドキュメント]を参照してください。
+
+サービスプリンシパルを作成する前に、 https://portal.azure.com[Microsoft Azureポータル]から以下の情報を取得する必要があります。
+
+* サブスクリプションID
+* クライアントID（アプリIDとも呼ばれます）
+* クライアントシークレット
+
+以下のセクションでは、AzureコマンドラインツールまたはAzureポータルを使用してこれらの前提条件を設定する方法を説明します。
+
+[#_setting_up_the_service_principal_with_the_azure_command_line_tool]
+=== Azureコマンドラインツールを使用したサービスプリンシパルの設定
+
+サービスプリンシパルに役割を割り当てて、AKS APIとの通信権限を持たせる必要があります。また、仮想ネットワークを作成および一覧表示するためのアクセス権も必要です。
+
+以下の例では、コマンドがサービスプリンシパルを作成し、貢献者ロールを付与します。貢献者ロールはAKS上のすべてを管理できますが、他のユーザーにアクセスを与えることはできません。少なくとも1つのAzureリソースへの完全なパスを`scopes`提供する必要があることに注意してください。
+
+----
+az ad sp create-for-rbac --role Contributor --scopes /subscriptions/<subscription-id>/resourceGroups/<resource-group-name>
+----
+
+結果には新しいサービスプリンシパルに関する情報が表示される必要があります。
+
+----
+{
+  "appId": "xxxx--xxx",
+  "displayName": "<service-principal-name>",
+  "name": "http://<service-principal-name>",
+  "password": "<secret>",
+  "tenant": "<tenant-name>"
+}
+----
+
+次のコマンドは、Azureリソースを含む https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/manage-resource-groups-cli[リソースグループ]を作成します。
+
+----
+az group create --location <azure-location-name> --resource-group <resource-group-name>
+----
+
+[#_setting_up_the_service_principal_from_the_azure_portal]
+=== Azureポータルからサービスプリンシパルを設定する
+
+これらの手順に従って、サービスプリンシパルを設定し、Azureポータルからロールベースのアクセスを付与します。
+
+. Microsoft Azureポータルの https://portal.azure.com[ホームページ]に移動します。
+. *Azure Active Directory*をクリックします。
+. *アプリ登録*をクリックします。
+. *新しい登録*をクリックします。
+. サービスプリンシパルの名前を入力します。
+. オプション:どのアカウントがサービスプリンシパルを使用できるかを選択します。
+. *登録*をクリックします。
+. 現在、menu:Azure Active Directory[アプリ登録]の下にサービスプリンシパルの名前が表示されているはずです。
+. サービスプリンシパルの名前をクリックします。AKSクラスターをプロビジョニングする際に使用できるように、アプリケーションID（アプリIDまたはクライアントIDとも呼ばれます）をメモしておきます。次に、*証明書とシークレット*をクリックします。
+. *新しいクライアントシークレット*をクリックします。
+. 短い説明を入力し、有効期限を選択して、*追加*をクリックします。AKSクラスターをプロビジョニングする際に使用できるように、クライアントシークレットをメモしておきます。
+
+*結果:*サービスプリンシパルを作成しました。*Azure Active Directory*セクションの*アプリ登録*にリストされているのが見えるはずです。サービスプリンシパルにAKSへのアクセスを付与する必要があります。
+
+サービスプリンシパルにロールベースのアクセスを付与するには、
+
+. 左側のナビゲーションバーで*すべてのサービス*をクリックします。次に、*サブスクリプション*をクリックします。
+. Kubernetesクラスターに関連付けたいサブスクリプションの名前をクリックしてください。サブスクリプションIDをメモして、AKSクラスターをプロビジョニングする際に使用できるようにしてください。
+. *アクセス制御 (IAM)*をクリックしてください。
+. *役割の割り当て*セクションで、*追加*をクリックしてください。
+. *役割*フィールドで、AKSにアクセスできる役割を選択してください。例えば、他のユーザーにアクセスを与えることを除いてすべてを管理する権限を持つ*貢献者*役割を使用できます。
+. *アクセスを割り当てる*フィールドで、*Azure ADユーザー、グループ、またはサービスプリンシパル*を選択してください。
+. *選択*フィールドで、サービスプリンシパルの名前を選択し、*保存*をクリックしてください。
+
+*結果:*あなたのサービスプリンシパルは現在AKSにアクセスできます。
+
+[#_create_the_aks_cloud_credentials]
+== AKSクラウド資格情報を作成してください。
+
+. Rancher UIで、*☰ > クラスター管理*をクリックしてください。
+. *クラウド資格情報* をクリックします。
+. ［*作成*］をクリックします。
+. *Azure*をクリックしてください。
+. フォームを記入します。フォームの記入に関するヘルプは、{xref-deploy-aks-config}#_cloud_credentials[設定リファレンス]を参照してください。
+. ［*作成*］をクリックします。
+
+[#_create_the_aks_cluster]
+== AKSクラスターを作成する
+
+Rancherを使用してKubernetesクラスターを設定および構成してください。
+
+. *☰ > クラスター管理*をクリックします。
+. *クラスター*セクションで、*作成*をクリックしてください。
+. *Azure AKS*をクリックしてください。
+. フォームを記入します。フォームの記入に関するヘルプは、{xref-deploy-aks-config}[設定リファレンス]を参照してください。
+. ［*作成*］をクリックします。
+
+*結果:*クラスターが作成され、状態が*プロビジョニング*に割り当てられました。Rancherがクラスターを立ち上げています。
+
+状態が*アクティブ*に更新された後、クラスターにアクセスできます。
+
+[#_configure_role_based_access_control]
+== ロールベースのアクセス制御を構成してください。
+
+Rancher UIでAKSクラスターをプロビジョニングする際、RBACは有効である必要があるため、構成できません。
+
+RBACは、Rancherに登録またはインポートされたAKSクラスターに必要です。
+
+[#_setting_up_the_role_assignment_to_service_principal_with_the_azure_command_line_tool]
+=== Azureコマンドラインツールを使用してサービスプリンシパルへのロール割り当てを設定する
+
+Azureコマンドラインツールを使用してサービスプリンシパルにRancher AKSv2ロールを割り当てます:
+
+----
+az role assignment create \
+--assignee <client-id> \
+--scope "/subscriptions/<subscription-id>/resourceGroups/<resource-group-name>" \
+--role "Rancher AKSv2"
+----
+
+[#_aks_cluster_configuration_reference]
+== AKSクラスター構成リファレンス
+
+Rancher UIからAKSクラスターを構成する方法についての詳細は、{xref-deploy-aks-config}[構成リファレンス]を参照してください。
+
+[#_private_clusters]
+== プライベートクラスター
+
+通常、AKSワーカーノードは、クラスターがプライベートであるかどうかにかかわらず、パブリックIPを取得しません。プライベートクラスターでは、コントロールプレーンにパブリックエンドポイントはありません。
+
+Rancherは、プライベートAKSクラスターに2つの方法のいずれかで接続できます。
+
+RancherがAKSノードと同じ https://docs.microsoft.com/en-us/azure/virtual-network/nat-overview[NAT]上で実行されていることを確認する最初の方法です。
+
+2番目の方法は、クラスターをRancherに登録するためのコマンドを実行することです。クラスターがプロビジョニングされると、クラスターのKubernetes APIに接続できる場所で表示されたコマンドを実行できます。このコマンドは、プライベートAPIエンドポイントが有効なAKSクラスターをプロビジョニングする際にポップアップで表示されます。
+
+[NOTE]
+====
+
+既存のAKSクラスターを登録する際には、クラスターが`Cluster To register`のドロップダウンリストに表示されるまでに時間がかかる場合があることにご注意ください。この結果はリージョンによって決まります。
+====
+
+
+AKSプライベートクラスターへの接続に関する詳細は、 https://docs.microsoft.com/en-us/azure/aks/private-clusters#options-for-connecting-to-the-private-cluster[AKS ドキュメントをご覧ください。]
+
+[#_setting_up_the_minimum_permission_role_with_the_azure_command_line_tool]
+== Azureコマンドラインツールを使用して最小権限ロールを設定する
+
+. このコマンドを実行して最小Rancher AKSv2権限ロールを作成します:
+
+----
+  cat >> rancher-azure.json << EOF
+
+  {
+      "Name": "Rancher AKSv2",
+      "IsCustom": true,
+      "Description": "Everything needed by Rancher AKSv2 operator",
+      "Actions": [
+          "Microsoft.Compute/disks/delete",
+          "Microsoft.Compute/disks/read",
+          "Microsoft.Compute/disks/write",
+          "Microsoft.Compute/diskEncryptionSets/read",
+          "Microsoft.Compute/locations/DiskOperations/read",
+          "Microsoft.Compute/locations/vmSizes/read",
+          "Microsoft.Compute/locations/operations/read",
+          "Microsoft.Compute/proximityPlacementGroups/write",
+          "Microsoft.Compute/snapshots/delete",
+          "Microsoft.Compute/snapshots/read",
+          "Microsoft.Compute/snapshots/write",
+          "Microsoft.Compute/virtualMachineScaleSets/manualUpgrade/action",
+          "Microsoft.Compute/virtualMachineScaleSets/delete",
+          "Microsoft.Compute/virtualMachineScaleSets/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/networkInterfaces/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/networkInterfaces/ipconfigurations/publicipaddresses/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualmachines/instanceView/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/read",
+          "Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write",
+          "Microsoft.Compute/virtualMachineScaleSets/write",
+          "Microsoft.Compute/virtualMachines/read",
+          "Microsoft.Compute/virtualMachines/write",
+          "Microsoft.ContainerService/managedClusters/read",
+          "Microsoft.ContainerService/managedClusters/write",
+          "Microsoft.ContainerService/managedClusters/delete",
+          "Microsoft.ContainerService/managedClusters/accessProfiles/listCredential/action",
+          "Microsoft.ContainerService/managedClusters/agentPools/read",
+          "Microsoft.ContainerService/managedClusters/agentPools/write",
+          "Microsoft.ContainerService/managedClusters/agentPools/delete",
+          "Microsoft.ManagedIdentity/userAssignedIdentities/assign/action",
+          "Microsoft.Network/applicationGateways/read",
+          "Microsoft.Network/applicationGateways/write",
+          "Microsoft.Network/loadBalancers/write",
+          "Microsoft.Network/loadBalancers/backendAddressPools/join/action",
+          "Microsoft.Network/loadBalancers/delete",
+          "Microsoft.Network/loadBalancers/read",
+          "Microsoft.Network/networkInterfaces/join/action",
+          "Microsoft.Network/networkInterfaces/read",
+          "Microsoft.Network/networkInterfaces/write",
+          "Microsoft.Network/networkSecurityGroups/read",
+          "Microsoft.Network/networkSecurityGroups/write",
+          "Microsoft.Network/publicIPAddresses/delete",
+          "Microsoft.Network/publicIPAddresses/join/action",
+          "Microsoft.Network/publicIPAddresses/read",
+          "Microsoft.Network/publicIPAddresses/write",
+          "Microsoft.Network/publicIPPrefixes/join/action",
+          "Microsoft.Network/privatednszones/*",
+          "Microsoft.Network/routeTables/read",
+          "Microsoft.Network/routeTables/routes/delete",
+          "Microsoft.Network/routeTables/routes/read",
+          "Microsoft.Network/routeTables/routes/write",
+          "Microsoft.Network/routeTables/write",
+          "Microsoft.Network/virtualNetworks/read",
+          "Microsoft.Network/virtualNetworks/subnets/join/action",
+          "Microsoft.Network/virtualNetworks/subnets/read",
+          "Microsoft.Network/virtualNetworks/joinLoadBalancer/action",
+          "Microsoft.OperationalInsights/workspaces/sharedkeys/read",
+          "Microsoft.OperationalInsights/workspaces/read",
+          "Microsoft.OperationsManagement/solutions/write",
+          "Microsoft.OperationsManagement/solutions/read",
+          "Microsoft.Resources/subscriptions/resourcegroups/read",
+          "Microsoft.Resources/subscriptions/resourcegroups/write",
+          "Microsoft.Storage/operations/read",
+          "Microsoft.Storage/storageAccounts/listKeys/action",
+          "Microsoft.Storage/storageAccounts/delete",
+          "Microsoft.Storage/storageAccounts/read",
+          "Microsoft.Storage/storageAccounts/write"
+      ],
+      "NotActions": [],
+      "DataActions": [],
+      "NotDataActions": [],
+      "AssignableScopes": [
+          "/subscriptions/SUBSCRIPTION_ID"
+      ]
+  }
+  EOF
+----
+
+. Rancher AKSv2ロールを適用します:
+
+----
+  az role definition create --role-definition rancher-azure.json
+----
+
+. Rancher AKSv2ロールが作成されたかどうかを確認します:
+
+----
+  az role definition list | grep "Rancher AKSv2"
+----
+
+[#_syncing]
+== sync
+
+AKSプロビジョナーは、Rancherとプロバイダー間でAKSクラスターの状態を同期できます。これがどのように機能するかについての詳細な技術的説明は、{xref-sync-hosted-clusters}[sync]を参照してください。
+
+リフレッシュ間隔の設定に関する情報は、{xref-gke-config}#_configuring_the_refresh_interval[このセクション]を参照してください。
+
+[#_programmatically_creating_aks_clusters]
+== プログラムによるAKSクラスターの作成
+
+Rancherを通じてAKSクラスターをプログラム的にデプロイする最も一般的な方法は、Rancher2 Terraformプロバイダーを使用することです。Terraformを使用したクラスターの作成に関するドキュメントは https://registry.terraform.io/providers/rancher/rancher2/latest/docs/resources/cluster[こちら]です。

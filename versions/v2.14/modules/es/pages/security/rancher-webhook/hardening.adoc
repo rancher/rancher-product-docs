@@ -1,0 +1,151 @@
+= Protección del {rancher-product-name} Webhook
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-security/rancher-webhook-hardening.adoc 
+:product-path: security/rancher-webhook/hardening.adoc
+
+El Webhook de Rancher es un componente importante dentro de Rancher, que desempeña un papel a la hora de hacer cumplir los requisitos de seguridad para Rancher y sus cargas de trabajo. Para disminuir su superficie de ataque, el acceso a él debe limitarse al único llamador válido que tiene: el servidor API de Kubernetes. Esto se puede hacer utilizando políticas de red y autenticación de forma independiente o en conjunto para proteger el webhook contra ataques.
+
+[#_block_external_traffic_using_network_policies]
+== Bloquear el Tráfico Externo Usando Políticas de Red
+
+Se espera que el webhook solo acepte solicitudes del servidor API de Kubernetes. Sin embargo, por defecto, el webhook puede aceptar tráfico de cualquier fuente. Si estás utilizando una CNI que soporta Políticas de Red, puedes crear una política que bloquee el tráfico que no provenga del servidor API.
+
+El recurso NetworkPolicy integrado en Kubernetes no puede bloquear ni admitir tráfico de los hosts del clúster, y el proceso `kube-apiserver` siempre se está ejecutando en la red del host. Por lo tanto, debes utilizar los recursos avanzados de políticas de red de la CNI en uso. Ejemplos para Calico y Cilium a continuación. Consulta la documentación de tu CNI para más detalles.
+
+[#_calico]
+=== Calico
+
+Utiliza el recurso NetworkPolicy en el grupo API `crd.projectcalico.org/v1`. Utiliza el selector `app == 'rancher-webhook'` para crear una regla para el webhook, y establece el CIDR de los hosts del plano de control como la fuente de entrada:
+
+[,yaml]
+----
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-k8s
+  namespace: cattle-system
+spec:
+  selector: app == 'rancher-webhook'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        nets:
+        - 192.168.42.0/24 # CIDR of the control plane host. May list more than 1 if the hosts are in different subnets.
+      destination:
+        selector:
+          app == 'rancher-webhook'
+----
+
+[#_cilium]
+=== Cilium
+
+Utiliza el recurso CiliumNetworkPolicy en el grupo API `cilium.io/v2`. Añade las claves `host` y `remote-node` a la regla de entrada `fromEntities`. Esto bloquea el tráfico interno y externo mientras permite el tráfico de los hosts.
+
+[,yaml]
+----
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-k8s
+  namespace: cattle-system
+spec:
+  endpointSelector:
+    matchLabels:
+      app: rancher-webhook
+  ingress:
+    - fromEntities:
+      - host
+      - remote-node
+----
+
+[#_require_the_kubernetes_api_server_to_authenticate_to_the_webhook]
+== Requiere que el servidor API de Kubernetes se autentique en el webhook
+
+El webhook solo debe aceptar solicitudes del servidor API de Kubernetes. Por defecto, el webhook no requiere que los clientes se autentiquen en él. Aceptará cualquier solicitud. Puedes configurar el webhook para que requiera credenciales, de modo que solo el servidor API pueda acceder a él. Se puede encontrar más información en la https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#authenticate-apiservers[documentación de Kubernetes].
+
+. Configura el servidor API para presentar un certificado de cliente al webhook, apuntando a un archivo AdmissionConfiguration para configurar los plugins ValidatingAdmissionWebhook y MutatingAdmissionWebhook:
++
+[,yaml]
+----
+ # /etc/rancher/admission/admission.yaml
+ apiVersion: apiserver.config.k8s.io/v1
+ kind: AdmissionConfiguration
+ plugins:
+ - name: ValidatingAdmissionWebhook
+   configuration:
+     apiVersion: apiserver.config.k8s.io/v1
+     kind: WebhookAdmissionConfiguration
+     kubeConfigFile: "/etc/rancher/admission/kubeconfig"
+ - name: MutatingAdmissionWebhook
+   configuration:
+     apiVersion: apiserver.config.k8s.io/v1
+     kind: WebhookAdmissionConfiguration
+     kubeConfigFile: "/etc/rancher/admission/kubeconfig"
+----
++
+Este es también el mismo archivo de configuración donde se configuran otros plugins de admisión, como PodSecurity. Si tu distribución o tu configuración utiliza plugins de admisión adicionales, configúralos también. Por ejemplo, añade https://documentation.suse.com/cloudnative/rke2/latest/en/security/pod_security_standards.html[la configuración de PodSecurity de RKE2] a este archivo.
+
+. Crea el archivo kubeconfig al que se refieren los plugins de admisión. El Webhook de Rancher solo admite la autenticación con certificado de cliente, así que genera un par de claves TLS y configura el kubeconfig para usar ya sea `client-certificate` y `client-key` o `client-certificate-data` y `client-key-data`. Por ejemplo:
++
+[,yaml]
+----
+ # /etc/rancher/admission/kubeconfig
+ apiVersion: v1
+ kind: Config
+ users:
+ - name: 'rancher-webhook.cattle-system.svc'
+   user:
+     client-certificate: /path/to/client/cert
+     client-key: /path/to/client/key
+----
+
+. Inicia el binario kube-apiserver con la bandera `--admission-control-config-file` apuntando a tu archivo AdmissionConfiguration. La forma de hacer esto varía según la distribución, y no se admite de manera universal, como en los proveedores de Kubernetes alojados. Consulta la documentación de tu distribución de Kubernetes.
++
+Para RKE2, `rke2-server` se puede iniciar con un archivo de configuración así:
++
+[,yaml]
+----
+ # /etc/rancher/rke2/config.yaml
+ kube-apiserver-arg:
+ - admission-control-config-file=/etc/rancher/admission/admission.yaml
+ kube-apiserver-extra-mount:
+ - /etc/rancher/admission:/etc/rancher/admission:ro
+----
++
+
+[WARNING]
+====
+ Algunas distribuciones establecen esta bandera por defecto. Si tu distribución proporciona su propia AdmissionConfiguration, debes incluirla en tu archivo de configuración de control de admisión personalizado. Por ejemplo, RKE2 instala un archivo AdmissionConfiguration en `/etc/rancher/rke2/rke2-pss.yaml`, que configura el plugin de admisión PodSecurity. Establecer `admission-control-config-file` en config.yaml sobrescribirá esta configuración de seguridad esencial. Para incluir ambos plugins, consulta https://documentation.suse.com/cloudnative/rke2/latest/en/security/pod_security_standards.html[la documentación de los Estándares de Seguridad de Pods por Defecto] y copia la configuración del plugin apropiado a tu admission.yaml.
+====
+
+
+. Si estás utilizando Rancher para aprovisionar tu clúster utilizando nodos existentes, crea estos archivos en el nodo antes de aprovisionarlos.
++
+Si estás utilizando Rancher para aprovisionar tu clúster en nuevos nodos, permite que el aprovisionamiento se complete, luego utiliza la clave SSH proporcionada y la dirección IP para conectarte a los nodos, y coloca el archivo de configuración de RKE2 en el directorio `/etc/rancher/rke2/config.yaml.d/`.
+
+. Una vez que el clúster esté configurado con estas credenciales, configura el agente del clúster de Rancher para habilitar la autenticación en el webhook. Crea un archivo que contenga estos valores del gráfico:
++
+[,yaml]
+----
+ # values.yaml
+ auth:
+   clientCA: <base64-encoded certificate authority that signed the kube-apiserver's client certificates>
+   allowedCNs:
+   - <list of Common Names identifying the kube-apiserver's client certificates.>
+   - <if not provided, any cert signed by the given CA will be accepted.>
+----
+
+. Crea un configmap en el espacio de nombres `cattle-system` en el clúster aprovisionado con estos valores:
++
+----
+ kubectl --namespace cattle-system create configmap rancher-config --from-file=rancher-webhook=values.yaml
+----
++
+El webhook se reiniciará con estos valores.

@@ -1,0 +1,103 @@
+= 高可用性{k3s-product-name} Kubernetesクラスターのインフラストラクチャの設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/ha-k3s-kubernetes-cluster.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-install-upgrade: xref:installation-and-upgrade/installation-and-upgrade.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:installation-and-upgrade/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-mysql-amazon-rds: xref:installation-and-upgrade/infrastructure-setup/mysql-database-in-amazon-rds.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-install-upgrade: xref:getting-started/installation-and-upgrade/index.adoc
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-nginx-load-balancer: xref:how-to-guides/new-user-guides/infrastructure-setup/nginx-load-balancer.adoc
+:xref-amazon-elb: xref:how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc
+:xref-mysql-amazon-rds: xref:how-to-guides/new-user-guides/infrastructure-setup/mysql-database-in-amazon-rds.adoc
+endif::[]
+
+
+このチュートリアルは、Rancher管理サーバーの基盤となるインフラストラクチャをプロビジョニングするのに役立つことを目的としています。
+
+Rancher専用のKubernetesクラスターに推奨されるインフラストラクチャは、RancherがK3s Kubernetesクラスター、RKE Kubernetesクラスター、または単一のDockerコンテナにインストールされるかどうかによって異なります。
+
+各インストールオプションの詳細については、{xref-install-upgrade}[このページを参照してください。]
+
+[NOTE]
+.重要:
+====
+
+これらのノードは同じリージョンに存在する必要があります。これらのサーバーを別々の可用性ゾーン（データセンター）に配置することができます。
+====
+
+
+高可用性のK3sクラスターにRancher管理サーバーをインストールするには、以下のインフラストラクチャを設定することをお勧めします：
+
+* *2つのLinuxノード*（通常は仮想マシン）を、選択したインフラストラクチャプロバイダー内に用意します。
+* *外部データベース* クラスターデータを保存するためのものです。MySQLを推奨します。
+* *ロードバランサー*は、2つのノードにトラフィックを振り分けます。
+* *DNSレコード*は、URLをロードバランサーにマッピングします。これがRancherサーバーのURLとなり、ダウンストリームのKubernetesクラスターはこれにアクセスする必要があります。
+
+[#_1_set_up_linux_nodes]
+== 1.Linuxノードの設定
+
+ノードが{xref-install-reqs}[OS、コンテナランタイム、ハードウェア、ネットワーク]の一般的なインストール要件を満たしていることを確認してください。
+
+Linuxノードを設定する一例については、Amazon EC2のインスタンスとしてノードを設定するためのこの{xref-setup-ec2-nodes}[チュートリアル]を参照してください。
+
+[#_2_set_up_external_datastore]
+== 2.外部データストアを設定する
+
+etcd以外のデータストアを用いてKubernetesを実行できる機能により、K3sは他のKubernetesディストリビューションと差別化されています。この機能はKubernetesオペレーターに柔軟性を提供します。利用可能なオプションにより、ご利用のユースケースに最適なデータストアを選択できます。
+
+高可用性のK3sインストールには、 https://www.mysql.com/[MySQL] 外部データベースを設定する必要があります。Rancherは、データストアとしてMySQLバージョン5.7を使用したK3s Kubernetesクラスターでテストされています。
+
+K3sインストールスクリプトを使用してKubernetesをインストールする際には、K3sがデータベースに接続するための詳細を渡します。
+
+MySQLデータベースの設定方法の一例については、AmazonのRDSサービスでMySQLを設定するためのこの{xref-mysql-amazon-rds}[チュートリアル]を参照してください。
+
+K3sクラスターのデータストアを構成するために利用可能なオプションの完全なリストについては、 https://rancher.com/docs/k3s/latest/en/installation/datastore/[K3sドキュメント]を参照してください。
+
+[#_3_set_up_the_load_balancer]
+== 3.ロードバランサーの設定
+
+Rancherのレプリカにトラフィックを誘導するために、両方のノードにロードバランサーを設定する必要があります。これにより、単一のノードの障害がRancher管理サーバーへの通信を妨げることを防ぎます。
+
+Kubernetesが後のステップで設定されると、K3sツールがTraefik Ingressコントローラーをデプロイします。このコントローラーは、ワーカーノードのポート80および443でリスンし、特定のホスト名宛てのトラフィックに応答します。
+
+Rancherがインストールされると（これも後のステップで）、RancherシステムはIngressリソースを作成します。そのIngressは、Traefik IngressコントローラーにRancherのホスト名宛てのトラフィックをリスンするよう指示します。Traefik Ingressコントローラーは、Rancherのホスト名宛てのトラフィックを受信すると、そのトラフィックをクラスター内の実行中のRancherポッドに転送します。
+
+実装において、レイヤー4またはレイヤー7のロードバランサーを使用するかどうかを検討してください：
+
+* *レイヤー4のロードバランサー*は、ノードにTCPトラフィックを転送するという点で、2つの選択肢の中でよりシンプルです。ロードバランサーをレイヤー4バランサーとして構成し、TCP/80およびTCP/443のポートにトラフィックをRancher管理クラスターのノードに転送することをお勧めします。クラスター内のIngressコントローラーは、HTTPトラフィックをHTTPSにリダイレクトし、ポートTCP/443でSSL/TLSを終了します。Ingressコントローラーは、Rancherデプロイメント内のIngressポッドにTCP/80のポートへのトラフィックを転送します。
+* *レイヤー7のロードバランサー*は少し複雑ですが、必要な機能を提供することができます。例えば、レイヤー7のロードバランサーは、RancherがTLS終了を行うのではなく、ロードバランサーでTLS終了を処理することができます。これは、インフラストラクチャ内でTLS終了を集中管理したい場合に有益です。レイヤー7のロードバランシングは、レイヤー4のロードバランサーが関与できないクッキーなどのHTTP属性に基づいて、ロードバランサーが意思決定を行う能力も提供します。レイヤー7のロードバランサーでSSL/TLSトラフィックを終了することを決定した場合、後のステップでRancherをインストールする際に`--set tls=external`オプションを使用する必要があります。詳細については、{xref-helm-chart-options}#_external_tls_termination[Rancher Helmチャートオプション]を参照してください。
+
+NGINXロードバランサーの設定方法を示す例については、{xref-nginx-load-balancer}[このページ]を参照してください。
+
+Amazon ELB ネットワークロードバランサーの設定に関するハウツーについては、{xref-amazon-elb}[こちらのページをご覧ください。]
+
+[CAUTION]
+====
+
+このロードバランサー（すなわち、`local` クラスターの Ingress）を、インストール後に Rancher 以外のアプリケーションのロードバランシングに使用しないでください。このIngressを他のアプリケーションと共有すると、他のアプリのIngress設定のリロード後にRancherに対してウェブソケットエラーが発生する可能性があります。`local`クラスターをRancher専用にし、他のアプリケーションには使用しないことをお勧めします。
+====
+
+[#_4_set_up_the_dns_record]
+== 4.DNSレコードを設定する
+
+ロードバランサーを設定したら、このロードバランサーにトラフィックを送信するためのDNSレコードを作成する必要があります。
+
+環境によっては、これはロードバランサーIPを指すAレコードであるか、ロードバランサーのホスト名を指すCNAMEである場合があります。いずれの場合でも、このレコードがRancherが応答することを意図しているホスト名であることを確認してください。
+
+Rancherをインストールする際の後のステップでこのホスト名を指定する必要があり、後で変更することはできません。あなたの決定が最終的なものであることを確認してください。
+
+ドメイントラフィックを Amazon ELB ロードバランサーにルーティングするための DNS レコードの設定に関するハウツーガイドについては、 https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[公式 AWS ドキュメントをご覧ください。]

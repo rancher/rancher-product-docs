@@ -1,0 +1,55 @@
+= Exigences réseau pour la passerelle hôte (L2bridge)
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: procédure-guides/nouveaux-guides-utilisateurs/clusters-kubernetes-dans-rancher-configuration/utiliser-des-clusters-windows/exigences-réseau-pour-la-passerelle-hôte.adoc 
+:product-path: cluster-deployment/custom-clusters/windows/network-requirements-for-host-gateway.adoc
+
+Cette section décrit comment configurer des clusters Windows personnalisés utilisant le mode _Passerelle hôte (L2bridge)_.
+
+[#_disabling_private_ip_address_checks]
+== Désactivation des vérifications d'adresse IP privée
+
+Si vous utilisez le mode _Passerelle hôte (L2bridge)_ et hébergez vos nœuds sur l'un des services cloud listés ci-dessous, vous devez désactiver les vérifications d'adresse IP privée pour vos hôtes Linux ou Windows au démarrage. Pour désactiver cette vérification pour chaque nœud, suivez les instructions fournies par chaque service ci-dessous.
+
+|===
+| Service | Instructions pour désactiver les vérifications d'adresse IP privée
+
+| Amazon EC2
+| https://docs.aws.amazon.com/vpc/latest/userguide/VPC_NAT_Instance.html#EIP_Disable_SrcDestCheck[Désactivation des vérifications source/destination]
+
+| Google GCE
+| https://cloud.google.com/vpc/docs/using-routes#canipforward[Activation du transfert IP pour les instances] (Par défaut, une VM ne peut pas transférer un paquet provenant d'une autre VM)
+
+| Azure VM
+| https://docs.microsoft.com/en-us/azure/virtual-network/virtual-network-network-interface#enable-or-disable-ip-forwarding[Activer ou désactiver le transfert IP]
+|===
+
+[#_cloud_hosted_vm_routes_configuration]
+== Configuration des routes VM hébergées dans le cloud
+
+Si vous utilisez le backend https://github.com/coreos/flannel/blob/master/Documentation/backends.md#host-gw[*Passerelle hôte (L2bridge)*] de Flannel, tous les conteneurs sur le même nœud appartiennent à un sous-réseau privé, et le trafic circule d'un sous-réseau sur un nœud à un sous-réseau sur un autre nœud via le réseau hôte.
+
+* Lorsque des nœuds de travail sont provisionnés sur AWS, des clusters de virtualisation ou des serveurs sur matériel sans système d'exploitation, assurez-vous qu'ils appartiennent au même sous-réseau de couche 2. Si les nœuds n'appartiennent pas au même sous-réseau de couche 2, `host-gw` le réseau ne fonctionnera pas.
+* Lorsque des nœuds de travail sont provisionnés sur GCE ou Azure, ils ne sont pas sur le même sous-réseau de couche 2. Les nœuds sur GCE et Azure appartiennent à un réseau de couche 3 routable. Suivez les instructions ci-dessous pour configurer GCE et Azure afin que le réseau cloud sache comment router les sous-réseaux hôtes sur chaque nœud.
+
+Pour configurer le routage des sous-réseaux d'hôtes sur GCE ou Azure, commencez par exécuter la commande suivante pour découvrir les sous-réseaux d'hôtes sur chaque nœud de travail{nbsp}:
+
+[,bash]
+----
+kubectl get nodes -o custom-columns=nodeName:.metadata.name,nodeIP:status.addresses[0].address,routeDestination:.spec.podCIDR
+----
+
+Ensuite, suivez les instructions pour chaque fournisseur de cloud afin de configurer les règles de routage pour chaque nœud{nbsp}:
+
+|===
+| Service | Instructions
+
+| Google GCE
+| Pour GCE, ajoutez une route statique pour chaque nœud{nbsp}: https://cloud.google.com/vpc/docs/using-routes#addingroute[Ajouter une route statique].
+
+| Azure VM
+| Pour Azure, créez une table de routage{nbsp}: https://docs.microsoft.com/en-us/azure/virtual-network/virtual-networks-udr-overview#user-defined[Routes personnalisées{nbsp}: définies par l'utilisateur].
+|===

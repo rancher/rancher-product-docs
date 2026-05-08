@@ -1,0 +1,129 @@
+= 2. Kubernetes installieren
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-16
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/rancher-hinter-einem-http-proxy/install-kubernetes.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/http-proxy/install-kubernetes.adoc
+ifeval::["{build-type}" != "community"]
+:url-k3s-installation: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/installation.html
+:url-rke2-install-ha: https://documentation.suse.com/cloudnative/rke2/latest/en/install/ha.html
+:url-rke2-introduction: https://documentation.suse.com/cloudnative/rke2/latest/en/introduction.html
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-installation: https://docs.k3s.io/installation
+:url-rke2-install-ha: https://docs.rke2.io/install/ha
+:url-rke2-introduction: https://docs.rke2.io/
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+endif::[]
+
+Sobald die Infrastruktur bereit ist, können Sie mit der Einrichtung eines Kubernetes-Clusters fortfahren, um Rancher zu installieren.
+
+Die Schritte zur Einrichtung von RKE2 oder K3s sind unten aufgeführt.
+
+Zur Vereinfachung exportieren Sie die IP-Adresse und den Port Ihres Proxy in eine Umgebungsvariable und richten Sie die `HTTP_PROXY` Variablen für Ihre aktuelle Shell auf jedem Knoten ein:
+
+[CAUTION]
+====
+Die `NO_PROXY` Umgebungsvariable ist nicht standardisiert, und das akzeptierte Format des Wertes kann zwischen Anwendungen variieren. Beim Konfigurieren der `NO_PROXY` Variablen für Rancher muss der Wert dem Format entsprechen, das von Golang erwartet wird. 
+
+Konkret sollte der Wert eine durch Kommas getrennte Zeichenfolge sein, die nur IP-Adressen, CIDR-Notation, Domainnamen oder spezielle DNS-Labels (z. B. `*`) enthält. Für eine vollständige Beschreibung des erwarteten Wertformats siehe die https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config[**Upstream Golang-Dokumentation**].
+====
+
+----
+export proxy_host="10.0.0.5:8888"
+export HTTP_PROXY=http://${proxy_host}
+export HTTPS_PROXY=http://${proxy_host}
+export NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16
+----
+
+[tabs]
+======
+K3s::
++
+--
+Zuerst konfigurieren Sie die HTTP-Proxy-Einstellungen im K3s systemd-Dienst, damit der containerd von K3s Images über den Proxy abrufen kann:
+
+----
+cat <<'EOF' | sudo tee /etc/default/k3s > /dev/null
+HTTP_PROXY=http://${proxy_host}
+HTTPS_PROXY=http://${proxy_host}
+NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+EOF
+----
+
+Rancher muss auf einer unterstützten Kubernetes-Version installiert werden. Um herauszufinden, welche Kubernetes-Versionen für Ihre Rancher-Version unterstützt werden, beachten Sie die https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher Support Matrix].
+
+Um die K3s (Kubernetes)-Version anzugeben, verwenden Sie die Umgebungsvariable INSTALL_K3S_VERSION (z. B. `INSTALL_K3S_VERSION="v1.24.10+k3s1"`), wenn Sie das K3s-Installationsskript ausführen.
+
+Erstellen Sie auf dem ersten Knoten einen neuen Cluster:
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> K3S_TOKEN=<TOKEN> sh -s - server --cluster-init
+----
+
+Und fügen Sie dann die anderen Knoten hinzu:
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> K3S_TOKEN=<TOKEN> sh -s - server --server https://<SERVER>:6443
+----
+
+Dabei ist `<SERVER>` die IP oder der gültige DNS des Servers und `<TOKEN>` das Node-Token vom Server, das Sie unter `/var/lib/rancher/k3s/server/node-token` finden.
+
+Für weitere Informationen zur Installation von K3s siehe die {url-k3s-installation}[K3s-Installationsdokumentation].
+
+Um einen Blick auf Ihren Cluster zu werfen, führen Sie aus:
+
+----
+kubectl cluster-info
+kubectl get pods --all-namespaces
+----
+--
+
+RKE2::
++
+--
+Führen Sie auf jedem Knoten das RKE2-Installationsskript aus. Stellen Sie sicher, dass die RKE2-Version, die Sie installieren, https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[von Rancher] unterstützt wird.
+
+----
+curl -sfL https://get.rke2.io | INSTALL_RKE2_CHANNEL=v1.xx sh -
+----
+
+Dann müssen Sie die HTTP-Proxy-Einstellungen im RKE2 systemd-Dienst konfigurieren, damit der containerd von RKE2 Images über den Proxy abrufen kann:
+
+----
+cat <<'EOF' | sudo tee /etc/default/rke2-server > /dev/null
+HTTP_PROXY=http://${proxy_host}
+HTTPS_PROXY=http://${proxy_host}
+NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+EOF
+----
+
+Erstellen Sie als Nächstes die RKE2-Konfigurationsdatei auf jedem Knoten gemäß der {url-rke2-install-ha}[RKE2-Dokumentation zur hohen Verfügbarkeit].
+
+Starten und aktivieren Sie danach den `rke2-server` Dienst:
+
+----
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+----
+
+Für weitere Informationen zur Installation von RKE2 siehe die {url-rke2-introduction}[RKE2-Dokumentation].
+
+Um einen Blick auf Ihren Cluster zu werfen, führen Sie aus:
+
+----
+export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+alias kubectl=/var/lib/rancher/rke2/bin/kubectl
+kubectl cluster-info
+kubectl get pods --all-namespaces
+----
+--
+======
+
+[#_issues_or_errors]
+== Probleme oder Fehler?
+
+Siehe die {xref-install-upgrade-troubleshooting}[Fehlerbehebung]-Seite.

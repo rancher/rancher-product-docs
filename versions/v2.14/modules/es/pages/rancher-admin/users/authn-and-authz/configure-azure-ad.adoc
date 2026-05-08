@@ -1,0 +1,456 @@
+= Configurar Azure AD
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-11-28
+:page-revdate: {revdate}
+:community-path: instrucciones/guías-para-nuevos-usuarios/autenticación-permisos-y-configuración-global/configuración-de-autenticación/configurar-azure-ad.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-azure-ad.adoc
+ifeval::["{build-type}" != "community"]
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-back-restore-example-configs: xref:rancher-admin/copia-de-seguridad-recuperación-y-desastre/configuración/ejemplos.adoc
+:xref-rancher-restore: xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+:xref-backup-cluster: xref:guías-de-cómo/nuevas-guías-de-usuario/copia-de-seguridad-recuperación-y-recuperación-de-desastres/copia-de-seguridad-rancher.adoc
+:xref-back-restore-example-configs: xref:guías-de-referencia/copia-de-seguridad-recuperación-configuración/ejemplos.adoc
+:xref-rancher-restore: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc
+endif::[]
+
+[#_microsoft_graph_api]
+== API de Microsoft Graph
+
+La API de Microsoft Graph es ahora el flujo a través del cual configurarás Azure AD. Las secciones a continuación ayudarán a <<_new_user_setup,los nuevos usuarios>> a configurar Azure AD con una nueva instancia, así como a los propietarios existentes de aplicaciones de Azure a <<_migrating_from_azure_ad_graph_api_to_microsoft_graph_api,migrar al nuevo flujo>>.
+
+El flujo de la API de Microsoft Graph en Rancher está en constante evolución. Recomendamos que utilices la última versión parcheada de 2.7, ya que todavía está en desarrollo activo y seguirá recibiendo nuevas características y mejoras.
+
+[#_new_user_setup]
+=== Configuración de nuevo usuario
+
+Si tienes una instancia de Active Directory (AD) alojada en Azure, puedes configurar Rancher para permitir que tus usuarios inicien sesión utilizando sus cuentas de AD. La configuración de la autenticación externa de Azure AD requiere que realices ajustes tanto en Azure como en Rancher.
+
+[NOTE]
+.Notas
+====
+
+* La integración de Azure AD solo admite inicios de sesión iniciados por el Proveedor de Servicios.
+* La mayor parte de este procedimiento se lleva a cabo desde el https://portal.azure.com/[Portal de Microsoft Azure].
+====
+
+
+[#_azure_active_directory_configuration_outline]
+==== Esquema de Configuración de Azure Active Directory
+
+Configurar Rancher para permitir que tus usuarios se autentiquen con sus cuentas de Azure AD implica múltiples procedimientos. Revisa el esquema a continuación antes de comenzar.
+
+[TIP]
+====
+
+Antes de empezar, abre dos pestañas del navegador: una para Rancher y otra para el portal de Azure. Esto ayudará a copiar y pegar los valores de configuración del portal a Rancher.
+====
+
+
+[#_1_register_rancher_with_azure]
+==== 1. Registrar Rancher con Azure
+
+Antes de habilitar Azure AD dentro de Rancher, debes registrar Rancher con Azure.
+
+. Inicia sesión en https://portal.azure.com/[Microsoft Azure] como un usuario administrador. La configuración en los siguientes pasos requiere derechos de acceso administrativos.
+. Utiliza la búsqueda para abrir el servicio de *Registros de aplicaciones*.
+. Haz clic en *Nueva inscripción* y completa el formulario.
++
+image::new-app-registration.png[Nueva inscripción de aplicación]
+
+ .. Introduce un *Nombre* (algo como `Rancher`).
+ .. Desde *Tipos de cuentas admitidas*, selecciona "Cuentas en este directorio organizativo solamente (solo AzureADTest - Inquilino único)" Esto corresponde a las opciones de inscripción de aplicaciones heredadas.
++
+
+[NOTE]
+====
+En el portal de Azure actualizado, las URIs de redirección son sinónimos de las URL de respuesta. Para utilizar Azure AD con Rancher, debes incluir a Rancher en la lista blanca con Azure (anteriormente hecho a través de las URL de respuesta). Por lo tanto, debes asegurarte de completar la URI de redirección con la URL de tu servidor Rancher, incluyendo la ruta de verificación que se indica a continuación.
+====
+
+
+ .. En la sección https://docs.microsoft.com/en-us/azure/active-directory/develop/reply-url[*URI de redirección*], asegúrate de que *Web* esté seleccionado en el menú desplegable e introduce la URL de tu servidor Rancher en el cuadro de texto junto al menú desplegable. Esta URL del servidor Rancher debe ser complementada con la ruta de verificación: `<MY_RANCHER_URL>/verify-auth-azure`.
++
+
+[TIP]
+====
+Puedes encontrar tu URI de redirección personalizada de Azure (URL de respuesta) en Rancher en la página de autenticación de Azure AD (Vista global > Autenticación > Web).
+====
+
+
+ .. Haz clic en *Registrar*.
+
+[NOTE]
+====
+
+Puede tardar hasta cinco minutos en que este cambio surta efecto, así que no te alarmes si no puedes autenticarte inmediatamente después de la configuración de Azure AD.
+====
+
+
+[#_2_create_a_new_client_secret]
+==== 2. Crea un nuevo secreto de cliente.
+
+Desde el portal de Azure, crea un secreto de cliente. Rancher utilizará esta clave para autenticar con Azure AD.
+
+. Utiliza la búsqueda para abrir el servicio de *Registros de aplicaciones*. Luego abre la entrada para Rancher que creaste en el último procedimiento.
++
+image::open-rancher-app-reg.png[Abrir inscripción de Rancher]
+
+. Desde el panel de navegación, haz clic en *Certificados y secretos*.
+. Haz clic en *Nueva clave secreta de cliente*.
++
+image::new-client-secret.png[Crear nueva clave secreta de cliente]
+. Introduce una *Descripción* (algo como `Rancher`).
+. Selecciona la duración de las opciones bajo *Caduca*. Este menú desplegable establece la fecha de caducidad de la clave. Duraciones más cortas son más seguras, pero requieren que crees una nueva clave con más frecuencia.
+Ten en cuenta que los usuarios no podrán iniciar sesión en Rancher si detecta que la clave de la aplicación ha caducado. Para evitar este problema, rota la clave en Azure y actualízala en Rancher antes de que caduque.
+. Haz clic en *Añadir* (no es necesario introducir un valor --, se completará automáticamente después de guardar).
++++<a id="secret">++++++</a>+++
+. Introducirás esta clave en la interfaz de usuario de Rancher más tarde como tu *Clave de aplicación*. Dado que no podrás acceder al valor de la clave nuevamente dentro de la interfaz de Azure, mantén esta ventana abierta durante el resto del proceso de configuración.
+
+[#_3_set_required_permissions_for_rancher]
+==== 3. Establecer permisos requeridos para Rancher
+
+A continuación, establece permisos de API para Rancher dentro de Azure.
+
+[CAUTION]
+====
+
+Asegúrate de que estableces permisos de Aplicación, y _no_ permisos Delegados. De lo contrario, no podrás iniciar sesión en Azure AD.
+====
+
+
+. Desde el panel de navegación, selecciona *permisos de API*.
+. Haz clic en *Añadir un permiso*.
+. Desde la API de Microsoft Graph, selecciona los siguientes *Permisos de Aplicación*: `Directory.Read.All`
++
+image::api-permissions.png[Seleccionar permisos de API]
+
+. Regresa a *Permisos de API* en la barra de navegación. Desde allí, haz clic en *Conceder consentimiento de administrador*. Luego haz clic en *Sí*. Los permisos de la aplicación deberían verse como los siguientes:
++
+image::select-req-permissions.png[Abrir permisos requeridos]
+
+[NOTE]
+====
+
+Rancher no valida los permisos que otorgas a la aplicación en Azure. Eres libre de probar cualquier permiso que desees, siempre que permitan que Rancher trabaje con usuarios y grupos de AD.
+
+Específicamente, Rancher necesita permisos que permitan las siguientes acciones:
+
+* Obtener un usuario.
+* Listar todos los usuarios.
+* Listar los grupos de los que es miembro un usuario concreto.
+* Obtener un grupo.
+* Listar todos los grupos.
+
+Rancher realiza estas acciones ya sea para iniciar sesión un usuario o para ejecutar una búsqueda de usuario/grupo. Ten en cuenta que los permisos deben ser del tipo `Application`.
+
+Aquí hay algunos ejemplos de combinaciones de permisos que satisfacen las necesidades de Rancher:
+
+* `Directory.Read.All`
+* `User.Read.All` y `GroupMember.Read.All`
+* `User.Read.All` y `Group.Read.All`
+====
+
+
+[#_4_allow_public_client_flows]
+==== 4. Permitir flujos de cliente público
+
+Para iniciar sesión desde Rancher CLI debes permitir flujos de cliente público:
+
+. Desde el menú de navegación de la izquierda, selecciona *Autenticación*.
+. Bajo *Configuración avanzada*, selecciona *Sí* en el interruptor junto a *Permitir flujos de cliente público*.
++
+image::azure-public-client-flows.png[Permitir flujos de cliente público]
+
+[#_5_copy_azure_application_data]
+==== 5. Copiar los datos de la aplicación de Azure
+
+image::app-configuration.png[ID de la aplicación]
+
+. Obtén tu *ID de inquilino* de Rancher.
+ .. Utiliza la búsqueda para abrir *Registros de aplicaciones*.
+ .. Encuentra la entrada que creaste para Rancher.
+ .. Copia el *ID de directorio* y pégalo en Rancher como tu *ID de inquilino*.
+. Obtén tu *ID de aplicación (cliente)* de Rancher.
+ .. Si no estás allí ya, utiliza la búsqueda para abrir *Registros de aplicaciones*.
+ .. En *Resumen*, encuentra la entrada que creaste para Rancher.
+ .. Copia el *ID de aplicación (cliente)* y pégalo en Rancher como tu *ID de aplicación*.
+. En la mayoría de los casos, tus opciones de punto final serán <<_global,Estándar>> o <<_china,China>>. Para cualquiera de estas opciones, solo necesitas ingresar el *ID de inquilino*, *ID de aplicación* y *Secreto de aplicación*.
+
+image::tenant-application-id-secret.png[Opciones de punto final estándar]
+
+*Para puntos finales personalizados:*
+
+[CAUTION]
+====
+
+Los puntos finales personalizados no están probados ni totalmente soportados por Rancher.
+====
+
+
+También necesitarás ingresar manualmente los puntos finales de Graph, Token y Auth.
+
+* Desde *Registros de aplicaciones*, haz clic en *Puntos finales*:
++
+image::endpoints.png[Haz clic en Puntos finales]
+
+* Los siguientes puntos finales serán tus valores de punto final de Rancher. Asegúrate de usar la versión v1 de estos puntos finales:
+ ** *Punto final de la API de Microsoft Graph* (Punto final de Graph)
+ ** *Punto final de token de OAuth 2.0 (v1)* (Punto final de token)
+ ** *Punto final de autorización de OAuth 2.0 (v1)* (Punto final de autorización)
+
+[#_6_configure_azure_ad_in_rancher]
+==== 6. Configura Azure AD en Rancher
+
+Para completar la configuración, introduce la información sobre tu instancia de AD en la interfaz de usuario de Rancher.
+
+. Inicia sesión en Rancher.
+. En la esquina superior izquierda, haz clic en *☰ > Usuarios y Autenticación*.
+. En el menú de navegación de la izquierda, haz clic en *Proveedor de Autenticación*.
+. Click *AzureAD*.
+. Completa el formulario *Configurar cuenta de Azure AD* utilizando la información que copiaste al completar <<_5_copy_azure_application_data,Copiar datos de aplicación de Azure>>.
++
+
+[CAUTION]
+====
+La cuenta de Azure AD recibirá privilegios de administrador, ya que sus detalles se mapearán a la cuenta principal local de Rancher. Asegúrate de que este nivel de privilegio sea apropiado antes de continuar.
+====
+
++
+*Para endpoints estándar o de China:*
++
+La siguiente tabla mapea los valores que copiaste en el portal de Azure a los campos en Rancher:
++
+|===
+| Campo de Rancher | Valor de Azure
+
+| ID de inquilino
+| ID de directorio
+
+| ID de aplicación
+| ID de aplicación
+
+| Secreto de aplicación
+| Valor de clave
+
+| Puesto final
+| \https://login.microsoftonline.com/
+|===
++
+*Para endpoints personalizados:*
++
+La siguiente tabla mapea tus valores de configuración personalizados a los campos de Rancher:
++
+|===
+| Campo de Rancher | Valor de Azure
+
+| Endpoint de Graph
+| Endpoint de API de Microsoft Graph
+
+| Endpoint de token
+| Endpoint de token OAuth 2.0
+
+| Endpoint de autenticación
+| Endpoint de autorización OAuth 2.0
+|===
++
+IMPORTANTE: Al introducir el endpoint de Graph en una configuración personalizada, elimina el ID de inquilino de la URL:
++
+`https://graph.microsoft.com/abb5adde-bee8-4821-8b03-e63efdc7701c`
+
+. (Opcional) En Rancher v2.9.0 y versiones posteriores, puedes filtrar las membresías a grupos de los usuarios en Azure AD para reducir la cantidad de datos de registro generados. Consulta los pasos 4--5 de <<_filtering_users_by_azure_ad_auth_group_memberships,Filtrando usuarios por membresías de grupos de Azure AD>> para obtener instrucciones completas.
+. Haz clic en *Habilitar*.
+
+*Resultado:* La autenticación de Azure Active Directory está configurada.
+
+[#__optional_configure_authentication_with_multiple_rancher_domains]
+==== (Opcional) Configura la autenticación con múltiples dominios de Rancher
+
+Si tienes múltiples dominios de Rancher, no es posible configurar múltiples URIs de redirección a través de la interfaz de usuario de Rancher. El archivo de configuración de Azure AD, `azuread`, solo permite una URI de redirección por defecto. Debes editar manualmente `azuread` para establecer la URI de redirección según sea necesario para cualquier otro dominio. Si no editas manualmente `azuread`, entonces, tras un intento de inicio de sesión exitoso en cualquier dominio, Rancher redirige automáticamente al usuario al valor de *URI de redirección* que estableciste al registrar la aplicación en <<_1_register_rancher_with_azure,Paso 1. Registra Rancher con Azure>>.
+
+[#_migrating_from_azure_ad_graph_api_to_microsoft_graph_api]
+=== Migrando de la API de Graph de Azure AD a la API de Graph de Microsoft
+
+Dado que la https://docs.microsoft.com/en-us/graph/migrate-azure-ad-graph-overview[API de Graph de Azure AD] queda obsoleta y se prevé su retirada en junio de 2023, los administradores deben actualizar su aplicación de Azure AD para utilizar la https://docs.microsoft.com/en-us/graph/use-the-api[API de Graph de Microsoft] en Rancher.
+Esto debe hacerse con suficiente antelación a la retirada del endpoint.
+Si Rancher sigue configurado para utilizar la API de Graph de Azure AD cuando se retire, los usuarios pueden no poder iniciar sesión en Rancher utilizando Azure AD.
+
+[#_updating_endpoints_in_the_rancher_ui]
+==== Actualizando endpoints en la interfaz de usuario de Rancher
+
+[CAUTION]
+====
+
+Los administradores deben crear una {xref-backup-cluster}[copia de seguridad de Rancher] antes de comprometerse con la migración del endpoint descrita a continuación.
+====
+
+
+. <<_3_set_required_permissions_for_rancher,Actualizar>> los permisos de tu registro de aplicación de Azure AD. Esto es crítico.
+. Inicia sesión en Rancher.
+. En la página de inicio de la interfaz de usuario de Rancher, toma nota del banner en la parte superior de la pantalla que aconseja a los usuarios actualizar su autenticación de Azure AD. Haz clic en el enlace proporcionado para hacerlo.
++
+image::rancher-ui-azure-update.png[Rancher UI Banner]
+
+. Para completar la transición al nuevo API de Microsoft Graph, haz clic en *Actualizar Endpoint*.
++
+NOTE: Asegúrate de que tu aplicación de Azure tenga un <<_3_set_required_permissions_for_rancher,nuevo conjunto de permisos>> antes de comenzar la actualización.
++
+image::rancher-button-to-update.png[Actualizar Endpoint]
+
+. Cuando recibas el mensaje de advertencia emergente, haz clic en *Actualizar*.
++
+image::azure-update-popup.png[Emergente de actualización de Azure]
+
+. Consulta las <<_global,tablas>> a continuación para la lista completa de cambios en los endpoints que realiza Rancher. Los administradores no necesitan hacer esto manualmente.
+
+[#_air_gapped_environments]
+==== Entornos aislados
+
+En entornos aislados, los administradores deben asegurarse de que sus endpoints estén en la lista blanca (ver nota en <<_1_register_rancher_with_azure,Paso 3.2 de Registrar Rancher con Azure>>) ya que la URL del endpoint de Graph está cambiando.
+
+[#_rolling_back_the_migration]
+==== Revirtiendo la migración
+
+Si necesitas revertir tu migración, ten en cuenta lo siguiente:
+
+. Se anima a los administradores a utilizar el proceso de restauración adecuado si desean volver atrás. Consulta {xref-backup-cluster}[documentos de copia de seguridad], {xref-rancher-restore}[documentos de restauración] y {xref-back-restore-example-configs}[ejemplos] para referencia.
+. Los propietarios de aplicaciones de Azure que deseen rotar el Secreto de Aplicación también deberán rotarlo en Rancher, ya que Rancher no actualiza automáticamente el Secreto de Aplicación cuando se cambia en Azure. En Rancher, ten en cuenta que se almacena en un secreto de Kubernetes llamado `azureadconfig-applicationsecret` que está en el espacio de nombres `cattle-global-data`.
+
+[CAUTION]
+====
+
+Si actualizas a Rancher v2.7.0+ con una configuración existente de Azure AD, y eliges deshabilitar el proveedor de autenticación, no podrás restaurar la configuración anterior. Tampoco podrás configurar Azure AD utilizando el flujo antiguo. Necesitarás volver a registrarte con el nuevo flujo de autenticación. Dado que Rancher ahora utiliza la API de Graph, los usuarios necesitan configurar los <<_3_set_required_permissions_for_rancher,permisos adecuados en el portal de Azure>>.
+====
+
+
+[#_global]
+==== Global:
+
+|===
+| Campo de Rancher | Endpoints obsoletos
+
+| Endpoint de autenticación
+| \https://login.microsoftonline.com/{tenantID}/oauth2/authorize
+
+| Puesto final
+| \https://login.microsoftonline.com/
+
+| Endpoint de Graph
+| \https://graph.windows.net/
+
+| Endpoint de token
+| \https://login.microsoftonline.com/{tenantID}/oauth2/token
+|===
+
+|===
+| Campo de Rancher | Nuevos endpoints
+
+| Endpoint de autenticación
+| \https://login.microsoftonline.com/{tenantID}/oauth2/v2.0/authorize
+
+| Puesto final
+| \https://login.microsoftonline.com/
+
+| Endpoint de Graph
+| \https://graph.microsoft.com
+
+| Endpoint de token
+| \https://login.microsoftonline.com/{tenantID}/oauth2/v2.0/token
+|===
+
+[#_china]
+==== China:
+
+|===
+| Campo de Rancher | Endpoints obsoletos
+
+| Endpoint de autenticación
+| \https://login.chinacloudapi.cn/{tenantID}/oauth2/authorize
+
+| Puesto final
+| \https://login.chinacloudapi.cn/
+
+| Endpoint de Graph
+| \https://graph.chinacloudapi.cn/
+
+| Endpoint de token
+| \https://login.chinacloudapi.cn/{tenantID}/oauth2/token
+|===
+
+|===
+| Campo de Rancher | Nuevos endpoints
+
+| Endpoint de autenticación
+| \https://login.partner.microsoftonline.cn/{tenantID}/oauth2/v2.0/authorize
+
+| Puesto final
+| \https://login.partner.microsoftonline.cn/
+
+| Endpoint de Graph
+| \https://microsoftgraph.chinacloudapi.cn
+
+| Endpoint de token
+| \https://login.partner.microsoftonline.cn/{tenantID}/oauth2/v2.0/token
+|===
+
+[#_filtering_users_by_azure_ad_auth_group_memberships]
+== Filtrando usuarios por membresías de grupos de Azure AD
+
+En Rancher v2.9.0 y versiones posteriores, puedes filtrar las membresías de grupos de los usuarios de Azure AD para reducir la cantidad de datos de registro generados. Si no filtraste las membresías de grupos durante la configuración inicial, aún puedes añadir filtros en una configuración existente de Azure AD.
+
+[CAUTION]
+====
+
+Filtrar una membresía de grupo de usuario afecta a más cosas que solo al registro.
+
+Dado que el filtro impide que Rancher vea que el usuario pertenece a un grupo excluido, tampoco ve ningún permiso de ese grupo. Esto significa que excluir un grupo del filtro puede tener el efecto secundario de negar a los usuarios permisos que deberían tener.
+====
+
+
+. En Rancher, en la esquina superior izquierda, haz clic en *☰ > Usuarios y Autenticación*.
+. En el menú de navegación de la izquierda, haz clic en *Proveedor de Autenticación*.
+. Click *AzureAD*.
+. Haz clic en la casilla junto a *Limitar usuarios por membresía de grupo*.
+. Introduce una https://learn.microsoft.com/en-us/odata/concepts/queryoptions-overview#filter[cláusula de filtro OData] en el campo *Filtro de Membresía de Grupo*. Por ejemplo, si deseas limitar el registro a las membresías de grupo cuyo nombre comienza con `test`, marca la casilla e introduce `startswith(displayName,'test')`.
+
+image::auth-setup-azure-ad-filter.png[Añadiendo un filtro de membresía de grupo a Azure AD]
+
+[#_deprecated_azure_ad_graph_api]
+== API de Graph de Azure AD obsoleta
+
+[IMPORTANT]
+====
+
+
+* La https://docs.microsoft.com/en-us/graph/migrate-azure-ad-graph-overview[API de Graph de Azure AD] está obsoleta y será retirada por Microsoft en cualquier momento después del 30 de junio de 2023, sin previo aviso. Actualizaremos nuestra documentación para informar a la comunidad cuando sea retirada. Rancher ahora utiliza la https://docs.microsoft.com/en-us/graph/use-the-api[API de Microsoft Graph] como el nuevo flujo para configurar Azure AD como el proveedor de autenticación externo.
+* Si eres un nuevo usuario, o deseas migrar, consulta las instrucciones del nuevo flujo para <<_microsoft_graph_api,Rancher v2.7.0+>>.
+* Si no deseas actualizar a v2.7.0+ después de que la API de Graph de Azure AD sea retirada, necesitarás:
+ ** Utilizar la autenticación integrada de Rancher o
+ ** Utilizar otro sistema de autenticación de terceros y configurarlo en Rancher. Por favor, consulta la {xref-authn-authz}[documentación de autenticación] para aprender a configurar otros proveedores de autenticación abierta.
+====
+
+[#_azure_ad_roles_claims]
+== Reclamaciones de Roles de Azure AD
+
+Rancher admite la reclamación de Roles proporcionada por el token del proveedor OIDC de Azure AD, permitiendo la delegación completa del Control de Acceso Basado en Roles (RBAC) a Azure AD. Anteriormente, Rancher solo procesaba la reclamación `Groups` para determinar la `group` membresía de un usuario. Esta mejora extiende la lógica para incluir también la reclamación de Roles dentro del token OIDC del usuario.
+
+Al incluir la reclamación de Roles, los administradores pueden:
+
+* Definir roles específicos de alto nivel en Azure AD.
+* Vincular estos Roles de Azure AD directamente a ProjectRoles o ClusterRoles dentro de Rancher.
+* Centralizar y delegar completamente las decisiones de control de acceso al proveedor OIDC externo.
+
+Por ejemplo, considera la siguiente estructura de roles en Azure AD:
+
+|===
+| Nombre del Rol de Azure AD | Miembros
+
+| project-alpha-dev
+| Usuario A, Usuario C
+|===
+
+El usuario A inicia sesión en Rancher a través de Azure AD. El token OIDC incluye una reclamación de Roles, [`project-alpha-dev`]. La lógica de Rancher procesa el token y la lista interna de `groups`/roles para el Usuario A, que incluye `project-alpha-dev`. Un administrador ha creado un vínculo de rol de proyecto que asigna el rol de Azure AD `project-alpha-dev` al rol de proyecto `Dev Member` para el Proyecto Alpha. Al usuario A se le concede automáticamente el rol `Dev Member` en el Proyecto Alpha.

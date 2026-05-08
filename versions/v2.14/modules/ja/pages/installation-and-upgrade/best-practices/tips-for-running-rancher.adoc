@@ -1,0 +1,95 @@
+= {rancher-product-name}を実行するためのヒント
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/tips-for-running-rancher.adoc 
+:product-path: installation-and-upgrade/best-practices/tips-for-running-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-rancher-on-vsphere: xref:installation-and-upgrade/best-practices/rancher-on-vsphere.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-rancher-on-vsphere: xref:reference-guides/best-practices/rancher-server/on-premises-rancher-in-vsphere.adoc
+endif::[]
+
+このガイドは、RancherがダウンストリームのKubernetesクラスターを管理する使用ケースに向けて設計されています。高可用性のセットアップは、Rancherサーバーが利用できない場合にダウンストリームのクラスターへのアクセスを失うことを防ぐことを目的としています。
+
+高可用性のKubernetesインストールは、少なくとも3つのノードを持つKubernetesクラスター上にRancherをインストールしたものとして定義され、Rancherの本番インストールや「重要」と見なされるインストールには必ず使用する必要があります。複数のノードで実行される複数のRancherインスタンスは、単一ノード環境では達成できない高可用性を確保します。
+
+vSphere環境にRancherをインストールする場合は、{xref-rancher-on-vsphere}に記載されているベストプラクティスを参照してください。
+
+高可用性のRancherインストールを設定する際は、以下の点を考慮してください：
+
+[#_minimize_third_party_software_on_the_upstream_cluster]
+== 上流クラスターでのサードパーティソフトウェアの最小化
+
+一般的に、他のワークロードがない専用クラスターでRancherを実行することをお勧めします。これにより、パフォーマンスや互換性の問題を回避できます。
+
+Rancherは、特に増加するクラスター、ノード、ワークロードを管理する際に、アップストリームクラスターのコアKubernetesコンポーネント（`etcd`や`kube-apiserver`など）に大きな負荷をかけます。サードパーティソフトウェアは、これらのコンポーネントやRancherのパフォーマンスに干渉し、不安定さを引き起こす可能性があります。
+
+さらに、サードパーティソフトウェアはRancherの機能的な干渉を引き起こす可能性があります。互換性リスクを最小限に抑えるために、アップストリームクラスターには必須のKubernetesシステムコンポーネントとRancherのみをデプロイしてください。
+
+以下のアプリケーションとコンポーネントは、一般的にRancherやKubernetesシステムに干渉せず、アップストリームクラスターへのインストールがサポートされています：
+
+* FleetなどのRancher内部コンポーネント
+* Rancher拡張機能
+* Cluster APIコンポーネント
+* CNI、CPI、CSI
+* クラウドコントローラーマネージャー
+* 監視とモニタリングツール（prometheus-rancher-exporterを除く）
+
+これらのコンポーネントはそれぞれ独自の最小リソース要件を持っており、Rancherの要件に加えて満たす必要があります。大規模なデプロイメントの場合、干渉を最小限に抑えるために、 https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/[テイントとトレランス]を使用して非Rancherソフトウェア専用のノードを割り当てることを検討してください。
+
+他のソフトウェアはRancherに干渉する可能性があるため、アップストリームクラスターではサポートされていません。
+
+特に以下のソフトウェアがRancherのパフォーマンスに干渉することが知られています：
+
+* https://www.crossplane.io/[CrossPlane]
+* https://argoproj.github.io/cd/[Argo CD]
+* https://fluxcd.io/[Flux]
+* https://github.com/David-VTUK/prometheus-rancher-exporter[prometheus-rancher-exporter]（ https://github.com/David-VTUK/prometheus-rancher-exporter/issues/33[問題33]を参照）
+* 画像を提供するためにかなりのネットワーク帯域幅を必要とするSUSEプライベートレジストリなどのコンテナレジストリ
+
+[#_guidance_for_container_registries]
+=== コンテナレジストリに関するガイダンス
+
+SUSEプライベートレジストリなどのコンテナレジストリは、イメージを提供する際にかなりのネットワーク帯域幅を消費する可能性があります。この需要は、イメージの数、イメージのプル頻度、提供するクラスターおよびコンテナランタイムの量が増えるにつれて増加します。RancherのUIおよびAPIトラフィックに干渉する可能性があるため、Rancher管理サーバーと同じクラスターでコンテナレジストリを実行することはお勧めしません。
+
+コンテナレジストリのデプロイメント戦略に関係なく、十分な帯域幅が利用可能であることを確認し、理想的にはサービス品質（QoS）メカニズムを使用して予約してください。
+
+ニーズに基づいて以下の推奨事項を検討してください：
+
+* *シンプルなセットアップ（HAが主な懸念ではない）：*単一の仮想マシン（VM）としてデプロイされたコンテナレジストリは、実行可能なソリューションとなる可能性があります。
+* *高可用性（HA）要件：*レジストリを専用のKubernetesクラスターで実行することをお勧めします。他のすべてのクラスターは、この集中型のHAレジストリからイメージをプルするように構成する必要があります。
+* *非常に大規模または複雑なネットワークトポロジー：*複数のレジストリクラスターが必要になる場合があります。これらは、画像を効率的に配布し、トラフィックを管理するために、階層的または連携モデルで展開できます。
+
+[#_make_sure_nodes_are_configured_correctly_for_kubernetes]
+== Kubernetesのためにノードが正しく構成されていることを確認してください。
+
+ノードを展開する際には、スワップを無効にし、クラスター内のすべてのマシン間で完全なネットワーク接続があることを再確認し、各ノードに対してユニークなホスト名、MACアドレス、およびproduct_uuidsを使用し、すべての正しいポートが開いていることを確認し、SSDバックのetcdで展開するなど、K8sおよびetcdのベストプラクティスに従うことが重要です。詳細については、 https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#before-you-begin[kubernetesのドキュメント]および https://etcd.io/docs/v3.5/op-guide/performance/[etcdのパフォーマンス運用ガイド]を参照してください。
+
+[#_run_all_nodes_in_the_cluster_in_the_same_datacenter]
+== クラスター内のすべてのノードを同じデータセンターで実行する。
+
+最良のパフォーマンスを得るために、3つのノードすべてを同じ地理的データセンターで実行してください。AWSなどのクラウドでノードを実行している場合は、各ノードを別々のアベイラビリティゾーンで実行してください。例えば、ノード1をus-west-2aに、ノード2をus-west-2bに、ノード3をus-west-2cに起動します。
+
+[#_development_and_production_environments_should_be_similar]
+== 開発環境と本番環境は類似しているべきです。
+
+Rancherが実行されるKubernetesクラスターの「ステージング」または「プレプロダクション」環境を持つことを強く推奨します。この環境は、ソフトウェアおよびハードウェアの構成に関して、本番環境をできるだけ忠実に反映するべきです。
+
+[#_monitor_your_clusters_to_plan_capacity]
+== クラスターを監視してキャパシティを計画する。
+
+RancherサーバーのKubernetesクラスターは、{xref-install-reqs}[システムおよびハードウェア要件]にできるだけ近い状態で実行されるべきです。システムおよびハードウェア要件から逸脱すればするほど、リスクが増します。
+
+ただし、メトリクスに基づくキャパシティ計画分析がRancherのスケーリングに関する最終的な指針であるべきです。なぜなら、公開された要件はさまざまなワークロードタイプを考慮に入れているからです。
+
+Rancherを使用すると、クラスターのノード、Kubernetesコンポーネント、およびソフトウェアデプロイメントの状態とプロセスを、主要なオープンソース監視ソリューションであるPrometheusとの統合を通じて監視できます。また、Prometheusからのメトリクスを視覚化するGrafanaも使用できます。
+
+クラスターで{xref-monitoring-and-dashboards}[監視を有効にする]と、クラスターがキャパシティに近づいている場合に通知するアラートを設定できます。スケーリングする際に、主要なメトリクスのベースラインを確立するために、PrometheusおよびGrafanaの監視フレームワークを使用することもできます。

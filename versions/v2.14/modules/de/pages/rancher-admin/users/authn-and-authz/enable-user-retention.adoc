@@ -1,0 +1,75 @@
+= Benutzerbindung aktivieren
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-user-retention.adoc 
+:product-path: rancher-admin/users/authn-and-authz/enable-user-retention.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-webhook: xref:security/rancher-webhook/rancher-webhook.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-webhook: xref:reference-guides/rancher-webhook.adoc
+endif::[]
+
+In Rancher v2.8.5 und später können Sie die Benutzerbindung aktivieren, um inaktive Benutzerkonten nach einem konfigurierbaren Zeitraum automatisch zu deaktivieren oder zu löschen.
+
+Das Feature zur Benutzerbindung ist standardmäßig deaktiviert.
+
+[#_enabling_user_retention_with_kubectl]
+== Benutzerbindung mit kubectl aktivieren
+
+Um die Benutzerbindung zu aktivieren, müssen Sie `user-retention-cron` festlegen. Sie müssen auch mindestens eines von `disable-inactive-user-after` oder `delete-inactive-user-after` festlegen. Sie können `kubectl edit setting <name-of-setting>` verwenden, um Ihren bevorzugten Editor zu öffnen und diese Werte festzulegen.
+
+[#_configuring_rancher_to_delete_users_disable_users_or_combine_operations]
+== Rancher so konfigurieren, dass Benutzer gelöscht oder deaktiviert werden oder dass beide Vorgänge kombiniert werden
+
+Rancher verwendet zwei globale Einstellungen zur Benutzerbindung, um zu bestimmen, ob und wann Benutzer nach einer bestimmten Inaktivitätsdauer deaktiviert oder gelöscht werden. Deaktivierte Konten müssen reaktiviert werden, bevor Benutzer sich wieder anmelden können. Wenn ein Konto gelöscht wird, ohne deaktiviert zu werden, können Benutzer sich möglicherweise über externe Authentifizierung anmelden, und das gelöschte Konto wird neu erstellt.
+
+Die globalen Einstellungen, `disable-inactive-user-after` und `delete-inactive-user-after`, blockieren sich nicht gegenseitig.
+
+Zum Beispiel können Sie beide Operationen festlegen, um ausgeführt zu werden. Wenn Sie `disable-inactive-user-after` eine kürzere Dauer als `delete-inactive-user-after` geben, deaktiviert der Benutzerbindungsprozess inaktive Konten, bevor sie gelöscht werden.
+
+Sie können auch einige Einstellungen zur Benutzerbindung für ein bestimmtes Benutzerkonto `UserAttribute` bearbeiten. Das Festlegen dieser Werte überschreibt die globalen Einstellungen. Siehe <<_user_specific_user_retention_overrides,Benutzerspezifische Benutzerbindungsüberschreibungen>> für weitere Details.
+
+[#_required_user_retention_settings]
+=== Erforderliche Einstellungen zur Benutzerbindung
+
+Die folgenden sind globale Einstellungen:
+
+* `user-retention-cron`: Beschreibt, wie oft der Benutzerbindungsprozess ausgeführt wird. Der Wert ist ein Cron-Ausdruck (zum Beispiel `0 * * * *` für jede Stunde).
+* `disable-inactive-user-after`: Die Zeitspanne, in der ein Benutzerkonto inaktiv sein kann, bevor der Prozess das Konto deaktiviert. Das Deaktivieren eines Kontos zwingt den Benutzer, einen Administrator zu bitten, das Konto wieder zu aktivieren, bevor er sich anmelden kann, um es zu nutzen. Werte werden in https://pkg.go.dev/time#ParseDuration[time.Duration-Einheiten] ausgedrückt (zum Beispiel `720h` für 720 Stunden oder 30 Tage). Der Wert muss größer sein als `auth-user-session-ttl-minutes`, was standardmäßig `16h` ist. Wenn der Wert nicht gesetzt ist, auf die leere Zeichenkette gesetzt ist oder gleich 0 ist, deaktiviert der Prozess keine inaktiven Konten.
+* `delete-inactive-user-after`: Die Zeitspanne, in der ein Benutzerkonto inaktiv sein kann, bevor der Prozess das Konto löscht. Werte werden in time.Duration-Einheiten ausgedrückt (zum Beispiel `720h` für 720 Stunden oder 30 Tage). Der Wert muss größer sein als `auth-user-session-ttl-minutes`, was standardmäßig `16h` ist. Der Wert sollte größer sein als `336h` (14 Tage), andernfalls wird er vom Rancher-WebHook abgelehnt. Wenn Sie den Wert unter 14 Tagen benötigen, können Sie {xref-rancher-webhook}#_bypassing_the_webhook[bypass the webhook]. Wenn der Wert nicht gesetzt ist, auf die leere Zeichenkette gesetzt ist oder gleich 0 ist, löscht der Prozess keine inaktiven Konten.
+
+[#_optional_user_retention_settings]
+=== Optionale Einstellungen zur Benutzerbindung
+
+Die folgenden Einstellungen sind global:
+
+* `user-retention-dry-run`: Wenn auf `true` gesetzt, läuft der Benutzerbindungsprozess, ohne tatsächlich Benutzerkonten zu löschen oder zu deaktivieren. Dies kann helfen, das Verhalten der Benutzerbindung zu testen, bevor der Prozess Benutzerkonten in einer Produktionsumgebung deaktiviert oder löscht.
+* `user-last-login-default`: Wenn ein Benutzer `UserAttribute.LastLogin` nicht auf seinem Konto gesetzt hat, wird stattdessen diese Einstellung verwendet. Der Wert wird als https://datatracker.ietf.org/doc/html/rfc3339#section-5.6[RFC 3339-Datum-Uhrzeit] ausgedrückt, das auf die letzte Sekunde gerundet ist; zum Beispiel `2023-03-01T00:00:00Z`. Wenn der Wert auf die leere Zeichenkette gesetzt ist oder gleich 0 ist, wird diese Einstellung nicht verwendet.
+
+[#_user_specific_user_retention_overrides]
+==== Benutzerspezifische Benutzerbindungsüberschreibungen
+
+Die folgenden sind benutzerspezifische Überschreibungen der globalen Einstellungen für Sonderfälle. Diese Einstellungen werden durch Bearbeiten des `UserAttribute` angewendet, das mit einem bestimmten Konto verknüpft ist:
+
+----
+kubectl edit userattribute <user-name>
+----
+
+* `disableAfter`: Die benutzerspezifische Überschreibung für `disable-inactive-user-after`. Der Wert wird in https://pkg.go.dev/time#ParseDuration[time.Duration-Einheiten] ausgedrückt und auf die Sekunde gerundet. Wenn der Wert auf `0s` gesetzt ist, wird das Konto nicht deaktiviert.
+* `deleteAfter`: Die benutzerspezifische Überschreibung für `delete-inactive-user-after`. Der Wert wird in https://pkg.go.dev/time#ParseDuration[time.Duration-Einheiten] ausgedrückt und auf die Sekunde gerundet. Wenn der Wert auf `0s` gesetzt ist, wird das Konto nicht gelöscht.
+
+[#_viewing_user_retention_settings_in_the_rancher_ui]
+== Anzeigen der Benutzerbindungseinstellungen in der Rancher-Benutzeroberfläche
+
+Sie können sehen, welche Benutzerbindungseinstellungen auf welche Benutzer angewendet werden.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Benutzer & Authentifizierung*.
+. Wählen Sie im linken Navigationsmenü *Benutzer* aus.
+
+Die Spalten *Deaktivieren nach* und *Löschen nach* für jedes Benutzerkonto geben an, wie lange das Konto inaktiv sein kann, bevor es deaktiviert oder aus Rancher gelöscht wird. Es gibt auch eine Spalte *Letzte Anmeldung*, die grob angibt, wann das Konto zuletzt aktiv war.
+
+Die gleichen Informationen sind verfügbar, wenn Sie auf den Namen eines Benutzers in der Tabelle *Benutzer* klicken und die Registerkarte *Detail* auswählen.

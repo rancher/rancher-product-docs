@@ -1,0 +1,293 @@
+= Keycloak (OIDC) konfigurieren.
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-12-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/neue-nutzeranleitungen/authentifizierung-berechtigungen-und-globale-konfiguration/authentifizierung-konfiguration/configure-keycloak-oidc.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-keycloak-oidc.adoc
+:description: Erstellen Sie einen Keycloak OpenID Connect (OIDC)-Client und konfigurieren Sie Rancher, um mit Keycloak zu arbeiten. Am Ende werden Ihre Benutzer in der Lage sein, sich mit ihren Keycloak-Anmeldedaten bei Rancher anzumelden.
+ifeval::["{build-type}" != "community"]
+:xref-keycloak-saml: xref:rancher-admin/users/authn-and-authz/configure-keycloak-saml.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-keycloak-saml: xref:how-to-guides/neue-nutzeranleitungen/authentifizierung-berechtigungen-und-globale-konfiguration/authentifizierung-config/configure-keycloak-saml.adoc
+endif::[]
+
+Wenn Ihre Organisation https://www.keycloak.org[Keycloak Identity Provider (IdP)] zur Benutzerauthentifizierung verwendet, können Sie Rancher so konfigurieren, dass Ihre Benutzer sich mit ihren IdP-Anmeldeinformationen anmelden können. Rancher unterstützt die Integration mit Keycloak über das OpenID Connect (OIDC)-Protokoll und das SAML-Protokoll. Beide Implementierungen sind funktional gleichwertig, wenn sie mit Rancher verwendet werden. Diese Seite beschreibt den Prozess zur Konfiguration von Rancher für die Zusammenarbeit mit Keycloak über das OIDC-Protokoll.
+
+Wenn Sie Keycloak stattdessen mit dem SAML-Protokoll verwenden möchten, siehe {xref-keycloak-saml}[diese Seite].
+
+Wenn Sie eine vorhandene Konfiguration mit dem SAML-Protokoll haben und zum OIDC-Protokoll wechseln möchten, siehe <<_migrating_from_saml_to_oidc,diesen Abschnitt>>.
+
+[#_prerequisites]
+== Voraussetzungen
+
+* In Rancher ist Keycloak (SAML) deaktiviert.
+* Sie müssen einen https://www.keycloak.org/guides#getting-started[Keycloak IdP Server] konfiguriert haben.
+* Befolgen Sie die https://www.keycloak.org/docs/latest/server_admin/#proc-creating-oidc-client_server_administration_guide[Keycloak-Dokumentation], um einen neuen OIDC-Client mit den folgenden Einstellungen zu erstellen.
++
+|===
+| Einstellung | Wert
+
+| `Client ID`
+| <client-id> (z.B. `rancher`)
+
+| `Name`
+| <client-name> (z.B. `rancher`)
+
+| `Client type`
+| `OpenID Connect`
+
+| `Client authentication`
+| `ON`
+
+| `Valid Redirect URI`
+| `https://yourRancherHostURL/verify-auth`
+|===
+
+* Erstellen Sie im neuen OIDC-Client https://www.keycloak.org/docs/latest/server_admin/#_protocol-mappers[Mappers], um die Benutzerfelder offenzulegen.
+.. Klicken Sie im Navigationsmenü auf **Clients**.
+.. Klicken Sie auf die Registerkarte **Clients-Liste**.
+.. Suchen Sie den Client, den Sie erstellt haben, und klicken Sie darauf.
+.. Klicken Sie auf die Registerkarte **Client-Bereiche**.
+.. Suchen Sie den Link mit der Bezeichnung `<client-name>-dedicated` und klicken Sie darauf. Wenn Sie beispielsweise Ihren Client `rancher` genannt haben, suchen Sie nach dem Link mit dem Namen `rancher-dedicated`.
+.. Klicken Sie auf die Registerkarte **Mappers**.
+.. Klicken Sie auf **einen neuen Mapper konfigurieren**. Wenn Sie bereits vorhandene Mapper konfiguriert haben, klicken Sie auf den Pfeil neben **Mapper hinzufügen** und wählen Sie **Nach Konfiguration** aus. Wiederholen Sie diesen Prozess und erstellen Sie diese Mapper:
+*** Wählen Sie aus der Mapping-Tabelle **Gruppenmitgliedschaft** aus und konfigurieren Sie einen neuen "Gruppenmapper" mit den folgenden Einstellungen. Für nicht erwähnte Einstellungen verwenden Sie den Standardwert.
++
+|===
+| Einstellung | Wert
+
+| `Name`
+| `Groups Mapper`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `groups`
+
+| `Full group path`
+| `OFF`
+
+| `Add to ID token`
+| `OFF`
+
+| `Add to access token`
+| `OFF`
+
+| `Add to user info`
+| `ON`
+|===
+
+*** Wählen Sie aus der Mapping-Tabelle **Zielgruppe** aus und konfigurieren Sie eine neue "Client-Zielgruppe" mit den folgenden Einstellungen. Für nicht erwähnte Einstellungen verwenden Sie den Standardwert.
++
+|===
+| Einstellung | Wert
+
+| `Name`
+| `Client Audience`
+
+| `Mapper Type`
+| `Audience`
+
+| `Included Client Audience`
+| <client-name>
+
+| `Add to ID token`
+| `OFF`
+
+| `Add to access token`
+| `ON`
+|===
+
+*** Wählen Sie aus der Mapping-Tabelle **Gruppenmitgliedschaft** aus und konfigurieren Sie einen neuen "Gruppenpfad" mit den folgenden Einstellungen. Für nicht erwähnte Einstellungen verwenden Sie den Standardwert.
++
+|===
+| Einstellung | Wert
+
+| `Name`
+| `Group Path`
+
+| `Mapper Type`
+| `Group Membership`
+
+| `Token Claim Name`
+| `full_group_path`
+
+| `Full group path`
+| `ON`
+
+| `Add to ID token`
+| `ON`
+
+| `Add to access token`
+| `ON`
+
+| `Add to user info`
+| `ON`
+|===
+
+* Fügen Sie die folgenden Rollenzuordnungen allen Benutzern oder Gruppen hinzu, die die Keycloak-Benutzer abfragen müssen.
++
+[tabs]
+======
+Benutzer::
++
+--
+.. Klicken Sie im Navigationsmenü auf **Benutzer**.
+.. Klicken Sie auf den Benutzer, dem Sie Rollenzuordnungen hinzufügen möchten.
+.. Klicken Sie auf die Registerkarte **Rollenzuordnung**.
+.. Klicken Sie auf **Rolle zuweisen**.
+.. Wählen Sie die folgenden Rollen aus:
+*** benutzer-abfragen
+*** gruppen-abfragen
+*** benutzer-anzeigen
+.. Klicken Sie auf **Zuweisen**.
+--
+
+Gruppen::
++
+--
+.. Klicken Sie im Navigationsmenü auf **Gruppen**.
+.. Klicken Sie auf die Gruppe, der Sie Rollenzuordnungen hinzufügen möchten.
+.. Klicken Sie auf die Registerkarte **Rollenzuordnung**.
+.. Klicken Sie auf **Rolle zuweisen**.
+.. Wählen Sie die folgenden Rollen aus:
+*** benutzer-abfragen
+*** gruppen-abfragen
+*** benutzer-anzeigen
+.. Klicken Sie auf **Zuweisen**.
+--
+======
+
+[#_configuring_keycloak_in_rancher]
+== Keycloak in Rancher konfigurieren
+
+. Klicken Sie in der Rancher-Benutzeroberfläche auf *☰ > Benutzer & Authentifizierung*.
+. Klicken Sie in der linken Navigationsleiste auf *Auth-Anbieter*.
+. Wählen Sie *Keycloak (OIDC)* aus.
+. Füllen Sie das Formular *Keycloak OIDC-Konto konfigurieren* aus. Für Hilfe beim Ausfüllen des Formulars siehe die <<_configuration_reference,Konfigurationsreferenz>>.
++
+[NOTE]
+====
+Beim Konfigurieren des Abschnitts **Endpoints** mit der Option **Generieren** fügt Rancher `/auth` als Teil des Kontextpfads in den Feldern **Issuer** und **Auth Endpoint** hinzu, was nur für Keycloak 16 oder älter gültig ist. Sie müssen Endpunkte mit der Option **Festlegen** für https://www.keycloak.org/docs/latest/release_notes/index.html#keycloak-17-0-0[Keycloak 17] und neuer konfigurieren, die https://www.keycloak.org/migration/migrating-to-quarkus[auf Quarkus migriert wurden].
+====
+
+. Nachdem Sie das Formular *Keycloak OIDC-Konto konfigurieren* ausgefüllt haben, klicken Sie auf *Aktivieren*.
++
+Rancher leitet Sie zur IdP-Anmeldeseite weiter. Geben Sie Anmeldeinformationen ein, die mit Keycloak IdP authentifiziert werden, um Ihre Rancher Keycloak-Konfiguration zu validieren.
++
+
+[NOTE]
+====
+Möglicherweise müssen Sie Ihren Popup-Blocker deaktivieren, um die Anmeldeseite des IdP zu sehen.
+====
+
+
+*Ergebnis:* Rancher ist so konfiguriert, dass es mit Keycloak über das OIDC-Protokoll funktioniert. Ihre Benutzer können sich jetzt mit ihren Keycloak-Anmeldedaten bei Rancher anmelden.
+
+[#_configuration_reference]
+== Konfigurationsreferenz
+
+|===
+| Feld | Beschreibung
+
+| Client-ID
+| Der `Client ID` Ihres Keycloak-Clients.
+
+| Client-Geheimnis
+| Der generierte `Secret` Ihres Keycloak-Clients. Wählen Sie in der Keycloak-Konsole *Clients* aus, wählen Sie den von Ihnen erstellten Client aus, wählen Sie die Registerkarte *Credentials* und kopieren Sie den Wert des Feldes `Secret`.
+
+| Privater Schlüssel / Zertifikat
+| Ein Schlüssel/Zertifikat-Paar zur Erstellung einer sicheren Shell zwischen Rancher und Ihrem IdP. Erforderlich, wenn HTTPS/SSL auf Ihrem Keycloak-Server aktiviert ist.
+
+| Endpunkte
+| Wählen Sie, ob Sie die generierten Werte für die Felder `Rancher URL`, `Issue` und `Auth Endpoint` verwenden oder manuelle Überschreibungen bereitstellen möchten, wenn diese falsch sind.
+
+| Keycloak-URL
+| Die URL für Ihren Keycloak-Server.
+
+| Keycloak-Bereich
+| Der Name des Bereichs, in dem der Keycloak-Client erstellt wurde.
+
+| Rancher-URL
+| Die URL für Ihren Rancher-Server.
+
+| Aussteller
+| Die URL Ihres IdP.
+
+| Auth-Endpunkt
+| Die URL, zu der Benutzer umgeleitet werden, um sich zu authentifizieren.
+|===
+
+[#_migrating_from_saml_to_oidc]
+== Migration von SAML zu OIDC
+
+Dieser Abschnitt beschreibt den Prozess, um von der Verwendung von Rancher mit Keycloak (SAML) zu Keycloak (OIDC) zu wechseln.
+
+. Keycloak neu konfigurieren.
+.. Konfigurieren Sie einen neuen `OpenID Connect` Client gemäß den <<_prerequisites,Voraussetzungen>>. Stellen Sie sicher, dass dieselben `Valid Redirect URIs` festgelegt sind.
+.. Konfigurieren Sie Mapper für den neuen Client gemäß den <<_prerequisites,Voraussetzungen>>.
+. Bevor Sie Rancher so konfigurieren, dass es Keycloak (OIDC) verwendet, muss Keycloak (SAML) zuerst deaktiviert werden.
+.. Klicken Sie in der Rancher-Benutzeroberfläche auf **☰ > Benutzer & Authentifizierung**.
+.. Klicken Sie in der linken Navigationsleiste auf **Authentifizierungsanbieter**.
+.. Wählen Sie **Keycloak (SAML)** aus.
+.. Klicken Sie auf **Deaktivieren**.
+. Befolgen Sie die Schritte in <<_configuring_keycloak_in_rancher,Konfigurieren von Keycloak in Rancher>>.
++
+[WARNING]
+====
+Nachdem die Konfiguration abgeschlossen ist, müssen die Benutzerberechtigungen in Rancher erneut angewendet werden, da sie nicht automatisch migriert werden.
+====
+
+[#_oidc_support_for_pkce_extension]
+== OIDC-Unterstützung für PKCE-Erweiterung
+
+include::shared:ROOT:partial$en/oidc-pkce-support.adoc[]
+
+[#_annex_troubleshooting]
+== Anhang: Fehlerbehebung
+
+Wenn Sie Probleme beim Testen der Verbindung zum Keycloak-Server haben, überprüfen Sie zuerst die Konfigurationsoptionen Ihres OIDC-Clients. Sie können auch die Rancher-Protokolle überprüfen, um herauszufinden, was die Probleme verursacht. Debug-Protokolle können detailliertere Informationen über den Fehler enthalten. Bitte beziehen Sie sich auf xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[Wie kann ich das Debug-Logging aktivieren] in dieser Dokumentation.
+
+Alle Keycloak-bezogenen Protokolleinträge werden entweder mit `[generic oidc]` oder `[keycloak oidc]` vorangestellt.
+
+[#_you_are_not_redirected_to_keycloak]
+=== Sie werden nicht zu Keycloak umgeleitet.
+
+Wenn Sie das Formular *Konfigurieren eines Keycloak OIDC-Kontos* ausfüllen und auf *Aktivieren* klicken, werden Sie nicht zu Ihrem IdP weitergeleitet.
+
+Überprüfen Sie Ihre Keycloak-Clientkonfiguration.
+
+[#_the_generated_issuer_and_auth_endpoint_are_incorrect]
+=== Die generierten `Issuer` und `Auth Endpoint` sind inkorrekt
+
+Ändern Sie im Formular *Konfigurieren eines Keycloak OIDC-Kontos* *Endpunkte* in `Specify (advanced)` und überschreiben Sie die Werte von `Issuer` und `Auth Endpoint`. Um die Werte zu finden, gehen Sie zur Keycloak-Konsole, wählen Sie *Realm-Einstellungen*, wählen Sie die Registerkarte *Allgemein* und klicken Sie auf *OpenID-Endpunktkonfiguration*. Die JSON-Ausgabe zeigt Werte für `issuer` und `authorization_endpoint` an.
+
+[#_keycloak_error_invalid_grant_type]
+=== Keycloak-Fehler: "Ungültiger grant_type"
+
+In einigen Fällen kann diese Fehlermeldung irreführend sein und wird durch eine falsche Einstellung des `Valid Redirect URI` verursacht.
+
+[#_unable_to_see_groups_when_assigning_global_roles]
+=== Gruppen können beim Zuweisen globaler Rollen nicht angezeigt werden.
+
+Wenn Sie für die Erstkonfiguration einen Benutzer verwenden, der keiner Gruppe angehört, können Sie beim Versuch, eine globale Rolle zuzuweisen, keine Gruppen suchen. Um dies zu beheben, können Sie entweder:
+
+. Das `authconfig/keycloakoidc` Objekt manuell bearbeiten, um die Gruppensuche zu aktivieren.
+ .. Auf dem Rancher-Server:
++
+[,bash]
+----
+  kubectl edit authconfigs.management.cattle.io keycloakoidc
+----
+ .. Setzen Sie `groupSearchEnabled: true`.
+ .. Speichern Sie die Änderungen.
+. Konfigurieren Sie Ihr Keycloak OIDC-Setup mit einem Benutzer, der mindestens einer Gruppe in Keycloak zugewiesen ist.
+
+[#_configuring_oidc_single_logout_slo]
+== Konfigurieren von OIDC Single Logout (SLO)
+
+include::shared:ROOT:partial$en/configure-slo-oidc.adoc[]

@@ -1,0 +1,304 @@
+= Active Directory (AD) konfigurieren
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-09-22
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-active-directory.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-active-directory.adoc
+ifeval::["{build-type}" != "community"]
+:xref-openldap: xref:rancher-admin/users/authn-and-authz/openldap/openldap.adoc
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-openldap: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/configure-openldap/index.adoc
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+endif::[]
+
+Wenn Ihre Organisation Microsoft Active Directory als zentrales Benutzerverzeichnis verwendet, können Sie Rancher so konfigurieren, dass es mit einem Active Directory-Server kommuniziert, um Benutzer zu authentifizieren. Dies ermöglicht es Rancher-Administratoren, den Zugriff auf Cluster und Projekte basierend auf Benutzern und Gruppen, die extern im Active Directory verwaltet werden, zu steuern, während Endbenutzer sich mit ihren AD-Anmeldeinformationen beim Rancher UI anmelden können.
+
+Rancher verwendet LDAP, um mit dem Active Directory-Server zu kommunizieren. Der Authentifizierungsfluss für Active Directory ist daher derselbe wie für die {xref-openldap}[OpenLDAP-Authentifizierung] Integration.
+
+[NOTE]
+====
+
+Bevor Sie beginnen, machen Sie sich bitte mit den Konzepten der {xref-authn-authz}#_external_authentication_configuration_and_principal_users[Externe Authentifizierungskonfiguration und Hauptbenutzer] vertraut.
+====
+
+
+[#_prerequisites]
+== Voraussetzungen
+
+Sie müssen einen neuen AD-Benutzer erstellen oder von Ihrem AD-Administrator erhalten, der als Dienstkonto für Rancher verwendet wird. Dieser Benutzer muss über ausreichende Berechtigungen verfügen, um LDAP-Suchen durchzuführen und Attribute von Benutzern und Gruppen in Ihrer AD-Domäne zu lesen.
+
+In der Regel sollte für diesen Zweck ein (nicht administrativer) *Domänenbenutzer* verwendet werden, da ein solcher Benutzer standardmäßig über Lesezugriffsrechte für die meisten Objekte in der Domänenpartition verfügt.
+
+Beachten Sie jedoch, dass in einigen stark eingeschränkten Active Directory-Konfigurationen dieses Standardverhalten möglicherweise nicht zutrifft. In diesem Fall müssen Sie sicherstellen, dass der Benutzer des Dienstkontos mindestens die Berechtigungen *Lesen* und *Inhalt auflisten* entweder auf der Basis-OU (die Benutzer und Gruppen umfasst) oder global für die Domäne hat.
+
+[NOTE]
+.Verwendung von TLS?
+====
+
+* Wenn das vom AD-Server verwendete Zertifikat selbstsigniert ist oder nicht von einer anerkannten Zertifizierungsstelle stammt, stellen Sie sicher, dass Sie das CA-Zertifikat (verknüpft mit allen Zwischenzertifikaten) im PEM-Format zur Hand haben. Sie müssen dieses Zertifikat während der Konfiguration einfügen, damit Rancher in der Lage ist, die Zertifikatkette zu validieren.
+* Bei einem Upgrade auf v2.6.0 kann die Authentifizierung über Rancher gegen ein Active Directory mit TLS fehlschlagen, wenn die Zertifikate auf dem AD-Server keine SAN-Attribute unterstützen. Dies ist eine standardmäßig in Go v1.15 aktivierte Überprüfung.
+ ** Der erhaltene Fehler lautet: "Fehler beim Erstellen der SSL-Verbindung: LDAP-Ergebniscode 200 "Netzwerkfehler": x509: Zertifikat beruht auf dem veralteten Common Name-Feld, verwenden Sie SANs oder aktivieren Sie vorübergehend die Übereinstimmung des Common Name mit GODEBUG=x509ignoreCN=0".
+ ** Um den Fehler zu beheben, aktualisieren oder ersetzen Sie die Zertifikate auf dem AD-Server durch neue, die das SAN-Attribut unterstützen. Alternativ kann dieser Fehler ignoriert werden, indem `GODEBUG=x509ignoreCN=0` als Umgebungsvariable für den Rancher-Server-Container festgelegt wird.
+====
+
+
+[#_configuration_steps]
+== Konfigurationsschritte
+
+[#_open_active_directory_configuration]
+=== Öffnen Sie die Active Directory-Konfiguration
+
+. Melden Sie sich mit dem anfänglichen lokalen `admin` Konto in der Rancher-Benutzeroberfläche an.
+. Klicken Sie oben links auf *☰ > Benutzer & Authentifizierung*.
+. Klicken Sie im linken Navigationsmenü auf *Auth-Anbieter*.
+. Klicken Sie auf *ActiveDirectory*. Der *Authentifizierungsanbieter: Das ActiveDirectory*-Formular wird angezeigt.
+. Füllen Sie das Formular aus. Für Hilfe, siehe die Details zu den Konfigurationsoptionen unten.
+. Klicken Sie auf *Aktivieren*.
+
+[#_configure_active_directory_server_settings]
+=== Konfigurieren Sie die Active Directory-Servereinstellungen
+
+Vervollständigen Sie im Abschnitt mit dem Titel `1. Configure an Active Directory server` die Felder mit den Informationen, die spezifisch für Ihren Active Directory-Server sind. Bitte beachten Sie die folgende Tabelle für detaillierte Informationen zu den erforderlichen Werten für jeden Parameter.
+
+[NOTE]
+====
+
+Wenn Sie sich über die korrekten Werte, die im Feld für die Benutzer-/Gruppensuche eingegeben werden sollen, unsicher sind, beziehen Sie sich bitte auf <<_annex_identify_search_base_and_schema_using_ldapsearch,Identifizieren Sie die Suchbasis und das Schema mit ldapsearch>>.
+====
+
+
+*Tabelle 1: AD-Serverparameter*
+
+|===
+| Parameter | Beschreibung
+
+| Hostname
+| Geben Sie den Hostnamen oder die IP-Adresse des AD-Servers an
+
+| Port
+| Geben Sie den Port an, an dem der Active Directory-Server auf Verbindungen wartet. Unverschlüsseltes LDAP verwendet normalerweise den Standardport 389, während LDAPS den Port 636 verwendet.
+
+| TLS
+| Aktivieren Sie dieses Kontrollkästchen, um LDAP über SSL/TLS (allgemein bekannt als LDAPS) zu aktivieren.
+
+| Zeitüberschreitung der Serververbindung
+| Die Dauer in Sekunden, die Rancher wartet, bevor der AD-Server als unerreichbar betrachtet wird.
+
+| Benutzername des Dienstkontos
+| Geben Sie den Benutzernamen eines AD-Kontos mit schreibgeschütztem Zugriff auf Ihre Domänenpartition ein (siehe <<_prerequisites,Voraussetzungen>>). Der Benutzername kann im NetBIOS-Format eingegeben werden (z. B. "DOMAIN\serviceaccount") oder im UPN-Format (z. B. "serviceaccount@domain.com").
+
+| Passwort für das Dienstkonto
+| Das Passwort für das Service-Konto.
+
+| Standardanmeldedomäne
+| Wenn Sie dieses Feld mit dem NetBIOS-Namen Ihrer AD-Domäne konfigurieren, werden Benutzernamen, die ohne Domäne eingegeben werden (z. B. "jdoe"), automatisch in eine durch Schrägstriche getrennte NetBIOS-Anmeldung (z. B. "LOGIN_DOMAIN\jdoe") beim Binden an den AD-Server umgewandelt. Wenn Ihre Benutzer sich mit dem UPN (z. B. "jdoe@acme.com") als Benutzernamen authentifizieren, muss dieses Feld *leer* bleiben.
+
+| Benutzersuchbasis
+| Der Distinguished Name des Knotens in Ihrem Verzeichnis, von dem aus die Suche nach Benutzerobjekten gestartet werden soll. Alle Benutzer müssen Nachkommen dieses Basis-DN sein. Zum Beispiel: "ou=people,dc=acme,dc=com".
+
+| Gruppensuchbasis
+| Wenn Ihre Gruppen unter einem anderen Knoten leben als dem, der unter `User Search Base` konfiguriert ist, müssen Sie hier den Distinguished Name angeben. Andernfalls lassen Sie es leer. Zum Beispiel: "ou=groups,dc=acme,dc=com".
+|===
+
+'''
+
+[#_configure_user_group_schema]
+=== Benutzer-/Gruppenschema konfigurieren
+
+Im Abschnitt mit dem Titel `2. Customize Schema` müssen Sie Rancher eine korrekte Zuordnung der Benutzer- und Gruppenattribute bereitstellen, die dem in Ihrem Verzeichnis verwendeten Schema entsprechen.
+
+Rancher verwendet LDAP-Abfragen, um Informationen über Benutzer und Gruppen im Active Directory zu suchen und abzurufen. Die in diesem Abschnitt konfigurierten Attributzuordnungen werden verwendet, um Suchfilter zu erstellen und die Gruppenmitgliedschaft zu ermitteln. Es ist daher von größter Bedeutung, dass die bereitgestellten Einstellungen die Realität Ihrer AD-Domäne widerspiegeln.
+
+[NOTE]
+====
+
+Wenn Sie mit dem in Ihrer Active Directory-Domäne verwendeten Schema nicht vertraut sind, beziehen Sie sich bitte auf <<_annex_identify_search_base_and_schema_using_ldapsearch,Identifizieren Sie die Suchbasis und das Schema mit ldapsearch>>, um die richtigen Konfigurationswerte zu bestimmen.
+====
+
+
+[#_user_schema]
+==== Benutzerschema
+
+Die folgende Tabelle beschreibt die Parameter für die Konfiguration des Benutzerschema-Abschnitts.
+
+*Tabelle 2: Konfigurationsparameter für das Benutzerschema*
+
+|===
+| Parameter | Beschreibung
+
+| Object Class
+| Der Name der Objektklasse, die für Benutzerobjekte in Ihrer Domäne verwendet wird. Wenn definiert, geben Sie nur den Namen der Objektklasse an – _nicht_ in einen LDAP-Wrapper wie &(objectClass=xxxx) einschließen.
+
+| Benutzername-Attribut
+| Das Benutzerattribut, dessen Wert als Anzeigename geeignet ist.
+
+| Anmeldeattribut
+| Das Attribut, dessen Wert mit dem Benutzernamen übereinstimmt, den Ihre Benutzer bei der Anmeldung bei Rancher eingeben. Wenn Ihre Benutzer sich mit ihrem UPN (z. B. "jdoe@acme.com") als Benutzernamen authentifizieren, muss dieses Feld normalerweise auf `userPrincipalName` gesetzt werden. Andernfalls ist es für die alten, NetBIOS-ähnlichen Anmeldenamen (z. B. "jdoe") normalerweise `sAMAccountName`.
+
+| Benutzermitglied-Attribut
+| Das Attribut, das die Gruppen enthält, in denen ein Benutzer Mitglied ist.
+
+| Attribut suchen
+| Wenn ein Benutzer Text eingibt, um Benutzer oder Gruppen in der Benutzeroberfläche hinzuzufügen, fragt Rancher den AD-Server ab und versucht, Benutzer anhand der in dieser Einstellung angegebenen Attribute zuzuordnen. Mehrere Attribute können angegeben werden, indem sie mit dem Pipe-Symbol ("\|") getrennt werden. Um UPN-Benutzernamen (z. B. jdoe@acme.com) zuzuordnen, sollten Sie normalerweise den Wert dieses Feldes auf `userPrincipalName` setzen.
+
+| Suchfilter
+| Dieser Filter wird auf die Liste der Benutzer angewendet, die durchsucht wird, wenn Rancher versucht, Benutzer zu einer Site-Zugriffsliste hinzuzufügen oder Mitglieder zu Clustern oder Projekten hinzuzufügen. Ein Beispiel für einen Benutzersuchfilter könnte `(\|(memberOf=CN=group1,CN=Users,DC=testad,DC=rancher,DC=io)(memberOf=CN=group2,CN=Users,DC=testad,DC=rancher,DC=io))` sein. Hinweis: Wenn der Suchfilter https://docs.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax[gültige AD-Suchsyntax,] nicht verwendet, wird die Liste der Benutzer leer sein.
+
+| Benutzeraktivierungsattribut
+| Das Attribut, das einen ganzzahligen Wert enthält, der eine bitweise Aufzählung von Benutzerkontoflags darstellt. Rancher verwendet dies, um zu bestimmen, ob ein Benutzerkonto deaktiviert ist. Sie sollten dies normalerweise auf den AD-Standard `userAccountControl` belassen.
+
+| Bitmaske für deaktivierten Status
+| Dies ist der Wert von `User Enabled Attribute`, der ein deaktiviertes Benutzerkonto bezeichnet. Sie sollten dies normalerweise auf den Standardwert von "2" belassen, wie im Microsoft Active Directory-Schema angegeben (siehe https://docs.microsoft.com/en-us/windows/desktop/adschema/a-useraccountcontrol#remarks[hier]).
+|===
+
+'''
+
+[#_group_schema]
+==== Gruppenschema
+
+Die folgende Tabelle beschreibt die Parameter für die Konfiguration des Gruppenschemas.
+
+*Tabelle 3: Parameter zur Konfiguration des Gruppenschemas*
+
+|===
+| Parameter | Beschreibung
+
+| Object Class
+| Der Name der Objektklasse, die für Gruppenobjekte in Ihrer Domäne verwendet wird. Wenn definiert, geben Sie nur den Namen der Objektklasse an – _nicht_ in einen LDAP-Wrapper wie z. B. &(objectClass=xxxx) einbeziehen.
+
+| Attribut "name"
+| Das Gruppenattribut, dessen Wert als Anzeigename geeignet ist.
+
+| Gruppenmitglied-Benutzerattribut
+| Der Name des *Benutzerattributs*, dessen Format mit den Gruppenmitgliedern in `Group Member Mapping Attribute` übereinstimmt.
+
+| Gruppenmitglied-Zuordnungsattribut
+| Der Name des Gruppenattributs, das die Mitglieder einer Gruppe enthält.
+
+| Attribut suchen
+| Attribut, das verwendet wird, um Suchfilter zu erstellen, wenn Gruppen zu Clustern oder Projekten hinzugefügt werden. Siehe Beschreibung des Benutzerschemas `Search Attribute`.
+
+| Suchfilter
+| Dieser Filter wird auf die Liste der Gruppen angewendet, die durchsucht wird, wenn Rancher versucht, Gruppen zu einer Site-Zugriffsliste hinzuzufügen oder Gruppen zu Clustern oder Projekten hinzuzufügen. Ein Beispiel für einen Gruppensuchfilter könnte `(\|(cn=group1)(cn=group2))` sein. Hinweis: Wenn der Suchfilter keine https://docs.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax[gültige AD-Suchsyntax,] verwendet, wird die Liste der Gruppen leer sein.
+
+| Gruppen-DN-Attribut
+| Der Name des Gruppenattributs, dessen Format mit den Werten im Benutzerattribut übereinstimmt, das die Mitgliedschaften des Benutzers beschreibt. Siehe  `User Member Attribute`.
+
+| Mitgliedschaft in verschachtelter Gruppe
+| Diese Einstellung definiert, ob Rancher geschachtelte Gruppenmitgliedschaften auflösen soll. Verwenden Sie dies nur, wenn Ihre Organisation diese geschachtelten Mitgliedschaften nutzt (d.h. Sie haben Gruppen, die andere Gruppen als Mitglieder enthalten). Wir raten dazu, geschachtelte Gruppen nach Möglichkeit zu vermeiden, um potenzielle Leistungsprobleme zu vermeiden, wenn es eine große Anzahl von geschachtelten Mitgliedschaften gibt.
+|===
+
+'''
+
+[#_test_authentication]
+=== Authentifizierung testen
+
+Sobald Sie die Konfiguration abgeschlossen haben, testen Sie die Verbindung zum AD-Server *mit Ihrem AD-Admin-Konto*. Wenn der Test erfolgreich ist, wird die Authentifizierung mit dem konfigurierten Active Directory implizit aktiviert, wobei das Konto, mit dem Sie testen, als Administrator festgelegt wird.
+
+[NOTE]
+====
+
+Der AD-Benutzer, der zu den in diesem Schritt eingegebenen Anmeldeinformationen gehört, wird dem lokalen Hauptkonto zugeordnet und erhält Administratorrechte in Rancher. Sie sollten daher eine bewusste Entscheidung darüber treffen, welches AD-Konto Sie für diesen Schritt verwenden.
+====
+
+
+. Geben Sie den *Benutzernamen* und das *Passwort* für das AD-Konto ein, das dem lokalen Hauptkonto zugeordnet werden soll.
+. Klicken Sie auf *Mit Active Directory authentifizieren*, um die Einrichtung abzuschließen.
+
+*Ergebnis:*
+
+* Die Active Directory-Authentifizierung wurde aktiviert.
+* Sie wurden als Administrator in Rancher mit den bereitgestellten AD-Anmeldeinformationen angemeldet.
+
+[NOTE]
+====
+
+Sie können sich weiterhin mit dem lokal konfigurierten `admin` Konto und Passwort anmelden, falls es zu einer Störung der LDAP-Dienste kommt.
+====
+
+
+[#_annex_identify_search_base_and_schema_using_ldapsearch]
+== Anhang: Suchbasis und Schema mit ldapsearch identifizieren
+
+Um die AD-Authentifizierung erfolgreich zu konfigurieren, ist es entscheidend, dass Sie die korrekte Konfiguration bezüglich der Hierarchie und des Schemas Ihres AD-Servers bereitstellen.
+
+Das https://manpages.ubuntu.com/manpages/noble/en/man1/ldapsearch.1.html[`ldapsearch`] Tool ermöglicht es Ihnen, Ihren AD-Server abzufragen, um mehr über das für Benutzer- und Gruppenobjekte verwendete Schema zu erfahren.
+
+Für die Zwecke der unten bereitgestellten Beispielbefehle nehmen wir an:
+
+* Der Active Directory-Server hat den Hostnamen `ad.acme.com`
+* Der Server überwacht unverschlüsselte Verbindungen auf Port `389`
+* Die Active Directory-Domäne ist `acme`
+* Sie haben ein gültiges AD-Konto mit dem Benutzernamen `jdoe` und dem Passwort `secret`
+
+[#_identify_search_base]
+=== Suchbasis identifizieren
+
+Zuerst verwenden wir `ldapsearch`, um den Distinguished Name (DN) des übergeordneten Knotens für Benutzer und Gruppen zu identifizieren:
+
+ $ ldapsearch -x -D "acme\jdoe" -w "secret" -p 389 \
+ -h ad.acme.com -b "dc=acme,dc=com" -s sub "sAMAccountName=jdoe"
+
+Dieser Befehl führt eine LDAP-Suche durch, wobei die Suchbasis auf den Domänenstamm (`-b "dc=acme,dc=com"`) und ein Filter auf das Benutzerkonto (`sAMAccountNam=jdoe`) gesetzt ist, und gibt die Attribute für den genannten Benutzer zurück:
+
+image::ldapsearch-user.png[]
+
+Da in diesem Fall der DN des Benutzers `CN=John Doe,CN=Users,DC=acme,DC=com` [5] ist, sollten wir die *Suchbasis für Benutzer* mit dem DN des übergeordneten Knotens `CN=Users,DC=acme,DC=com` konfigurieren.
+
+Ähnlich, basierend auf dem DN der Gruppe, die im Attribut *memberOf* [4] referenziert wird, wäre der korrekte Wert für die *Suchbasis für Gruppen* der übergeordnete Knoten dieses Wertes, d.h. `OU=Groups,DC=acme,DC=com`.
+
+[#_identify_user_schema]
+=== Benutzerschema identifizieren
+
+Die Ausgabe der obigen `ldapsearch` Abfrage ermöglicht es auch, die korrekten Werte für die Konfiguration des Benutzerschemas zu bestimmen:
+
+* `Object Class`: *Person* [1]
+* `Username Attribute`: *Name* [2]
+* `Login Attribute`: *sAMAccountName* [3]
+* `User Member Attribute`: *memberOf* [4]
+
+[NOTE]
+====
+
+Wenn die AD-Benutzer in unserer Organisation sich mit ihrem UPN (z.B. jdoe@acme.com) anstelle des kurzen Anmeldenamens authentifizieren würden, müssten wir die `Login Attribute` auf *userPrincipalName* setzen.
+====
+
+
+[cols=2*]
+|===
+| Wir werden auch den `Search Attribute` Parameter auf \\**sAMAccountName** setzen.
+| name**. So können Benutzer entweder durch Eingabe ihres Benutzernamens oder vollständigen Namens zu Clustern/Projekten in der Rancher-Benutzeroberfläche hinzugefügt werden.
+|===
+
+[#_identify_group_schema]
+=== Identify Group Schema
+
+Als Nächstes werden wir eine der Gruppen abfragen, die mit diesem Benutzer verknüpft sind, in diesem Fall `CN=examplegroup,OU=Groups,DC=acme,DC=com`:
+
+ $ ldapsearch -x -D "acme\jdoe" -w "secret" -p 389 \
+ -h ad.acme.com -b "ou=groups,dc=acme,dc=com" \
+ -s sub "CN=examplegroup"
+
+Dieser Befehl informiert uns über die Attribute, die für Gruppenobjekte verwendet werden:
+
+image::ldapsearch-group.png[]
+
+Wiederum ermöglicht uns dies, die korrekten Werte für die Konfiguration des Gruppenschemas zu bestimmen:
+
+* `Object Class`: *Gruppe* [1]
+* `Name Attribute`: *Name* [2]
+* `Group Member Mapping Attribute`: *Mitglied* [3]
+* `Search Attribute`: *sAMAccountName* [4]
+
+Wenn wir den Wert des *member*-Attributs betrachten, sehen wir, dass es den DN des referenzierten Benutzers enthält. Dies entspricht dem *distinguishedName*-Attribut in unserem Benutzerobjekt. Dementsprechend müssen wir den Wert des `Group Member User Attribute`-Parameters auf dieses Attribut setzen.
+
+In ähnlicher Weise können wir beobachten, dass der Wert im *memberOf*-Attribut im Benutzerobjekt dem *distinguishedName* [5] der Gruppe entspricht. Daher müssen wir den Wert für den `Group DN Attribute`-Parameter auf dieses Attribut setzen.
+
+[#_annex_troubleshooting]
+== Anhang: Fehlerbehebung
+
+Wenn Sie beim Testen der Verbindung zum Active Directory-Server auf Probleme stoßen, überprüfen Sie zunächst die eingegebenen Anmeldeinformationen für das Dienstkonto sowie die Konfiguration der Suchbasis. Sie können auch die Rancher-Protokolle überprüfen, um die Ursache des Problems zu ermitteln. Debug-Protokolle können detailliertere Informationen über den Fehler enthalten. Bitte beziehen Sie sich auf xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[Wie kann ich das Debug-Logging aktivieren] in dieser Dokumentation.

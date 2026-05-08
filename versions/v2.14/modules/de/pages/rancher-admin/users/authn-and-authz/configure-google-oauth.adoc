@@ -1,0 +1,140 @@
+= Google OAuth konfigurieren
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/neue-benutzer-anleitungen/authentifizierungsberechtigungen-und-globale-konfiguration/authentifizierungs-konfiguration/configure-google-oauth.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-google-oauth.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-global-permissions: xref:rancher-admin/benutzer/authn-und-authz/verwaltung-der-rollenbasierten-zugriffskontrolle-rbac/global-berechtigungen.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-global-permissions: xref:how-to-guides/neue-benutzeranleitungen/authentifizierung-berechtigungen-und-global-konfiguration/verwaltung-der-rollenbasierten-zugriffskontrolle-rbac/global-berechtigungen.adoc 
+endif::[]
+
+Wenn Ihre Organisation G Suite zur Benutzerauthentifizierung verwendet, können Sie Rancher so konfigurieren, dass Ihre Benutzer sich mit ihren G Suite-Anmeldeinformationen anmelden können.
+
+Nur Administratoren der G Suite-Domain haben Zugriff auf das Admin SDK. Daher können nur G Suite-Administratoren Google OAuth für Rancher konfigurieren.
+
+Innerhalb von Rancher können nur Administratoren oder Benutzer mit der *Verwalten der Authentifizierung* {xref-global-permissions}[globalen Rolle] die Authentifizierung konfigurieren.
+
+[#_prerequisites]
+== Voraussetzungen
+
+* Sie müssen ein https://admin.google.com[G Suite-Administratorkonto] konfiguriert haben.
+* G Suite erfordert eine https://github.com/google/guava/wiki/InternetDomainNameExplained#public-suffixes-and-private-domains[top private domain FQDN] als autorisierte Domain. Eine Möglichkeit, eine FQDN zu erhalten, besteht darin, einen A-Eintrag in Route53 für Ihren Rancher-Server zu erstellen. Sie müssen Ihre Rancher-Server-URL-Einstellung mit diesem Eintrag nicht aktualisieren, da es Cluster geben könnte, die diese URL verwenden.
+* Sie müssen die Admin SDK API für Ihre G Suite-Domain aktiviert haben. Sie können dies mit den Schritten auf https://support.google.com/a/answer/60757?hl=en[dieser Seite.] aktivieren.
++
+Nachdem die Admin SDK API aktiviert ist, sollte der API-Bildschirm Ihrer G Suite-Domain wie folgt aussehen:
++
+image::Google-Enable-APIs-Screen.png[Admin-APIs aktivieren]
+
+[#_setting_up_g_suite_for_oauth_with_rancher]
+== G Suite für OAuth mit Rancher einrichten
+
+Bevor Sie Google OAuth in Rancher einrichten können, müssen Sie sich in Ihr G Suite-Konto einloggen und Folgendes tun:
+
+. <<_1_adding_rancher_as_an_authorized_domain,Rancher als autorisierte Domain in G Suite hinzufügen>>
+. <<_2_creating_oauth2_credentials_for_the_rancher_server,OAuth2-Anmeldeinformationen für den Rancher-Server generieren>>
+. <<_3_creating_service_account_credentials,Servicekonto-Anmeldeinformationen für den Rancher-Server erstellen>>
+. <<_4_register_the_service_account_key_as_an_oauth_client,Den Schlüssel des Servicekontos als OAuth-Client registrieren>>
+
+[#_1_adding_rancher_as_an_authorized_domain]
+=== 1. Hinzufügen von Rancher als autorisierte Domain
+
+. Klicken Sie https://console.developers.google.com/apis/credentials[hier], um zur Anmeldeseite Ihrer Google-Domain zu gelangen.
+. Wählen Sie Ihr Projekt aus und klicken Sie auf *OAuth-Zustimmungsbildschirm*.
++
+image::Google-OAuth-consent-screen-tab.png[OAuth-Zustimmungsbildschirm]
+. Gehen Sie zu *Autorisierte Domains* und geben Sie die oberste private Domain Ihrer Rancher-Server-URL in die Liste ein. Die oberste private Domain ist die rechts außen stehende Superdomain. Zum Beispiel ist www.foo.co.uk eine oberste private Domain von foo.co.uk. Für weitere Informationen zu Top-Level-Domains siehe https://github.com/google/guava/wiki/InternetDomainNameExplained#public-suffixes-and-private-domains[diesen Artikel.]
+. Gehen Sie zu *Scopes für Google APIs* und stellen Sie sicher, dass *E-Mail,* *Profil* und *OpenID* aktiviert sind.
+
+*Ergebnis:* Rancher wurde als autorisierte Domain für die Admin SDK API hinzugefügt.
+
+[#_2_creating_oauth2_credentials_for_the_rancher_server]
+=== 2. Erstellen von OAuth2-Anmeldeinformationen für den Rancher-Server
+
+. Gehen Sie zur Google API-Konsole, wählen Sie Ihr Projekt aus und gehen Sie zur https://console.developers.google.com/apis/credentials[Anmeldedaten-Seite.]
++
+image::Google-Credentials-tab.png[Anmeldeinformationen]
+. Wählen Sie im Dropdown-Menü *Anmeldeinformationen erstellen* *OAuth-Client-ID* aus.
+. Klicken Sie auf *Webanwendung*.
+. Geben Sie einen Namen ein.
+. Füllen Sie die *Autorisierte JavaScript-Ursprünge* und *Autorisierte Umleitungs-URIs* aus. Hinweis: Die Rancher UI-Seite zur Einrichtung von Google OAuth (verfügbar aus der globalen Ansicht unter menu:Sicherheit[Authentifizierung> Google]) bietet Ihnen die genauen Links, die Sie für diesen Schritt eingeben müssen.
+ ** Geben Sie unter *Autorisierte JavaScript-Ursprünge,* Ihre Rancher-Server-URL ein.
+ ** Geben Sie unter *Autorisierte Umleitungs-URIs,* Ihre Rancher-Server-URL mit dem Pfad `verify-auth` versehen ein. Wenn Ihre URI beispielsweise `https://rancherServer` ist, geben Sie `https://rancherServer/verify-auth` ein.
+. Klicken Sie auf *Erstellen*.
+. Nachdem die Anmeldeinformationen erstellt wurden, sehen Sie einen Bildschirm mit einer Liste Ihrer Anmeldeinformationen. Wählen Sie die gerade erstellten Anmeldeinformationen aus, und klicken Sie in dieser Zeile ganz rechts auf *Download JSON*. Speichern Sie die Datei, damit Sie diese Anmeldeinformationen an Rancher weitergeben können.
+
+*Ergebnis:* Ihre OAuth-Anmeldeinformationen wurden erfolgreich erstellt.
+
+[#_3_creating_service_account_credentials]
+=== 3. Erstellen von Anmeldeinformationen für das Dienstkonto
+
+Da das Google Admin SDK nur für Administratoren verfügbar ist, können reguläre Benutzer es nicht verwenden, um Profile anderer Benutzer oder deren Gruppen abzurufen. Reguläre Benutzer können nicht einmal ihre eigenen Gruppen abrufen.
+
+Da Rancher gruppenbasierten Zugriff ermöglicht, müssen Benutzer ihre eigenen Gruppen abrufen und bei Bedarf andere Benutzer und Gruppen nachschlagen können.
+
+Als Workaround, um diese Funktionalität zu erhalten, empfiehlt G Suite, ein Servicekonto zu erstellen und die Autorität Ihrer G Suite-Domain an dieses Servicekonto zu delegieren.
+
+In diesem Abschnitt wird beschrieben, wie man:
+
+* Ein Dienstkonto erstellen
+* Einen Schlüssel für das Dienstkonto erstellen und die Anmeldeinformationen als JSON herunterladen
+
+.. Klicken Sie https://console.developers.google.com/iam-admin/serviceaccounts[hier] und wählen Sie Ihr Projekt aus, für das Sie OAuth-Anmeldeinformationen generiert haben.
+.. Klicken Sie auf *Dienstkonto erstellen*.
+.. Geben Sie einen Namen ein und klicken Sie auf *Erstellen*.
++
+image::Google-svc-acc-step1.png[Schritt 1 zur Erstellung des Dienstkontos]
+.. Geben Sie auf der Seite *Dienstkonto-Berechtigungen* keine Rollen an und klicken Sie auf *Weiter*.
++
+image::Google-svc-acc-step2.png[Schritt 2 zur Erstellung des Dienstkontos]
+.. Klicken Sie auf *Schlüssel erstellen* und wählen Sie die JSON-Option aus. Laden Sie die JSON-Datei herunter und speichern Sie sie, damit Sie sie als Anmeldeinformationen für das Dienstkonto an Rancher bereitstellen können.
++
+image::Google-svc-acc-step3-key-creation.png[Schritt 3 zur Erstellung des Dienstkontos]
+
+*Ergebnis:* Ihr Dienstkonto wurde erstellt.
+
+[#_4_register_the_service_account_key_as_an_oauth_client]
+=== 4. Registrieren Sie den Dienstkontoschlüssel als OAuth-Client.
+
+Sie müssen dem Dienstkonto, das Sie im letzten Schritt erstellt haben, einige Berechtigungen gewähren. Rancher erfordert, dass Sie nur Lesezugriffsberechtigungen für Benutzer und Gruppen gewähren.
+
+Verwenden Sie die eindeutige ID des Dienstkontoschlüssels, um ihn mit den folgenden Schritten als OAuth-Client zu registrieren:
+
+. Holen Sie sich die eindeutige ID des Schlüssels, den Sie gerade erstellt haben. Wenn sie nicht in der Liste der Schlüssel direkt neben dem von Ihnen erstellten angezeigt wird, müssen Sie sie aktivieren. Um sie zu aktivieren, klicken Sie auf *Eindeutige ID* und klicken Sie auf *OK*. Dies fügt der Liste der Dienstkontoschlüssel eine *Eindeutige ID*-Spalte hinzu. Speichern Sie den für das Dienstkonto aufgeführten Schlüssel, den Sie erstellt haben. HINWEIS: Dies ist ein numerischer Schlüssel, der nicht mit dem alphanumerischen Feld *Schlüssel-ID* verwechselt werden darf.
++
+image::Google-Select-UniqueID-column.png[Eindeutige ID des Dienstkontos]
+
+. Gehen Sie zur https://admin.google.com/ac/owl/domainwidedelegation[*Seite zur domänenweiten Delegierung*].
+. Fügen Sie die im vorherigen Schritt erhaltene eindeutige ID im Feld *Client-Name* ein.
+. Fügen Sie im Feld *Ein oder mehrere API-Bereiche* die folgenden Bereiche hinzu:
++
+----
+ openid,profile,email,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.readonly
+----
+
+. Klicken Sie auf *Autorisieren*.
+
+*Ergebnis:* Das Dienstkonto ist als OAuth-Client in Ihrem G Suite-Konto registriert.
+
+[#_configuring_google_oauth_in_rancher]
+== Konfigurieren von Google OAuth in Rancher
+
+. Melden Sie sich bei Rancher mit einem lokalen Benutzer an, der die Rolle {xref-global-permissions}[Administrator] zugewiesen bekommen hat. Dieser Benutzer wird auch als lokales Prinzipal bezeichnet.
+. Klicken Sie oben links auf *☰ > Benutzer & Authentifizierung*.
+. Klicken Sie im linken Navigationsmenü auf *Auth-Anbieter*.
+. Klicken Sie auf *Google*. Die Anweisungen in der Benutzeroberfläche decken die Schritte zur Einrichtung der Authentifizierung mit Google OAuth ab.
+ .. Admin-E-Mail: Geben Sie die E-Mail eines Administratorkontos aus Ihrer GSuite-Konfiguration an. Um Benutzer- und Gruppenabfragen durchzuführen, benötigen die Google-APIs die E-Mail eines Administrators in Verbindung mit dem Dienstkontoschlüssel.
+ .. Domäne: Geben Sie die Domain an, auf der Sie GSuite konfiguriert haben. Geben Sie die genaue Domain an und nicht irgendwelche Aliase.
+ .. Mitgliedschaft in verschachtelter Gruppe: Aktivieren Sie dieses Kästchen, um verschachtelte Gruppenmitgliedschaften zu ermöglichen. Rancher-Administratoren können dies jederzeit nach der Konfiguration der Authentifizierung deaktivieren.
+  *** *Schritt 1* bezieht sich auf das Hinzufügen von Rancher als autorisierte Domain, was wir bereits in <<_1_adding_rancher_as_an_authorized_domain,diesem Abschnitt>> behandelt haben.
+  *** Für *Schritt Zwei* geben Sie die OAuth-Anmeldeinformationen im JSON-Format an, die Sie nach Abschluss von <<_2_creating_oauth2_credentials_for_the_rancher_server,diesem Abschnitt>> heruntergeladen haben. Sie können die Datei hochladen oder den Inhalt in das Feld *OAuth-Anmeldeinformationen* einfügen.
+  *** Für *Schritt 3* geben Sie die Anmeldeinformationen des Dienstkontos im JSON-Format an, die Sie am Ende von <<_3_creating_service_account_credentials,diesem Abschnitt>> heruntergeladen haben. Die Anmeldeinformationen funktionieren nur, wenn Sie erfolgreich <<_4_register_the_service_account_key_as_an_oauth_client,den Dienstkontoschlüssel als OAuth-Client registriert haben>> in Ihrem G Suite-Konto.
+. Klicken Sie auf *Mit Google authentifizieren*.
+. Klicken Sie auf *Aktivieren*.
+
+*Ergebnis:* Die Google-Authentifizierung ist erfolgreich konfiguriert.

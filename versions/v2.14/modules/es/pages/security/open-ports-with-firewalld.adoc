@@ -1,0 +1,132 @@
+= Abrir puertos con firewalld
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/open-ports-with-firewalld.adoc 
+:product-path: security/open-ports-with-firewalld.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+[WARNING]
+====
+
+Habilitar firewalld puede causar serios problemas de comunicación en la red.
+
+Para un correcto funcionamiento de la red, firewalld debe estar deshabilitado en sistemas que ejecutan RKE2. https://documentation.suse.com/cloudnative/rke2/latest/en/known_issues.html#_firewalld_conflicts_with_default_networking[Firewalld entra en conflicto con Canal], la pila de red predeterminada de RKE2.
+
+Firewalld también debe estar deshabilitado en sistemas que ejecutan Kubernetes 1.19 y versiones posteriores.
+
+Si habilitas firewalld en sistemas que ejecutan Kubernetes 1.18 o versiones anteriores, ten en cuenta que esto puede causar problemas de red. Los CNIs en Kubernetes actualizan dinámicamente el paquete de tablas IP y las reglas de red de forma independiente de cualquier firewall externo, como firewalld. Esto puede causar un comportamiento inesperado cuando el CNI y el firewall externo entran en conflicto.
+====
+
+
+Algunas distribuciones de Linux https://en.wikipedia.org/wiki/Red_Hat_Enterprise_Linux#Rebuilds[derivadas de RHEL,], incluyendo Oracle Linux, pueden tener reglas de firewall predeterminadas que bloquean la comunicación con Helm.
+
+Por ejemplo, una imagen de Oracle Linux en AWS tiene reglas de RECHAZO que impiden que Helm se comunique con Tiller:
+
+----
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+ACCEPT     all  --  anywhere             anywhere             state RELATED,ESTABLISHED
+ACCEPT     icmp --  anywhere             anywhere
+ACCEPT     all  --  anywhere             anywhere
+ACCEPT     tcp  --  anywhere             anywhere             state NEW tcp dpt:ssh
+REJECT     all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination
+REJECT     all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+----
+
+Puedes comprobar las reglas de firewall predeterminadas con este comando:
+
+----
+sudo iptables --list
+----
+
+Esta sección describe cómo usar `firewalld` para aplicar las {xref-install-reqs}#_port_requirements[reglas de puertos del firewall] para nodos en un clúster de servidor Rancher de alta disponibilidad.
+
+[#_prerequisite]
+== Requisitos previos
+
+Instala v7.x o posterior de ``firewalld``:
+
+----
+yum install firewalld
+systemctl start firewalld
+systemctl enable firewalld
+----
+
+[#_applying_firewall_port_rules]
+== Aplicar reglas de puertos del firewall
+
+En las instrucciones de instalación de alta disponibilidad de Rancher, el servidor Rancher se configura en tres nodos que tienen los tres roles de Kubernetes: etcd, controlplane y worker. Si tus nodos del servidor Rancher tienen los tres roles, ejecuta los siguientes comandos en cada nodo:
+
+----
+firewall-cmd --permanent --add-port=22/tcp
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=2379/tcp
+firewall-cmd --permanent --add-port=2380/tcp
+firewall-cmd --permanent --add-port=6443/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+----
+
+Si tus nodos del servidor Rancher tienen roles separados, utiliza los siguientes comandos según el rol del nodo:
+
+----
+# For etcd nodes, run the following commands:
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=2379/tcp
+firewall-cmd --permanent --add-port=2380/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+
+# For control plane nodes, run the following commands:
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=6443/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+
+# For worker nodes, run the following commands:
+firewall-cmd --permanent --add-port=22/tcp
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=2376/tcp
+firewall-cmd --permanent --add-port=8472/udp
+firewall-cmd --permanent --add-port=9099/tcp
+firewall-cmd --permanent --add-port=10250/tcp
+firewall-cmd --permanent --add-port=10254/tcp
+firewall-cmd --permanent --add-port=30000-32767/tcp
+firewall-cmd --permanent --add-port=30000-32767/udp
+----
+
+Después de que se hayan ejecutado los `firewall-cmd` comandos en un nodo, utiliza el siguiente comando para habilitar las reglas del firewall:
+
+----
+firewall-cmd --reload
+----
+
+*Resultado:* El firewall se actualiza para que Helm pueda comunicarse con los nodos del servidor Rancher.

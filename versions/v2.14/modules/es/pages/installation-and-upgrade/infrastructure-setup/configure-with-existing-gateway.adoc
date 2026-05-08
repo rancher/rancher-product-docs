@@ -1,0 +1,326 @@
+= Uso de un gateway externo con Rancher
+:revdate: 2026-04-23
+:page-revdate: {revdate}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:community-path: how-to-guides/advanced-user-guides/rancher-deployment-guides/configure-with-existing-gateway.adoc
+:product-path: installation-and-upgrade/infrastructure-setup/configure-with-existing-gateway.adoc
+
+Al utilizar el tipo de exposición de red de la API de Gateway, Rancher puede crear y gestionar su propio recurso de Gateway. Sin embargo, si tienes un gateway existente que gestionas de forma independiente (por ejemplo, un gateway compartido utilizado por múltiples aplicaciones), necesitarás crear tus propios recursos HTTPRoute para enrutar el tráfico a Rancher.
+
+Esta sección cubre cómo crear manualmente los recursos HTTPRoute requeridos al utilizar un gateway gestionado externamente.
+
+[#_prerequisites]
+== Requisitos previos
+
+* Un recurso de gateway existente configurado y operativo en tu clúster
+* Conocimiento de tu gateway:
+** Nombre y espacio de nombres
+** Nombres de los listeners (sectionName) para tráfico HTTP y/o HTTPS
+* Rancher instalado con `networkExposure.type` configurado a algo diferente de `gateway` (por ejemplo, `none` o `ingress`)
+
+[#_cross_namespace_gateway_requirements]
+== Requisitos de gateway entre espacios de nombres
+
+Si tu gateway está en un espacio de nombres diferente al de Rancher (por ejemplo, gateway en `gateway-system`, Rancher en `cattle-system`), el gateway debe estar configurado para aceptar HTTPRoutes del espacio de nombres de Rancher. Por defecto, la API de gateway solo permite rutas del mismo espacio de nombres que el gateway.
+
+El propietario del gateway debe configurar `allowedRoutes` en los listeners relevantes. Hay dos opciones:
+
+*Opción 1: Permitir rutas de todos los espacios de nombres*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shared-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: example
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+----
+
+*Opción 2: Permitir rutas de espacios de nombres específicos (más restrictivo)*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shared-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: example
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              shared-gateway-access: "true"
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              shared-gateway-access: "true"
+----
+
+Al utilizar el enfoque del selector, asegúrate de que el espacio de nombres de Rancher tenga la etiqueta requerida:
+
+[source,bash]
+----
+kubectl label namespace cattle-system shared-gateway-access=true
+----
+
+[NOTE]
+====
+Si el Gateway y Rancher están en el mismo espacio de nombres, no se necesita configuración adicional; la configuración predeterminada `allowedRoutes` (`from: Same`) permitirá el adjunto de HTTPRoute.
+====
+
+[#_determining_your_rancher_service_values]
+== Determinando los valores de servicio de tu Rancher
+
+Antes de crear recursos de HTTPRoute, identifica los siguientes valores de tu instalación de Rancher:
+
+|===
+| Valor | Cómo determinar | Ejemplo
+
+| *Nombre de la versión* 
+| El nombre utilizado en `helm install <release-name>` 
+| `rancher` 
+
+| *Espacio de nombre* 
+| El espacio de nombres donde está instalado Rancher 
+| `cattle-system` 
+
+| *Nombre de host* 
+| El valor de `hostname` de tus valores de Helm 
+| `rancher.example.com` 
+
+| *Modo TLS* 
+| El valor de `tls` de tus valores de Helm 
+| `ingress`, `external` o `secret` 
+
+| *Servicio HTTP deshabilitado* 
+| El valor de `service.disableHTTP` 
+| `true` o `false` 
+|===
+
+El nombre del servicio de Rancher sigue el patrón: `<release-name>-rancher` (o solo `<release-name>` si el nombre de la versión ya contiene "rancher").
+
+[#_httproute_configuration]
+== Configuración de HTTPRoute
+
+[#_primary_httproute]
+=== HTTPRoute principal
+
+Crea un HTTPRoute para dirigir el tráfico desde tu Gateway al servicio de Rancher. La configuración depende de tu configuración de TLS:
+
+*Cuando TLS termina en el Gateway o dentro de Kubernetes (`tls: ingress`, `tls: secret` o `tls: letsEncrypt`):*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rancher
+  namespace: cattle-system  # Must match Rancher's namespace
+spec:
+  parentRefs:
+    - name: <your-gateway-name>
+      namespace: <your-gateway-namespace>
+      sectionName: <your-https-listener-name>  # Your Gateway's HTTPS listener
+  hostnames:
+    - <your-rancher-hostname>  # e.g., rancher.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: rancher  # Your Rancher service name
+          port: 80       # Use 443 if service.disableHTTP=true
+----
+
+*Cuando TLS termina externamente (`tls: external`):*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rancher
+  namespace: cattle-system
+spec:
+  parentRefs:
+    - name: <your-gateway-name>
+      namespace: <your-gateway-namespace>
+      sectionName: <your-http-listener-name>  # Your Gateway's HTTP listener
+  hostnames:
+    - <your-rancher-hostname>
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: rancher
+          port: 80
+----
+
+[#_http_to_https_redirect_route_optional]
+=== Ruta de redirección de HTTP a HTTPS (opcional)
+
+Si TLS termina en o dentro de Kubernetes (no externamente), es posible que desees redirigir el tráfico HTTP a HTTPS. Crea una HTTPRoute adicional:
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rancher-http-redirect
+  namespace: cattle-system
+spec:
+  parentRefs:
+    - name: <your-gateway-name>
+      namespace: <your-gateway-namespace>
+      sectionName: <your-http-listener-name>  # Your Gateway's HTTP listener
+  hostnames:
+    - <your-rancher-hostname>
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+----
+
+[#_using_extraobjects]
+== Usando extraObjects
+
+Puedes incluir estos recursos de HTTPRoute directamente en tu instalación de Rancher Helm utilizando el valor `extraObjects`. Esto mantiene todos los recursos gestionados juntos:
+
+[source,yaml]
+----
+# values.yaml
+hostname: rancher.example.com
+tls: ingress
+
+extraObjects:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: rancher
+    spec:
+      parentRefs:
+        - name: my-shared-gateway
+          namespace: gateway-system
+          sectionName: https
+      hostnames:
+        - rancher.example.com
+      rules:
+        - matches:
+            - path:
+                type: PathPrefix
+                value: /
+          backendRefs:
+            - name: rancher
+              port: 80
+
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: rancher-http-redirect
+    spec:
+      parentRefs:
+        - name: my-shared-gateway
+          namespace: gateway-system
+          sectionName: http
+      hostnames:
+        - rancher.example.com
+      rules:
+        - filters:
+            - type: RequestRedirect
+              requestRedirect:
+                scheme: https
+                statusCode: 301
+----
+
+[#_backend_port_selection]
+== Selección de puerto de backend
+
+El puerto en `backendRefs` depende de tu configuración de `service.disableHTTP`:
+
+|===
+| `service.disableHTTP` | Puerto de backend
+
+| `false` (por defecto)
+| `80`
+
+| `true`
+| `443`
+
+|===
+
+[#_listener_selection_summary]
+== Resumen de selección de listener
+
+|===
+| Configuración de TLS | Listener de ruta principal | Ruta de redirección
+
+| `tls: external`
+| listener HTTP
+| No necesario
+
+| `tls: ingress`
+| listener HTTPS
+| listener HTTP (opcional)
+
+| `tls: secret`
+| listener HTTPS
+| listener HTTP (opcional)
+
+| `tls: letsEncrypt`
+| listener HTTPS
+| listener HTTP (opcional)
+
+|===
+
+[#_troubleshooting]
+== Solución de problemas
+
+*HTTPRoute no se está aceptando:*
+
+* Verifica que el nombre y el espacio de nombres del Gateway sean correctos
+* Asegúrate de que el `sectionName` coincida con un listener existente en tu Gateway
+* Verifica que el listener permita rutas desde el espacio de nombres de Rancher (consulta la configuración del `allowedRoutes` del Gateway)
+
+*Conexión rechazada o tiempos de espera:*
+
+* Confirma que el servicio de Rancher existe y tiene puntos finales: `kubectl get endpoints rancher -n cattle-system`
+* Verifica que el puerto del backend coincida con tu configuración de `service.disableHTTP`
+
+*Errores de certificado:*
+
+* Si utilizas `tls: ingress` o `tls: secret`, asegúrate de que el listener HTTPS de tu Gateway tenga el certificado apropiado configurado
+* Verifica que el certificado cubra tu nombre de host de Rancher

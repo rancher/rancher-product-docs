@@ -1,0 +1,55 @@
+= Netzwerkanforderungen für Host-Gateway (L2bridge)
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/network-requirements-for-host-gateway.adoc 
+:product-path: cluster-deployment/custom-clusters/windows/network-requirements-for-host-gateway.adoc
+
+In diesem Abschnitt wird beschrieben, wie man benutzerdefinierte Windows-Cluster konfiguriert, die den _Host Gateway (L2bridge)_ Modus verwenden.
+
+[#_disabling_private_ip_address_checks]
+== Deaktivierung der Überprüfungen privater IP-Adressen
+
+Wenn Sie den _Host Gateway (L2bridge)_ Modus verwenden und Ihre Knoten auf einem der unten aufgeführten Cloud-Services bereitstellen, müssen Sie die Überprüfungen privater IP-Adressen sowohl für Ihre Linux- als auch für Ihre Windows-Hosts beim Start deaktivieren. Um diese Überprüfung für jeden Knoten zu deaktivieren, folgen Sie den Anweisungen, die von jedem Dienst unten bereitgestellt werden.
+
+|===
+| Service | Anweisungen zur Deaktivierung der Überprüfungen privater IP-Adressen
+
+| Amazon EC2
+| https://docs.aws.amazon.com/vpc/latest/userguide/VPC_NAT_Instance.html#EIP_Disable_SrcDestCheck[Deaktivierung der Quell/Ziel-Überprüfungen]
+
+| Google GCE
+| https://cloud.google.com/vpc/docs/using-routes#canipforward[Aktivierung der IP-Weiterleitung für Instanzen] (Standardmäßig kann eine VM kein von einer anderen VM stammendes Paket weiterleiten)
+
+| Azure VM
+| https://docs.microsoft.com/en-us/azure/virtual-network/virtual-network-network-interface#enable-or-disable-ip-forwarding[IP-Weiterleitung aktivieren oder deaktivieren]
+|===
+
+[#_cloud_hosted_vm_routes_configuration]
+== Konfiguration der Routen für Cloud-gehostete VMs
+
+Wenn Sie das https://github.com/coreos/flannel/blob/master/Documentation/backends.md#host-gw[*Host Gateway (L2bridge)*] Backend von Flannel verwenden, gehören alle Container auf demselben Knoten zu einem privaten Subnetz, und der Datenverkehr wird von einem Subnetz auf einem Knoten zu einem Subnetz auf einem anderen Knoten über das Host-Netzwerk geleitet.
+
+* Wenn Arbeitsknoten auf AWS, Virtualisierungscluster oder Bare-Metal-Servern bereitgestellt werden, stellen Sie sicher, dass sie zum selben Layer-2-Subnetz gehören. Wenn die Knoten nicht zum selben Layer-2-Subnetz gehören, `host-gw` wird das Netzwerk nicht funktionieren.
+* Wenn Arbeitsknoten auf GCE oder Azure bereitgestellt werden, befinden sie sich nicht im selben Layer-2-Subnetz. Knoten auf GCE und Azure gehören zu einem routbaren Layer-3-Netzwerk. Befolgen Sie die Anweisungen unten, um GCE und Azure so zu konfigurieren, dass das Cloud-Netzwerk weiß, wie es die Host-Subnetze auf jedem Knoten routen kann.
+
+Um das Routing der Host-Subnetze auf GCE oder Azure zu konfigurieren, führen Sie zunächst den folgenden Befehl aus, um die Host-Subnetze auf jedem Arbeitsknoten zu ermitteln:
+
+[,bash]
+----
+kubectl get nodes -o custom-columns=nodeName:.metadata.name,nodeIP:status.addresses[0].address,routeDestination:.spec.podCIDR
+----
+
+Befolgen Sie dann die Anweisungen für jeden Cloud-Anbieter, um Routingregeln für jeden Knoten zu konfigurieren:
+
+|===
+| Service | Anweisungen
+
+| Google GCE
+| Für GCE fügen Sie eine statische Route für jeden Knoten hinzu: https://cloud.google.com/vpc/docs/using-routes#addingroute[Statische Route hinzufügen].
+
+| Azure VM
+| Für Azure erstellen Sie eine Routingtabelle: https://docs.microsoft.com/en-us/azure/virtual-network/virtual-networks-udr-overview#user-defined[Benutzerdefinierte Routen: Benutzerdefiniert].
+|===

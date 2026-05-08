@@ -1,0 +1,173 @@
+= Configura el gateway de Istio
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-istio-gateway.adoc 
+:product-path: observability/istio/guides/set-up-istio-gateway.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-traffic-management-setup: xref:observability/istio/guides/set-up-traffic-management.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-traffic-management-setup: xref:how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] ha quedado obsoleto desde Rancher v2.12.0; recurran a la https://apps.rancher.io[SUSE Application Collection] de Istio para una mayor seguridad (incluida en las suscripciones de SUSE Rancher Prime).
+Se puede encontrar información detallada en https://forums.suse.com/t/deprecation-of-rancher-istio/45043[este anuncio].
+====
+
+El gateway de cada clúster puede tener su propio puerto o balanceador de carga, lo cual no está relacionado con una malla de servicios. Por defecto, cada clúster provisionado por Rancher tiene un controlador de ingreso NGINX que permite el tráfico hacia el clúster.
+
+Puedes usar el controlador de Ingress de Nginx con o sin Istio instalado. Si este es el único gateway de tu clúster, Istio podrá enrutar el tráfico de servicio a servicio, pero Istio no podrá recibir tráfico del exterior del clúster.
+
+Para permitir que Istio reciba tráfico externo, necesitas habilitar el gateway de Istio, que funciona como un proxy norte-sur para el tráfico externo. Cuando habilitas el gateway de Istio, el resultado es que tu clúster tendrá dos Ingresses.
+
+También necesitarás configurar un gateway de Kubernetes para tus servicios. Este recurso de Kubernetes apunta a la implementación del gateway de ingress de Istio en el clúster.
+
+Puedes enrutar tráfico hacia la malla de servicios con un balanceador de carga o usar el gateway NodePort de Istio. Esta sección describe cómo configurar el gateway NodePort.
+
+Para más información sobre el gateway de Istio, consulta la https://istio.io/docs/reference/config/networking/v1alpha3/gateway/[documentación de Istio.]
+
+image::istio-ingress.svg[En un clúster habilitado para Istio, you can have two Ingresses: the default Nginx Ingress, and the default Istio controller.]
+
+[#_enable_an_istio_gateway]
+== Habilita un gateway de Istio
+
+El gateway de ingress es un servicio de Kubernetes que se desplegará en tu clúster. El gateway de Istio permite una personalización y flexibilidad más extensas.
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster que creaste y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en menu:Istio[Gateways].
+. Haz clic en *Crear desde Yaml*.
+. Pega tu yaml del Gateway de Istio, o *Lee desde Archivo*.
+. Haga clic en *Crear*.
+
+*Resultado:* El gateway está desplegado y ahora enruta el tráfico con las reglas aplicadas.
+
+[#_example_istio_gateway]
+== Ejemplo de gateway de Istio
+
+Añadimos los despliegues de la aplicación BookInfo en los servicios al pasar por el ejemplo de Cargas de Trabajo. A continuación, añadimos un gateway de Istio para que la aplicación sea accesible desde fuera de tu clúster.
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster que creaste y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en menu:Istio[Gateways].
+. Haz clic en *Crear desde Yaml*.
+. Copia y pega el yaml del Gateway proporcionado a continuación.
+. Haga clic en *Crear*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+----
+
+Luego, para desplegar el VirtualService que proporciona el enrutamiento de tráfico para el Gateway:
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster que creaste y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en menu:Istio[VirtualServices].
+. Copia y pega el yaml de VirtualService proporcionado a continuación.
+. Haga clic en *Crear*.
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: bookinfo
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - bookinfo-gateway
+  http:
+  - match:
+    - uri:
+        exact: /productpage
+    - uri:
+        prefix: /static
+    - uri:
+        exact: /login
+    - uri:
+        exact: /logout
+    - uri:
+        prefix: /api/v1/products
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+----
+
+*Resultado:* Has configurado tu recurso de gateway para que Istio pueda recibir tráfico desde fuera del clúster.
+
+Confirma que el recurso existe ejecutando:
+
+----
+kubectl get gateway -A
+----
+
+El resultado debería ser algo como esto:
+
+----
+NAME               AGE
+bookinfo-gateway   64m
+----
+
+[#_access_the_productpage_service_from_a_web_browser]
+=== Accede al servicio ProductPage desde un navegador web
+
+Para probar y ver si la aplicación BookInfo se ha desplegado correctamente, la aplicación se puede ver en un navegador web utilizando la IP y el puerto del controlador de Istio, combinados con el nombre de la solicitud especificado en tu recurso de gateway de Kubernetes:
+
+`\http://<IP of Istio controller>:<Port of istio controller>/productpage`
+
+Para obtener la URL y el puerto del gateway de ingress,
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster que creaste y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en *Carga de Trabajo*.
+. Desplázate hacia abajo hasta el espacio de nombres `istio-system`.
+. Dentro de `istio-system`, hay una carga de trabajo llamada `istio-ingressgateway`. Bajo el nombre de esta carga de trabajo, deberías ver enlaces, como `80/tcp`.
+. Haz clic en uno de esos enlaces. Esto debería mostrarte la URL del gateway de ingress en tu navegador web. Añade `/productpage` a la URL.
+
+*Resultado:* Deberías ver la aplicación BookInfo en el navegador web.
+
+Para obtener ayuda inspeccionando la URL y los puertos del controlador de Istio, prueba los comandos de la https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#determining-the-ingress-ip-and-ports[documentación de Istio.]
+
+[#_troubleshooting]
+== Solución de problemas
+
+La https://istio.io/docs/tasks/traffic-management/ingress/ingress-control/#troubleshooting[documentación oficial de Istio] sugiere `kubectl` comandos para inspeccionar el host correcto del gateway de ingress y el puerto del gateway de ingress para solicitudes externas.
+
+[#_confirming_that_the_kubernetes_gateway_matches_istios_ingress_controller]
+=== Confirmando que el Gateway de Kubernetes coincide con el Controlador de Ingress de Istio.
+
+Puedes probar los pasos en esta sección para asegurarte de que el gateway de Kubernetes está configurado correctamente.
+
+En el recurso del gateway, el selector se refiere al Controlador de Ingress por defecto de Istio mediante su etiqueta, en la que la clave de la etiqueta es `istio` y el valor es `ingressgateway`.  Para asegurarte de que la etiqueta es adecuada para el gateway, haz lo siguiente:
+
+. Haz clic en *☰ > Gestión de Clústeres*.
+. Ve al clúster que creaste y haz clic en *Explorar*.
+. En la barra de navegación izquierda, haz clic en *Carga de Trabajo*.
+. Desplázate hacia abajo hasta el espacio de nombres `istio-system`.
+. Dentro de `istio-system`, hay una carga de trabajo llamada `istio-ingressgateway`. Haz clic en el nombre de esta carga de trabajo y ve a la sección *Etiquetas y Anotaciones*. Deberías ver que tiene la clave `istio` y el valor `ingressgateway`. Esto confirma que el selector en el recurso Gateway coincide con el Controlador de Ingress por defecto de Istio.
+
+[#__xref_istio_traffic_management_setup_next_set_up_istios_components_for_traffic_management]
+=== {xref-istio-traffic-management-setup}[Siguiente: Configura los componentes de Istio para la gestión del tráfico]

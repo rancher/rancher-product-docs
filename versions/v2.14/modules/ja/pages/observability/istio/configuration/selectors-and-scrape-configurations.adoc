@@ -1,0 +1,136 @@
+= セレクターとスクレイプ設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/istio/configuration-options/selectors-and-scrape-configurations.adoc 
+:product-path: observability/istio/configuration/selectors-and-scrape-configurations.adoc
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio]はRancher v2.12.0以降廃止されました。セキュリティを強化するために、 https://apps.rancher.io[SUSE Application Collection]のIstioビルドに切り替えてください（SUSE Rancher Primeサブスクリプションに含まれています）。
+詳細情報は https://forums.suse.com/t/deprecation-of-rancher-istio/45043[この発表]にあります。
+====
+
+モニタリングアプリは`prometheus.prometheusSpec.ignoreNamespaceSelectors=false`を設定し、これによりデフォルトで全てのネームスペースの監視が可能になります。
+
+これにより、`istio-injection=enabled`ラベルが付けられたネームスペースにデプロイされたリソースのトラフィック、メトリクス、グラフを表示できます。
+
+Prometheusを特定のネームスペースに制限したい場合は、`prometheus.prometheusSpec.ignoreNamespaceSelectors=true`を設定してください。これを行うと、リソースの監視を続けるために追加の設定を行う必要があります。
+
+[#_limiting_monitoring_to_specific_namespaces_by_setting_ignorenamespaceselectors_to_true]
+== ignoreNamespaceSelectorsをTrueに設定して特定のネームスペースに監視を制限する
+
+特定のネームスペースに監視を制限するには、`ignoreNamespaceSelectors` Helmチャートオプションを編集します。モニタリングHelmチャートをインストールまたはアップグレードする際に、このオプションを設定します：
+
+. モニタリングHelmチャートをインストールまたはアップグレードする際に、values.ymlを編集し、``prometheus.prometheusSpec.ignoreNamespaceSelectors=true``を設定します。
+. インストールまたはアップグレードを完了します。
+
+*結果:*Prometheusは特定のネームスペースに制限されるため、さまざまなダッシュボードでデータを表示し続けるために、次のいずれかの設定を行う必要があります。
+
+[#_enabling_prometheus_to_detect_resources_in_other_namespaces]
+== Prometheusが他のネームスペースのリソースを検出できるようにする
+
+`prometheus.prometheusSpec.ignoreNamespaceSelectors=true`の際に、Prometheusが他のネームスペースのリソースを検出できるようにする方法は2つあります：
+
+* *特定のネームスペースの監視:*スクレイプしたいターゲットがあるネームスペースにサービスモニターまたはポッドモニターを追加します。
+* *ネームスペース間の監視:*すべてのネームスペースのすべてのターゲットをスクレイプするために、rancher-monitoringインスタンスに`additionalScrapeConfig`を追加します。
+
+[#_monitoring_specific_namespaces_create_a_service_monitor_or_pod_monitor]
+== 特定のネームスペースの監視：サービスモニターまたはポッドモニターを作成する
+
+このオプションにより、特定のネームスペースで監視したい特定のサービスやポッドを定義できます。
+
+使いやすさのトレードオフは、ネームスペースをまたいで監視できないため、ネームスペースごとにサービスモニターまたはポッドモニターを作成する必要があることです。
+
+[NOTE]
+.前提条件:
+====
+
+`<your namespace>`のためにServiceMonitorまたはPodMonitorを定義してください。以下に例としてServiceMonitorを示します。
+====
+
+
+. *☰ > クラスター管理*をクリックします。
+. 作成したクラスターに移動し、*探索*をクリックします。
+. 上部のナビゲーションバーで、kubectl シェルを開きます。
+. ServiceMonitorまたはPodMonitorファイルがクラスター内にローカルに保存されている場合、`kubectl create -f <name of service/pod monitor file>.yaml`にあります。
+. ServiceMonitorまたはPodMonitorがローカルに保存されていない場合は、`cat<< EOF | kubectl apply -f -`を実行し、ファイルの内容をターミナルに貼り付けてから、`EOF`を実行してコマンドを完了してください。
+. `kubectl label namespace <your namespace> istio-injection=enabled`を実行して、envoyサイドカーの注入を有効にします。
+
+*結果:*  `<your namespace>`はPrometheusによってスクレイプ可能です。
+
+.Istio プロキシ用のサンプル ServiceMonitor
+[,yaml]
+----
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: envoy-stats-monitor
+  namespace: istio-system
+  labels:
+    monitoring: istio-proxies
+spec:
+  selector:
+    matchExpressions:
+    - {key: istio-prometheus-ignore, operator: DoesNotExist}
+  namespaceSelector:
+    any: true
+  jobLabel: envoy-stats
+  endpoints:
+  - path: /stats/prometheus
+    targetPort: 15090
+    interval: 15s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: '.*-envoy-prom'
+    - action: labeldrop
+      regex: "__meta_kubernetes_pod_label_(.+)"
+    - sourceLabels: [__meta_kubernetes_namespace]
+      action: replace
+      targetLabel: namespace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      action: replace
+      targetLabel: pod_name
+----
+
+[#_monitoring_across_namespaces_set_ignorenamespaceselectors_to_false]
+== ネームスペースをまたいだ監視：ignoreNamespaceSelectorsをFalseに設定します。
+
+これにより、Prometheusに追加のスクレイプ設定を提供することで、ネームスペースをまたいだ監視が可能になります。
+
+使いやすさのトレードオフは、Prometheusのすべての`additionalScrapeConfigs`が単一のSecretに保持されることです。これは、Istioをインストールする前にadditionalScrapeConfigsで監視がすでにデプロイされている場合、アップグレードが困難になる可能性があります。
+
+. Monitoring Helmチャートをインストールまたはアップグレードする際は、values.ymlを編集し、`prometheus.prometheusSpec.additionalScrapeConfigs`配列を以下に示す*追加のスクレイプ設定*に設定してください。
+. インストールまたはアップグレードを完了します。
+
+*結果:*`istio-injection=enabled`ラベルを持つすべてのネームスペースはPrometheusによってスクレイプされます。
+
+.追加のスクレイプ設定
+[,yaml]
+----
+- job_name: 'istio/envoy-stats'
+  scrape_interval: 15s
+  metrics_path: /stats/prometheus
+  kubernetes_sd_configs:
+    - role: pod
+  relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_container_port_name]
+      action: keep
+      regex: '.*-envoy-prom'
+    - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+      action: replace
+      regex: ([^:]+)(?::\d+)?;(\d+)
+      replacement: $1:15090
+      target_label: __address__
+    - action: labelmap
+      regex: __meta_kubernetes_pod_label_(.+)
+    - source_labels: [__meta_kubernetes_namespace]
+      action: replace
+      target_label: namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      action: replace
+      target_label: pod_name
+----

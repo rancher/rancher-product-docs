@@ -1,0 +1,98 @@
+= Best Practices für das Logging
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/logging-best-practices.adoc 
+:product-path: observability/logging/best-practices.adoc
+
+In diesem Leitfaden empfehlen wir Best Practices für das Cluster-Logging und das Anwendungs-Logging.
+
+* <<_cluster_level_logging,Cluster-Logging>>
+* <<_application_logging,Anwendungs-Logging>>
+* <<_general_best_practices,Allgemeine Best Practices>>
+
+Vor Rancher v2.5 war das Logging in Rancher historisch gesehen eine ziemlich statische Integration. Es gab eine feste Liste von Aggregatoren zur Auswahl (ElasticSearch, Splunk, Kafka, Fluentd und Syslog) und nur zwei Konfigurationspunkte zur Auswahl (Cluster- und Projektebene).
+
+Rancher bietet eine flexible Lösung für die Protokollaggregation. Mit der Logging-Funktion können Administratoren und Benutzer Protokolle bereitstellen, die feingranulare Erfassungskriterien erfüllen und gleichzeitig eine breitere Palette von Zielen und Konfigurationsoptionen bieten.
+
+"Unter der Haube" verwendet das Rancher-Logging den https://github.com/kube-logging/logging-operator[Logging-Operator]. Wir bieten die Verwaltung dieses Operators (und seiner Ressourcen) und verknüpfen diese Erfahrung mit der Verwaltung Ihrer Rancher-Cluster.
+
+[#_cluster_level_logging]
+== Cluster-Logging
+
+[#_cluster_wide_scraping]
+=== Cluster-weites Scraping
+
+Für einige Benutzer ist es wünschenswert, Protokolle von jedem Container, der im Cluster läuft, zu scrapen. Dies fällt normalerweise mit der Anfrage (oder Anforderung) Ihres Sicherheitsteams zusammen, alle Protokolle von allen Ausführungspunkten zu sammeln.
+
+In diesem Szenario wird empfohlen, mindestens zwei _ClusterOutput_-Objekte zu erstellen - eines für Ihr Sicherheitsteam (wenn Sie diese Anforderung haben) und eines für Sie, die Cluster-Administratoren. Achten Sie beim Erstellen dieser Objekte darauf, einen Ausgabepunkt auszuwählen, der den erheblichen Protokollverkehr aus dem gesamten Cluster bewältigen kann. Stellen Sie auch sicher, dass Sie einen geeigneten Index auswählen, um all diese Protokolle zu empfangen.
+
+Sobald Sie diese _ClusterOutput_-Objekte erstellt haben, erstellen Sie einen _ClusterFlow_, um alle Protokolle zu sammeln. Definieren Sie keine _Include_ oder _Exclude_-Regeln in diesem Flow. Dies wird sicherstellen, dass alle Protokolle aus dem gesamten Cluster gesammelt werden. Wenn Sie zwei _ClusterOutputs_ haben, stellen Sie sicher, dass die Protokolle an beide gesendet werden.
+
+[#_kubernetes_components]
+=== Kubernetes-Komponenten
+
+_ClusterFlows_ haben die Fähigkeit, Protokolle von allen Containern auf allen Hosts im Kubernetes-Cluster zu sammeln. Dies funktioniert gut in Fällen, in denen diese Container Teil eines Kubernetes-Pods sind.
+
+Eine zukünftige Version von Rancher wird den Namen des Quellcontainers enthalten, was das Filtern dieser Komponentenprotokolle ermöglicht. Sobald diese Änderung vorgenommen wurde, können Sie einen _ClusterFlow_ anpassen, um *nur* die Kubernetes-Komponentenprotokolle abzurufen und sie an einen geeigneten Ausgabepunkt zu leiten.
+
+[#_application_logging]
+== Anwendungs-Logging
+
+Die beste Praxis, nicht nur in Kubernetes, sondern in allen containerbasierten Anwendungen, besteht darin, Anwendungsprotokolle an `stdout`/`stderr` zu leiten. Die Container-Laufzeit wird dann diese Protokolle erfassen und damit *etwas* tun – typischerweise sie in eine Datei schreiben. Je nach Container-Laufzeit (und deren Konfiguration) können diese Protokolle an einer beliebigen Anzahl von Orten landen.
+
+Im Falle des Schreibens der Protokolle in eine Datei hilft Kubernetes, indem es ein `/var/log/containers` Verzeichnis auf jedem Host erstellt. Dieses Verzeichnis verlinkt die Protokolldateien mit ihrem tatsächlichen Ziel (das je nach Konfiguration oder Container-Laufzeit unterschiedlich sein kann).
+
+Die Rancher-Protokollierung liest alle Protokolleinträge in `/var/log/containers` und stellt sicher, dass alle Protokolleinträge aus allen Containern (vorausgesetzt eine Standardkonfiguration) die Möglichkeit haben, gesammelt und verarbeitet zu werden.
+
+[#_specific_log_files]
+=== Spezifische Protokolldateien
+
+Die Protokollsammlung erfasst nur `stdout`/`stderr` Protokolle von Pods in Kubernetes. Aber was ist, wenn wir Protokolle von anderen Dateien sammeln möchten, die von Anwendungen generiert werden? Hier kann ein Log-Streaming-Seitencontainer (oder zwei) nützlich sein.
+
+Das Ziel der Einrichtung eines Streaming-Seitencontainers besteht darin, Protokolldateien, die auf die Festplatte geschrieben werden, zu nehmen und deren Inhalte an `stdout` zu streamen. Auf diese Weise kann der Logging-Operator diese Protokolle aufnehmen und an Ihren gewünschten Ausgabepunkt senden.
+
+Um dies einzurichten, bearbeiten Sie Ihre Arbeitslastressource (z. B. Implementierung) und fügen Sie die folgende Sidecar-Definition hinzu:
+
+[,yaml]
+----
+...
+containers:
+- args:
+  - -F
+  - /path/to/your/log/file.log
+  command:
+  - tail
+  image: busybox
+  name: stream-log-file-[name]
+  volumeMounts:
+  - mountPath: /path/to/your/log
+    name: mounted-log
+...
+----
+
+Dies fügt Ihrer Arbeitslastdefinition einen Container hinzu, der nun den Inhalt von (in diesem Beispiel) `/path/to/your/log/file.log` nach `stdout` streamt.
+
+Dieser Protokollstream wird dann automatisch gemäß den von Ihnen eingerichteten _Flows_ oder _ClusterFlows_ gesammelt. Sie möchten möglicherweise auch in Betracht ziehen, einen _Flow_ speziell für diese Protokolldatei zu erstellen, indem Sie den Namen des Containers anvisieren. Siehe Beispiel:
+
+[,yaml]
+----
+...
+spec:
+  match:
+  - select:
+      container_names:
+      - stream-log-file-name
+...
+----
+
+[#_general_best_practices]
+== Allgemeine Best Practices
+
+* Wo möglich, geben Sie strukturierte Protokolleinträge aus (z. B. `syslog`, JSON). Dies erleichtert die Handhabung des Protokolleintrags, da bereits Parser für diese Formate geschrieben wurden.
+* Versuchen Sie, den Namen der Anwendung, die den Protokolleintrag erstellt, im Eintrag selbst anzugeben. Dies kann die Fehlersuche erleichtern, da Kubernetes-Objekte nicht immer den Namen der Anwendung als Objektname tragen. Eine Pod-ID könnte beispielsweise etwas wie `myapp-098kjhsdf098sdf98` sein, was nicht viele Informationen über die Anwendung liefert, die im Container läuft.
+* Außer im Fall der Sammlung aller Protokolle clusterweit, versuchen Sie, Ihre _Flow_ und _ClusterFlow_ Objekte eng zu definieren. Dies erleichtert die Fehlersuche, wenn Probleme auftreten, und hilft auch sicherzustellen, dass nicht verwandte Protokolleinträge nicht in Ihrem Aggregator angezeigt werden. Ein Beispiel für eine enge Definition wäre, einen _Flow_ auf eine einzelne _Implementierung_ in einem Namespace oder vielleicht sogar auf einen einzelnen Container innerhalb eines _Pod_ zu beschränken.
+* Halten Sie die Protokollausführlichkeit niedrig, es sei denn, Sie führen eine Fehlersuche durch. Eine hohe Protokollausführlichkeit bringt eine Reihe von Problemen mit sich, wobei das Hauptproblem *noise* ist: signifikante Ereignisse können in einer Flut von `DEBUG` Nachrichten untergehen. Dies wird etwas durch automatisierte Warnungen und Skripte gemildert, aber hochgradig ausführliches Protokollieren belastet die Protokollinfrastruktur immer noch übermäßig.
+* Wo möglich, versuchen Sie, eine Transaktions- oder Anforderungs-ID mit dem Protokolleintrag bereitzustellen. Dies kann das Nachverfolgen von Anwendungsaktivitäten über mehrere Protokollquellen hinweg erleichtern, insbesondere bei verteilten Anwendungen.

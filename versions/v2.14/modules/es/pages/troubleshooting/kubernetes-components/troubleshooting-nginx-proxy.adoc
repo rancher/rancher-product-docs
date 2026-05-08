@@ -1,0 +1,84 @@
+= Solución de problemas de nginx-proxy
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc 
+:product-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc
+
+[CAUTION]
+====
+El `nginx-proxy` contenedor es un componente específico de RKE1. Si están utilizando RKE2 o K3s, este contenedor no se despliega, ya que el balanceo de carga hacia los servidores API se gestiona internamente mediante un balanceador de carga del lado del cliente dentro del proceso del agente.
+
+Además, tengan en cuenta que RKE1 ha alcanzado su https://support.scc.suse.com/s/kb/RKE-EOL-what-when-why?[Fin de vida útil (EOL)]. Por lo tanto, se considera que la información en esta página ha quedado obsoleta.
+====
+
+El `nginx-proxy` contenedor se despliega en cada nodo que no tiene el rol `controlplane`. Proporciona acceso a todos los nodos con el rol `controlplane` generando dinámicamente la configuración de NGINX en función de los nodos disponibles con el rol `controlplane`.
+
+[#_check_if_the_container_is_running]
+== Comprobar si el contenedor está en ejecución
+
+El contenedor se llama `nginx-proxy` y debería tener el estado `Up`. La duración mostrada después de `Up` es el tiempo que el contenedor ha estado en ejecución.
+
+----
+docker ps -a -f=name=nginx-proxy
+----
+
+Resultado de ejemplo:
+
+----
+docker ps -a -f=name=nginx-proxy
+CONTAINER ID        IMAGE                       COMMAND                  CREATED             STATUS              PORTS               NAMES
+c3e933687c0e        rancher/rke-tools:v0.1.15   "nginx-proxy CP_HO..."   3 hours ago         Up 3 hours                              nginx-proxy
+----
+
+[#_check_generated_nginx_configuration]
+== Comprobar la configuración de NGINX generada
+
+La configuración generada debería incluir las direcciones IP de los nodos con el rol `controlplane`. La configuración se puede comprobar utilizando el siguiente comando:
+
+----
+docker exec nginx-proxy cat /etc/nginx/nginx.conf
+----
+
+Resultado de ejemplo:
+
+----
+error_log stderr notice;
+
+worker_processes auto;
+events {
+  multi_accept on;
+  use epoll;
+  worker_connections 1024;
+}
+
+stream {
+        upstream kube_apiserver {
+
+            server ip_of_controlplane_node1:6443;
+
+            server ip_of_controlplane_node2:6443;
+
+        }
+
+        server {
+            listen        6443;
+            proxy_pass    kube_apiserver;
+            proxy_timeout 30;
+            proxy_connect_timeout 2s;
+
+        }
+
+}
+----
+
+[#_nginx_proxy_container_logging]
+== Registro del contenedor nginx-proxy
+
+El registro de los contenedores puede contener información sobre cuál podría ser el problema.
+
+----
+docker logs nginx-proxy
+----

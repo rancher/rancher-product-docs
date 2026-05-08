@@ -1,0 +1,121 @@
+= プロメテウスフェデレーター
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/prometheus-federator/index.adoc 
+:product-path: observability/monitoring-and-dashboards/prometheus-federator/prometheus-federator.adoc
+ifeval::["{build-type}" != "community"]
+:xref-prometheus-federator-rbac: xref:observability/monitoring-and-dashboards/prometheus-federator/rbac.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-prometheus-federator-rbac: xref:reference-guides/prometheus-federator/rbac.adoc
+endif::[]
+
+プロメテウスフェデレーター（プロジェクトモニタリングv2とも呼ばれる）は、 https://github.com/rancher/helm-project-operator[rancher/helm-project-operator]に基づくHelmプロジェクトオペレーターをデプロイします。このオペレーターは、各プロジェクトモニタリングスタックを含むHelmチャートをデプロイする管理を行います。各スタックには以下が含まれます：
+
+* https://prometheus.io/[Prometheus]（ https://github.com/prometheus-operator/prometheus-operator[Prometheus Operator]によって外部管理される）
+* https://prometheus.io/docs/alerting/latest/alertmanager/[Alertmanager]（ https://github.com/prometheus-operator/prometheus-operator[Prometheus Operator]によって外部管理される）
+* https://github.com/helm/charts/tree/master/stable/grafana[Grafana]（埋め込まれたHelmチャートを介してデプロイされる）
+* コミュニティがキュレーションしたリソースのコレクションに基づくデフォルトのPrometheusRulesおよびGrafanaダッシュボード（ https://github.com/prometheus-operator/kube-prometheus/[kube-prometheus]から）。
+* デプロイされたリソースを監視するデフォルトのServiceMonitors
+
+[NOTE]
+.重要:
+====
+
+プロメテウスフェデレーターは、すでにプロメテウスオペレーターCRDがインストールされているクラスター内で、既存のプロメテウスオペレーターのデプロイメントと一緒にデプロイされるように設計されています。
+====
+
+
+[#_how_does_the_operator_work]
+== オペレーターはどのように機能しますか？
+
+. このチャートをデプロイすると、ユーザーは`spec.helmApiVersion`を`monitoring.cattle.io/v1alpha1`（Rancher UIでは「プロジェクトモニター」として知られる）に設定したProjectHelmCharts CRを作成できます。これは*プロジェクト登録ネームスペース（`cattle-project-<id>`）*内で行われます。
+. 各ProjectHelmChartCRを確認すると、オペレーターは自動的にプロジェクトオーナーの代理として*プロジェクトリリースネームスペース（`cattle-project-<id>-monitoring`）*にプロジェクトプロメテウススタックをデプロイします。これは、ProjectHelmChartコントローラーによって*オペレーター/システムネームスペース*内で自動的に作成されたHelmChart CRおよびHelmRelease CRに基づいています。
+. RBACは自動的にプロジェクトリリースネームスペースに割り当てられ、ユーザーがデプロイされたプロジェクトモニタリングスタックのPrometheus、Alertmanager、およびGrafana UIを表示できるようにします。これは、 https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[デフォルトのKubernetesユーザー向けロール]に対してプロジェクト登録ネームスペースで定義されたRBACに基づいています。詳細については、{xref-prometheus-federator-rbac}[RBACの設定]に関するセクションを参照してください。
+
+[#_what_is_a_project]
+== プロジェクトとは何ですか？
+
+プロメテウスフェデレーターにおいて、プロジェクトは`metav1.LabelSelector`によって識別されるネームスペースのグループです。デフォルトでは、プロジェクトを識別するために使用されるラベルは`field.cattle.io/projectId`であり、これは特定のRancherプロジェクト内に含まれるネームスペースを識別するために使用されます。
+
+[#_configuring_the_helm_release_created_by_a_projecthelmchart]
+== ProjectHelmChartによって作成されたHelmリリースの設定
+
+このProjectHelmChartのリソースの`spec.values`は、ユーザーの代理としてオペレーターによってデプロイされる基盤となるHelmチャートに供給される`values.yaml`オーバーライドに対応します。基盤となるチャートの`values.yaml`仕様を確認するには、次のいずれかを行います：
+
+* `charts/rancher-project-monitoring`にある https://github.com/rancher/prometheus-federator/blob/main/charts/rancher-project-monitoring[`rancher/prometheus-federator`のチャート定義を表示します（チャートのバージョンはこのオペレーターのバージョンに結びつけられます）。]
+* 各プロジェクト登録ネームスペースに自動的に作成されるConfigMapの名前`monitoring.cattle.io.v1alpha1`を探します。これには、チャートを構成するために使用された`values.yaml`と`questions.yaml`が含まれます（これは`prometheus-federator`バイナリに直接埋め込まれています）。
+
+[#_namespaces]
+== ネームスペース
+
+https://github.com/rancher/helm-project-operator[rancher/helm-project-operator]に基づくプロジェクトオペレーターとして、Prometheus Federatorはオペレーターが監視する3つの異なる分類のネームスペースを持っています。
+
+. *オペレーター / システムネームスペース*：オペレーターがデプロイされるネームスペース（例：`cattle-monitoring-system`）。このネームスペースには、このオペレーターが監視するすべてのProjectHelmChartsのためのすべてのHelmChartsとHelmReleasesが含まれます。*このネームスペースには、クラスター管理者のみがアクセスできるべきです。*
+. *プロジェクト登録ネームスペース (`cattle-project-<id>`)*：オペレーターがProjectHelmChartsのために監視するネームスペースのセット。このネームスペースに適用されるRoleBindingsとClusterRoleBindingsは、プロジェクトリリースネームスペースで作成された自動割り当てRBACの真実のソースにもなります。詳細については、{xref-prometheus-federator-rbac}[RBACページ]を参照してください。*プロジェクトオーナー（管理者）、プロジェクトメンバー（編集）、および読み取り専用メンバー（表示）は、このネームスペースにアクセスできるべきです。*
++
+
+[NOTE]
+.メモ:
+====
+
+ ** プロジェクト登録ネームスペースは、オペレーターによって自動生成され、`.Values.global.cattle.projectLabel`が提供されている場合、関連するプロジェクトにインポートされます。デフォルトでは`field.cattle.io/projectId`に設定されています。これは、少なくとも1つのネームスペースがそのラベルで観察される場合、オペレーターによってプロジェクト登録ネームスペースが作成されるべきであることを示しています。オペレーターは、すべてのネームスペースがそのラベルで削除されるか（例：これはそのプロジェクトの最後のネームスペースであり、その場合、ネームスペースは削除可能であることを示すラベル`"helm.cattle.io/helm-project-operator-orphaned": "true"`でマークされます）、またはプロジェクトIDが`.Values.helmProjectOperator.otherSystemProjectLabelValues`の下で指定されているため、そのプロジェクトの監視をやめた場合（これはプロジェクトの拒否リストとして機能します）でない限り、これらのネームスペースを削除できないようにします。これらのネームスペースは、ユーザーデータを破壊しないように自動的に削除されることはありません。プロジェクトを作成または削除する際には、ユーザーが手動でこれらのネームスペースを整理することをお勧めします。
+ ** `.Values.global.cattle.projectLabel`が提供されていない場合、オペレーター／システムネームスペースはプロジェクト登録ネームスペースにもなります。
+
++
+====
+
+
+. *プロジェクトリリースネームスペース（`cattle-project-<id>-monitoring`）：*オペレーターがProjectHelmChartの代理としてProject Monitoring Stacksをデプロイするネームスペースのセット。オペレーターは、プロジェクト登録ネームスペースで見つかったバインディングに基づいて、このネームスペースで作成されたロールにRBACを自動的に割り当てます。*このネームスペースには、クラスター管理者のみがアクセスできるべきです。プロジェクトオーナー（管理者）、プロジェクトメンバー（編集）、および読み取り専用メンバー（表示）は、デプロイされたHelm ChartとPrometheus Federatorによってこのネームスペースへの制限付きアクセスが割り当てられます。*
++
+
+[NOTE]
+.メモ:
+====
+
+ ** プロジェクトリリースネームスペースは、プロジェクト登録ネームスペースでProjectHelmChartが指定されるたびに、`.Values.helmProjectOperator.projectReleaseNamespaces.labelValue`の下で指定されたプロジェクトに自動的にデプロイされ、インポートされます。指定されていない場合、デフォルトでは`.Values.global.cattle.systemProjectId`の値が使用されます。
+ ** プロジェクトリリースネームスペースは、プロジェクト登録ネームスペースと同じ孤立化の規則に従います（上記の注釈を参照）。
+ ** `.Values.projectReleaseNamespaces.enabled`が偽の場合、プロジェクトリリースネームスペースはプロジェクト登録ネームスペースと同じになります。
+
++
+====
+
+
+[#_helm_resources_helmchart_helmrelease]
+== Helmリソース（HelmChart、HelmRelease）
+
+ProjectHelmChartをデプロイすると、Prometheus Federatorは自動的に2つの子カスタムリソースを作成し、基盤となるHelmリソースを管理します。
+
+* HelmChart CR（オペレーター内の埋め込まれた https://github.com/k3s-io/helm-controller[k3s-io/helm-contoller]を介して管理される）：このカスタムリソースは、HelmChart CRに適用された変更に応じて、同じネームスペース内にジョブを自動的に作成し、`helm install`、`helm upgrade`、または`helm uninstall`をトリガーします。このCRは、ProjectHelmChartの変更（例：values.yamlの修正）や基盤となるプロジェクト定義の変更（例：プロジェクトからネームスペースを追加または削除）に応じて自動的に更新されます。
+
+[NOTE]
+.重要:
+====
+
+ProjectHelmChartが何らかの理由で基盤となるプロジェクト監視スタックをデプロイまたは更新していない場合、このリソースによってオペレーター/システムネームスペースに作成されたジョブが、Helm操作に何か問題があるかどうかを確認する最初の場所であるべきです。ただし、これは一般的に*クラスター管理者*のみがアクセス可能です。
+====
+
+
+* HelmRelease CR（オペレーター内の埋め込まれた https://github.com/rancher/helm-locker[rancher/helm-locker]を介して管理される）：このカスタムリソースは、デプロイされたHelmリリースをその場にロックし、Helm操作（HelmChart CRによって実行される`helm install`、`helm upgrade`、または`helm uninstall`）を介さない限り、基盤となるリソースへの更新を自動的に上書きします。
+
+[NOTE]
+====
+
+HelmRelease CRは、基盤となるHelmリリースが変更された際にそれを検出し、元の位置に再度ロックします。これらのイベントを表示するには、`kubectl describe helmrelease <helm-release-name> -n <operator/system-namespace>`を使用できます。また、オペレーターのログを表示して、変更が検出されたときや、どのリソースの変更が試みられたかを確認することもできます。
+====
+
+
+これらのリソースは、権限のないユーザーへの特権のエスカレーションを避けるために、オペレーター/システムネームスペース内のすべてのHelmチャートに対して作成されます。
+
+[#_advanced_helm_project_operator_configuration]
+=== 高度なHelmプロジェクトオペレーター設定
+
+高度な設定に関する詳細は、 https://github.com/rancher/prometheus-federator/blob/main/charts/prometheus-federator/README.md#advanced-helm-project-operator-configuration[このページ]を参照してください。
+
+[#_prometheus_federator_on_the_local_cluster]
+== ローカルクラスタ上のPrometheus Federator
+
+Prometheus Federatorはリソース集約型のアプリケーションです。ローカルクラスタにインストールすることは可能ですが、*推奨されません*。

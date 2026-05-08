@@ -1,0 +1,121 @@
+= ネットワーキング
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/networking.adoc 
+:product-path: troubleshooting/other-troubleshooting-tips/networking.adoc
+ifeval::["{build-type}" != "community"]
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc
+endif::[]
+
+このページに記載されているコマンド/手順は、クラスター内のネットワーク関連の問題を確認するために使用できます。
+
+正しいkubeconfig（例えば、`export KUBECONFIG=$PWD/kube_config_cluster.yml`をRancher HA用に設定したか、UI経由で埋め込まれたkubectlを使用していることを確認してください）。
+
+[#_double_check_if_all_the_required_ports_are_opened_in_your_host_firewall]
+== 必要なすべてのポートが（ホスト）ファイアウォールで開いているか再確認してください。
+
+すべての{xref-node-reqs}#_networking_requirements[必要なポート]が（ホスト）ファイアウォールで開いているか再確認してください。オーバーレイネットワークは、他のすべての必要なポートがTCPであるのに対し、UDPを使用します。
+
+[#_check_if_overlay_network_is_functioning_correctly]
+== オーバーレイネットワークが正しく機能しているか確認してください。
+
+ポッドは、クラスターに使用した任意のホストにスケジュールできますが、それはNGINXイングレスコントローラーが`NODE_1`から`NODE_2`へのリクエストをルーティングできる必要があることを意味します。これはオーバーレイネットワークを介して行われます。オーバーレイネットワークが機能していない場合、NGINXイングレスコントローラーがポッドへのルーティングができないため、断続的なTCP/HTTP接続エラーが発生します。
+
+オーバーレイネットワークをテストするには、次の`DaemonSet`定義を起動できます。これにより、すべてのホストで`swiss-army-knife`コンテナが実行されます（画像はRancherエンジニアによって開発され、ここにあります: https://github.com/rancherlabs/swiss-army-knife),、これを使用してすべてのホスト間で`ping`テストを実行します）。
+
+[CAUTION]
+====
+
+`swiss-army-knife`コンテナはWindowsノードをサポートしていません。また、 https://github.com/leodotcloud/swiss-army-knife/issues/18[ARMノード]（例えば、Raspberry Pi）をサポートしていません。テストが互換性のないノードに遭遇した場合、これはポッドログにエラーメッセージとして記録されます。例えば、ARMノードの場合は`exec user process caused: exec format error`、Windowsノードの場合は`ImagePullBackOff (Back-off pulling image "rancherlabs/swiss-army-knife)`です。
+====
+
+
+. 次のファイルを`overlaytest.yml`として保存してください。
++
+----
+ apiVersion: apps/v1
+ kind: DaemonSet
+ metadata:
+   name: overlaytest
+ spec:
+   selector:
+       matchLabels:
+         name: overlaytest
+   template:
+     metadata:
+       labels:
+         name: overlaytest
+     spec:
+       tolerations:
+       - operator: Exists
+       containers:
+       - image: rancherlabs/swiss-army-knife
+         imagePullPolicy: Always
+         name: overlaytest
+         command: ["sleep", "infinity"]
+         terminationMessagePath: /dev/termination-log
+----
+
+. `kubectl create -f overlaytest.yml`を使用して起動してください。
+. `kubectl rollout status ds/overlaytest -w`が返すまで待ってください: `daemon set "overlaytest" successfully rolled out`。
+. 同じ場所から次のスクリプトを実行してください。 すべてのホストで各`overlaytest`コンテナが互いにpingを送信します:
++
+----
+ #!/bin/bash
+ echo "=> Start network overlay test"
+   kubectl get pods -l name=overlaytest -o jsonpath='{range .items[*]}{@.metadata.name}{" "}{@.spec.nodeName}{"\n"}{end}' |
+   while read spod shost
+     do kubectl get pods -l name=overlaytest -o jsonpath='{range .items[*]}{@.status.podIP}{" "}{@.spec.nodeName}{"\n"}{end}' |
+     while read tip thost
+       do kubectl --request-timeout='10s' exec $spod -c overlaytest -- /bin/sh -c "ping -c2 $tip > /dev/null 2>&1"
+         RC=$?
+         if [ $RC -ne 0 ]
+           then echo FAIL: $spod on $shost cannot reach pod IP $tip on $thost
+           else echo $shost can reach $thost
+         fi
+     done
+   done
+ echo "=> End network overlay test"
+----
+
+. このコマンドの実行が完了すると、各ルートの状態が出力されます。
++
+----
+ => Start network overlay test
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.7.3 on wk2
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.0.5 on cp1
+ Error from server (NotFound): pods "wk2" not found
+ FAIL: overlaytest-5bglp on wk2 cannot reach pod IP 10.42.2.12 on wk1
+ command terminated with exit code 1
+ FAIL: overlaytest-v4qkl on cp1 cannot reach pod IP 10.42.7.3 on wk2
+ cp1 can reach cp1
+ cp1 can reach wk1
+ command terminated with exit code 1
+ FAIL: overlaytest-xpxwp on wk1 cannot reach pod IP 10.42.7.3 on wk2
+ wk1 can reach cp1
+ wk1 can reach wk1
+ => End network overlay test
+----
++
+出力にエラーが表示された場合、2つのホスト間のポッドのルートに問題があります。 上記の出力では、ノード`wk2`がオーバーレイネットワークに接続できません。これは、オーバーレイネットワーキングに必要なポート{xref-node-reqs}#_networking_requirementsが`wk2`のために開かれていない可能性があります。
+
+. `kubectl delete ds/overlaytest`を実行して、DaemonSetをクリーンアップできます。
+
+[#_check_if_mtu_is_correctly_configured_on_hosts_and_on_peering_tunnel_appliances_devices]
+=== ホストおよびピアリング/トンネル機器/デバイスでMTUが正しく設定されているかどうかを確認してください。
+
+MTUが正しく設定されていない場合（Rancherを実行しているホスト、作成された/インポートされたクラスターのノード、またはその間の機器/デバイスのいずれかで）、Rancherおよびエージェントにエラーメッセージが記録されます。
+
+* `websocket: bad handshake`
+* `Failed to connect to proxy`
+* `read tcp: i/o timeout`
+
+Rancherとクラスターのノード間でGoogle Cloud VPNを使用する際にMTUを正しく設定する方法の例については、 https://cloud.google.com/vpn/docs/concepts/mtu-considerations#gateway_mtu_vs_system_mtu[Google Cloud VPN: MTUの考慮事項]を参照してください。

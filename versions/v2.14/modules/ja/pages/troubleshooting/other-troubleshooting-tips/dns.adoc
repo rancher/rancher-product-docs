@@ -1,0 +1,242 @@
+= DNS
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-23
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/dns.adoc 
+:product-path: troubleshooting/other-troubleshooting-tips/dns.adoc
+
+このページに記載されているコマンド/手順は、クラスター内の名前解決の問題を確認するために使用できます。
+
+正しいkubeconfig（例えば、Rancher HA用の`export KUBECONFIG=$PWD/kube_config_cluster.yml`）が設定されていることを確認するか、UIを介して埋め込まれたkubectlを使用していることを確認してください。
+
+DNSチェックを実行する前に、xref:./networking.adoc#_check_if_overlay_network_is_functioning_correctly[オーバーレイネットワークがDNSプロバイダーに対して正しく機能していることを確認してください]。これがDNS解決が（部分的に）失敗する理由である可能性もあります。
+
+[#_check_if_dns_pods_are_running]
+== DNSポッドが実行中か確認してください。
+
+----
+kubectl -n kube-system get pods -l k8s-app=kube-dns
+----
+
+CoreDNSを使用したときの出力例：
+
+----
+NAME                       READY   STATUS    RESTARTS   AGE
+coredns-799dffd9c4-6jhlz   1/1     Running   0          76m
+----
+
+kube-dnsを使用したときの出力例：
+
+----
+NAME                        READY   STATUS    RESTARTS   AGE
+kube-dns-5fd74c7488-h6f7n   3/3     Running   0          4m13s
+----
+
+[#_check_if_the_dns_service_is_present_with_the_correct_cluster_ip]
+== 正しいクラスターIPを持つDNSサービスが存在するか確認してください。
+
+----
+kubectl -n kube-system get svc -l k8s-app=kube-dns
+----
+
+----
+NAME               TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)         AGE
+service/kube-dns   ClusterIP   10.43.0.10   <none>        53/UDP,53/TCP   4m13s
+----
+
+[#_check_if_domain_names_are_resolving]
+== ドメイン名が解決されているか確認してください。
+
+内部クラスター名が解決されているか確認してください（この例では、`kubernetes.default`）。`Server:`の後に表示されるIPは、`CLUSTER-IP`サービスの`kube-dns`と同じである必要があります。
+
+----
+kubectl run -it --rm --restart=Never busybox --image=busybox:1.28 -- nslookup kubernetes.default
+----
+
+出力の例：
+
+----
+Server:    10.43.0.10
+Address 1: 10.43.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      kubernetes.default
+Address 1: 10.43.0.1 kubernetes.default.svc.cluster.local
+pod "busybox" deleted
+----
+
+外部名が解決されているか確認してください（この例では、`www.google.com`）。
+
+----
+kubectl run -it --rm --restart=Never busybox --image=busybox:1.28 -- nslookup www.google.com
+----
+
+出力の例：
+
+----
+Server:    10.43.0.10
+Address 1: 10.43.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      www.google.com
+Address 1: 2a00:1450:4009:80b::2004 lhr35s04-in-x04.1e100.net
+Address 2: 216.58.211.100 ams15s32-in-f4.1e100.net
+pod "busybox" deleted
+----
+
+すべてのホストでドメイン名の解決を確認したい場合は、次の手順を実行してください：
+
+. 次のファイルを`ds-dnstest.yml`として保存してください。
++
+----
+ apiVersion: apps/v1
+ kind: DaemonSet
+ metadata:
+   name: dnstest
+ spec:
+   selector:
+       matchLabels:
+         name: dnstest
+   template:
+     metadata:
+       labels:
+         name: dnstest
+     spec:
+       tolerations:
+       - operator: Exists
+       containers:
+       - image: busybox:1.28
+         imagePullPolicy: Always
+         name: alpine
+         command: ["sleep", "infinity"]
+         terminationMessagePath: /dev/termination-log
+----
+
+. `kubectl create -f ds-dnstest.yml`を使用して起動してください。
+. `kubectl rollout status ds/dnstest -w`が返すまで待ってください: `daemon set "dnstest" successfully rolled out`。
+. 環境変数`DOMAIN`を、ホストが解決できる完全修飾ドメイン名（FQDN）に設定し（`www.google.com`は例として使用）、次のコマンドを実行して、各ホストの各コンテナが設定されたドメイン名を解決できるようにします（これは1行のコマンドです）。
++
+----
+ export DOMAIN=www.google.com; echo "=> Start DNS resolve test"; kubectl get pods -l name=dnstest --no-headers -o custom-columns=NAME:.metadata.name,HOSTIP:.status.hostIP | while read pod host; do kubectl exec $pod -- /bin/sh -c "nslookup $DOMAIN > /dev/null 2>&1"; RC=$?; if [ $RC -ne 0 ]; then echo $host cannot resolve $DOMAIN; fi; done; echo "=> End DNS resolve test"
+----
+
+. このコマンドの実行が完了すると、すべてが正しいことを示す出力は次のとおりです：
++
+----
+ => Start DNS resolve test
+ => End DNS resolve test
+----
+
+出力にエラーが表示される場合、指定されたホストが与えられたFQDNを解決できないことを意味します。
+
+IP 209.97.182.150のホストでUDPポートがブロックされている状況のエラー出力の例。
+
+----
+=> Start DNS resolve test
+command terminated with exit code 1
+209.97.182.150 cannot resolve www.google.com
+=> End DNS resolve test
+----
+
+`kubectl delete ds/dnstest`を実行してalpine DaemonSetをクリーンアップしてください。
+
+[#_coredns_specific]
+== CoreDNS特有
+
+[#_check_coredns_logging]
+=== CoreDNSのログを確認してください。
+
+----
+kubectl -n kube-system logs -l k8s-app=kube-dns
+----
+
+[#_check_configuration]
+=== 設定を確認する
+
+CoreDNSの設定は、`kube-system`ネームスペースのconfigmap `coredns`に保存されています。
+
+----
+kubectl -n kube-system get configmap coredns -o go-template={{.data.Corefile}}
+----
+
+[#_check_upstream_nameservers_in_resolv_conf]
+=== resolv.confでアップストリームネームサーバーを確認してください。
+
+デフォルトでは、ホスト上の設定されたネームサーバー（`/etc/resolv.conf`内）がCoreDNSのアップストリームネームサーバーとして使用されます。このファイルをホスト上で確認するか、`dnsPolicy`を`Default`に設定して以下のPodを実行することで確認できます。これにより、実行中のホストから`/etc/resolv.conf`が引き継がれます。
+
+----
+kubectl run -i --restart=Never --rm test-${RANDOM} --image=ubuntu --overrides='{"kind":"Pod", "apiVersion":"v1", "spec": {"dnsPolicy":"Default"}}' -- sh -c 'cat /etc/resolv.conf'
+----
+
+[#_enable_query_logging]
+=== クエリログを有効にする
+
+クエリログを有効にするには、configmap `coredns`のCorefile設定で https://coredns.io/plugins/log/[ログプラグイン]を有効にします。`kubectl -n kube-system edit configmap coredns`を使用するか、以下のコマンドを使用して設定をそのまま置き換えることができます。
+
+----
+kubectl get configmap -n kube-system coredns -o json | sed -e 's_loadbalance_log\\n    loadbalance_g' | kubectl apply -f -
+----
+
+すべてのクエリがログに記録され、<<_check_coredns_logging,CoreDNSのログを確認する>>コマンドを使用して確認できます。
+
+[#_kube_dns_specific]
+== kube-dns特有
+
+[#_check_upstream_nameservers_in_kubedns_container]
+=== kubednsコンテナでアップストリームのネームサーバーを確認してください。
+
+デフォルトでは、ホスト上の設定されたネームサーバー（`/etc/resolv.conf`内）がkube-dnsのアップストリームネームサーバーとして使用されます。時々、ホストはローカルキャッシングDNSネームサーバーを実行し、`/etc/resolv.conf`のアドレスがループバック範囲（`127.0.0.0/8`）内のアドレスを指すことがあり、コンテナからは到達できません。Ubuntu 18.04の場合、これは`systemd-resolved`によって行われます。`systemd-resolved`が実行中かどうかを検出し、正しいアップストリームネームサーバーを持つ`/etc/resolv.conf`ファイル（`/run/systemd/resolve/resolv.conf`にあります）を自動的に使用します。
+
+以下のコマンドを使用して、kubednsコンテナで使用されているアップストリームネームサーバーを確認してください。
+
+----
+kubectl -n kube-system get pods -l k8s-app=kube-dns --no-headers -o custom-columns=NAME:.metadata.name,HOSTIP:.status.hostIP | while read pod host; do echo "Pod ${pod} on host ${host}"; kubectl -n kube-system exec $pod -c kubedns cat /etc/resolv.conf; done
+----
+
+出力の例：
+
+----
+Pod kube-dns-667c7cb9dd-z4dsf on host x.x.x.x
+nameserver 1.1.1.1
+nameserver 8.8.4.4
+----
+
+出力にループバック範囲内のアドレス（`127.0.0.0/8`）が表示される場合、次の2つの方法で修正できます。
+
+* クラスター内のノードの`/etc/resolv.conf`に正しいネームサーバーがリストされていることを確認してください。これを行う方法については、オペレーティングシステムのドキュメントを参照してください。クラスターをプロビジョニングする前にこれを実行するか、変更を加えた後にノードを再起動してください。
+* `kubelet`を使用して名前解決のために異なるファイルを使用するように設定します。以下のように`extra_args`を使用します（`/run/resolvconf/resolv.conf`は正しいネームサーバーを持つファイルです）：
+
+----
+services:
+  kubelet:
+    extra_args:
+      resolv-conf: "/run/resolvconf/resolv.conf"
+----
+
+[NOTE]
+====
+
+`kubelet`がコンテナ内で実行されているため、`/etc`と`/usr`にあるファイルのパスは、`/host/etc`と`/host/usr`が`kubelet`コンテナ内にあります。
+====
+
+
+この変更を適用する方法については、YAMLの編集クラスターを参照してください。クラスターのプロビジョニングが完了したら、新しい設定をポッドで有効にするためにkube-dnsポッドを削除する必要があります。
+
+----
+kubectl delete pods -n kube-system -l k8s-app=kube-dns
+pod "kube-dns-5fd74c7488-6pwsf" deleted
+----
+
+<<_check_if_domain_names_are_resolving,ドメイン名が解決されているか確認してください>>を使用して、再度名前を解決してみてください。
+
+クラスター内のkube-dns設定を確認したい場合（たとえば、異なるアップストリームネームサーバーが設定されているか確認するため）、次のコマンドを実行してkube-dns設定をリストできます。
+
+----
+kubectl -n kube-system get configmap kube-dns -o go-template='{{range $key, $value := .data}}{{ $key }}{{":"}}{{ $value }}{{"\n"}}{{end}}'
+----
+
+出力の例：
+
+----
+upstreamNameservers:["1.1.1.1"]
+----

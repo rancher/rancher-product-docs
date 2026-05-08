@@ -1,30 +1,43 @@
-= {rancher-product-name} Server Kubernetes 集群的问题排查
+= 故障排除 {rancher-product-name} Kubernetes 集群中的 服务器
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-25
+endif::[]
+:revdate: 2026-03-19
 :page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc 
+:product-path: installation-and-upgrade/troubleshooting/troubleshooting.adoc
+ifeval::["{build-type}" != "community"]
+:xref-tls-secrets: xref:installation-and-upgrade/resources/tls-secrets.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-tls-secrets: xref:getting-started/installation-and-upgrade/resources/add-tls-secrets.adoc
+endif::[]
 
-本文介绍如何对安装在 Kubernetes 集群上的 Rancher 进行故障排除。
+本节描述了如何在 Kubernetes 集群上故障排除 Rancher 的安装。
 
-== 相关命名空间
+[#_relevant_namespaces]
+== 相关名称空间
 
-故障排除主要针对以下 3 个命名空间中的对象：
+大多数故障排除将在这 3 个名称空间中的对象上进行。
 
-* `cattle-system`：`rancher` deployment 和 Pod。
-* `ingress-nginx`：Ingress Controller Pod 和 services。
-* `cert-manager`：`cert-manager` Pod。
+* `cattle-system` - `rancher` 部署和 pods。
+* `traefik` - Ingress 控制器 pods 和服务。
+* `cert-manager` - `cert-manager` pods。
 
-== "default backend - 404"
+[#__default_backend_404]
+== "默认后端 - 404"
 
-很多操作都有可能导致 Ingress Controller 无法将流量转发到你的 Rancher 实例。但是大多数情况下都是由错误的 SSL 配置导致的。
+多种原因可能导致 ingress-controller 无法将流量转发到您的 Rancher 实例。大多数情况下，这是由于 SSL 配置错误。
 
-检查事项：
+需要检查的事项
 
-* <<_检查_rancher_是否正在运行,Rancher 是否正在运行>>
-* <<_证书的_cn_是_kubernetes_ingress_controller_fake_certificate,证书的 Common Name（CN）是 "Kubernetes Ingress Controller Fake Certificate">>
+* <<_check_if_rancher_is_running,Rancher 是否正在运行>>
+* <<_cert_cn_is_kubernetes_ingress_controller_fake_certificate,证书 CN 为 "Kubernetes Ingress Controller Fake Certificate">>
 
+[#_check_if_rancher_is_running]
 == 检查 Rancher 是否正在运行
 
-使用 `kubectl` 检查 `cattle-system` 系统命名空间，并查看 Rancher Pod 的状态是否是 *Running*：
+使用 `kubectl` 检查 `cattle-system` 系统名称空间，查看 Rancher pods 是否处于运行状态。
 
 ----
 kubectl -n cattle-system get pods
@@ -33,7 +46,7 @@ NAME                           READY     STATUS    RESTARTS   AGE
 pod/rancher-784d94f59b-vgqzh   1/1       Running   0          10m
 ----
 
-如果状态不是 `Running`，在 Pod 上运行 `describe`，并检查 *Events*：
+如果状态不是 `Running`，请在 pod 上运行 `describe` 并检查事件。
 
 ----
 kubectl -n cattle-system describe pod
@@ -50,9 +63,10 @@ Events:
   Normal   Started                11m   kubelet, localhost  Started container
 ----
 
+[#_check_the_rancher_logs]
 == 检查 Rancher 日志
 
-使用 `kubectl` 列出 Pod：
+使用 `kubectl` 列出 pods。
 
 ----
 kubectl -n cattle-system get pods
@@ -61,34 +75,36 @@ NAME                           READY     STATUS    RESTARTS   AGE
 pod/rancher-784d94f59b-vgqzh   1/1       Running   0          10m
 ----
 
-使用 `kubectl` 和 Pod 名称列出该 Pod 的日志：
+使用 `kubectl` 和 pod 名称列出 pod 的日志。
 
 ----
 kubectl -n cattle-system logs -f rancher-784d94f59b-vgqzh
 ----
 
-== 证书的 CN 是 "Kubernetes Ingress Controller Fake Certificate"
+[#_cert_cn_is_kubernetes_ingress_controller_fake_certificate]
+== 证书 CN 是 "Kubernetes Ingress Controller Fake Certificate"
 
-使用浏览器检查证书的详细信息。如果显示 CN 是 "Kubernetes Ingress Controller Fake Certificate"，则说明读取或颁发 SSL 证书时出现了问题。
+使用您的浏览器检查证书详细信息。如果显示的通用名称是 "Kubernetes Ingress Controller Fake Certificate"，那么在读取或颁发您的 SSL 证书时可能出现了问题。
 
 [NOTE]
 ====
 
-如果你使用的是 Let's Encrypt 证书，证书颁发的过程可能需要几分钟。
+如果您使用 LetsEncrypt 来颁发证书，有时颁发证书可能需要几分钟。
 ====
 
 
-== 排查 Cert-Manager 颁发的证书（Rancher 或 Let's Encrypt 生成的）问题
+[#_checking_for_issues_with_cert_manager_issued_certs_rancher_generated_or_letsencrypt]
+== 检查 cert-manager 颁发的证书（Rancher 生成或 LetsEncrypt）是否存在问题。
 
-`cert-manager` 有 3 部分：
+`cert-manager` 有 3 个部分。
 
-* `cert-manager` 命名空间中的 `cert-manager` Pod。
-* `cattle-system` 命名空间中的 `Issuer` 对象。
-* `cattle-system` 命名空间中的 `Certificate` 对象。
+* `cert-manager` pod 在 `cert-manager` 名称空间中。
+* `Issuer` 对象在 `cattle-system` 名称空间中。
+* `Certificate` 对象在 `cattle-system` 名称空间中。
 
-往后操作，对每个对象运行 `kubectl describe` 并检查事件。这样，你可以追踪可能丢失的内容。
+向后工作，对每个对象执行 `kubectl describe` 并检查事件。您可以追踪可能缺失的内容。
 
-以下是 Issuer 有问题的示例：
+例如，Issuer 存在问题：
 
 ----
 kubectl -n cattle-system describe certificate
@@ -109,68 +125,88 @@ Events:
   Warning  ErrGetKeyPair  9m (x16 over 19m)   cert-manager  Error getting keypair for CA issuer: secret "tls-rancher" not found
 ----
 
-== 排查你自己提供的 SSL 证书问题
+[#_checking_for_issues_with_your_own_ssl_certs]
+== 检查您自己的 SSL 证书是否存在问题。
 
-你的证书直接应用于 `cattle-system` 命名空间中的 Ingress 对象。
+您的证书直接应用于 `cattle-system` 命名空间中的 Ingress 对象。
 
-检查 Ingress 对象的状态，并查看它是否准备就绪：
+检查 Ingress 对象的状态，看看它是否准备好。
 
 ----
 kubectl -n cattle-system describe ingress
 ----
 
-如果 Ingress 对象已就绪，但是 SSL 仍然无法正常工作，你的证书或密文的格式可能不正确。
+如果它已准备好而 SSL 仍然无法工作，您可能有一个格式错误的证书或密钥。
 
-这种情况下，请检查 nginx-ingress-controller 的日志。nginx-ingress-controller 的 Pod 中有多个容器，因此你需要指定容器的名称：
+检查 nginx-ingress-controller 日志。由于 nginx-ingress-controller 在其 pod 中有多个容器，您需要指定容器的名称。
 
 ----
-kubectl -n ingress-nginx logs -f nginx-ingress-controller-rfjrq nginx-ingress-controller
+kubectl logs -n traefik traefik-6b94b8b688-bngw2
 ...
 W0705 23:04:58.240571       7 backend_ssl.go:49] error obtaining PEM from secret cattle-system/tls-rancher-ingress: error retrieving secret cattle-system/tls-rancher-ingress: secret cattle-system/tls-rancher-ingress was not found
 ----
 
-== 没有匹配的 "Issuer"
+[#_no_matches_for_kind_issuer]
+== 没有找到类型为 "Issuer" 的匹配项。
 
-你所选的 SSL 配置要求在安装 Rancher 之前先安装 Cert-Manager，否则会出现以下错误:
+您选择的 SSL 配置选项要求在安装 Rancher 之前安装 cert-manager，否则会显示以下错误：
 
 ----
 Error: validation failed: unable to recognize "": no matches for kind "Issuer" in version "certmanager.k8s.io/v1alpha1"
 ----
 
-在这种情况下，先安装 Cert-Manager，然后再重新安装 Rancher。
+安装 cert-manager 并再次尝试安装 Rancher。
 
-== Canal Pod 显示 READY 2/3
+[#_canal_pods_show_ready_2_3]
+== Canal Pods 显示已准备好 2/3
 
-此问题的最常见原因是端口 8472/UDP 在节点之间未打开。因此，你可以检查你的本地防火墙、网络路由或安全组。
+此问题最常见的原因是节点之间未开启8472/UDP端口。检查您的本地防火墙、网络路由或安全组。
 
-解决网络问题后，`canal` Pod 会超时并重启以建立连接。
+一旦网络问题解决，`canal` pods 应该超时并重启以建立连接。
 
-== nginx-ingress-controller Pod 显示 RESTARTS
+[#_failed_to_dial_to_var_run_docker_sock_ssh_rejected_administratively_prohibited_open_failed]
+== 连接 /var/run/docker.sock 失败：ssh：被拒绝：管理上禁止（打开失败）
 
-此问题的最常见原因是 `canal` pod 未能建立覆盖网络。参见 <<_canal_pod_显示_ready_23,canal Pod 显示 READY `2/3`>> 进行排查。
+此错误的一些原因包括：
 
-== Failed to dial to /var/run/docker.sock: ssh: rejected: administratively prohibited (open failed)
-
-此错误的原因可能是：
-
-* 指定连接的用户无权访问 Docker Socket。如果是这个原因，你通过登录主机并运行 `docker ps` 命令来检查：
+* 指定的用户没有权限访问 Docker 套接字。可以通过登录到主机并运行命令 `docker ps` 来检查：
 
  $ ssh user@server
  user@server$ docker ps
  CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                    NAMES
 
-如果需要了解如何进行正确设置，请参见link:https://docs.docker.com/install/linux/linux-postinstall/#manage-docker-as-a-non-root-user[以非 root 用户身份管理 Docker]。
+请参见 https://docs.docker.com/install/linux/linux-postinstall/#manage-docker-as-a-non-root-user[以非根用户管理 Docker] 如何正确设置。
 
-* 你使用的操作系统是 RedHat 或 CentOS：由于 https://bugzilla.redhat.com/show_bug.cgi?id=1527565[Bugzilla #1527565]，你不能使用 `root` 用户连接到节点。因此，你需要添加一个单独的用户并配置其访问 Docker Socket。如果需要了解如何进行正确设置，请参见link:https://docs.docker.com/install/linux/linux-postinstall/#manage-docker-as-a-non-root-user[以非 root 用户身份管理 Docker]。
-* SSH 服务器版本不是 6.7 或更高版本：高版本是 Socket 转发所必须的，用于通过 SSH 连接到 Docker Socket。你可以在你要连接的主机上使用 `sshd -V` 或使用 netcat 进行检查：
+* 当使用 RedHat/CentOS 作为操作系统时，您不能使用用户 `root` 连接到节点，因为 https://bugzilla.redhat.com/show_bug.cgi?id=1527565[Bugzilla #1527565]。您需要添加一个单独的用户并配置其访问 Docker 套接字。请参见 https://docs.docker.com/install/linux/linux-postinstall/#manage-docker-as-a-non-root-user[以非根用户管理 Docker] 如何正确设置。
+* SSH 服务器版本不是 6.7 或更高版本。这对于套接字转发的工作是必要的，套接字转发用于通过 SSH 连接到 Docker 套接字。可以使用 `sshd -V` 在您连接的主机上检查，或使用 netcat：
 
  $ nc xxx.xxx.xxx.xxx 22
  SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.10
 
-== Failed to dial ssh using address [xxx.xxx.xxx.xxx:xx]: ssh: handshake failed: ssh: unable to authenticate, attempted methods [none publickey], no supported methods remain
+[#_failed_to_dial_ssh_using_address_xxx_xxx_xxx_xxx_xx_ssh_handshake_failed_ssh_unable_to_authenticate_attempted_methods_none_publickey_no_supported_methods_remain]
+== 连接 ssh 使用地址 [xxx.xxx.xxx.xxx:xx] 失败：ssh：握手失败：ssh：无法验证，尝试的方法 [none publickey]，没有支持的方法。
 
-`ssh_key_path` 密钥文件不是访问节点的正确文件：请仔细检查，确保你已为节点指定了正确的 `ssh_key_path` 和连接用户。
+指定为 `ssh_key_path` 的密钥文件不正确，无法访问节点。仔细检查您是否为节点指定了正确的 `ssh_key_path`，以及您是否指定了正确的用户进行连接。
 
-== Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?
+[#_cannot_connect_to_the_docker_daemon_at_unix_var_run_docker_sock_is_the_docker_daemon_running]
+== 无法连接到 unix:///var/run/docker.sock 的 Docker 守护进程。Docker 守护进程正在运行吗？
 
-节点无法通过配置的 `address` 和 `port` 访问。
+节点在配置的 `address` 和 `port` 上不可达。
+
+[#_agent_reports_tls_errors]
+== 代理报告 TLS 错误。
+
+使用 Rancher 时，您可能会遇到来自 `fleet-agent`、`system-agent` 或 `cluster-agent` 的错误消息，例如以下消息：
+
+----
+tls: failed to verify certificate: x509: failed to load system roots and no roots provided; readdirent /dev/null: not a directory
+----
+
+当 Rancher 配置为将 `agent-tls-mode` 设置为 `strict` 时，但在 `cacert` 设置中找不到 cacerts，就会发生这种情况。要解决此问题，请将 `agent-tls-mode` 设置为 `system-store`，或按照 {xref-tls-secrets}[添加 TLS 密钥] 中的说明上传 Rancher 的 CA。
+
+[#_new_cluster_deployment_is_stuck_in_waiting_for_agent_to_check_in]
+== 新的集群部署卡在“等待代理检查”中。
+
+当 Rancher 将 `agent-tls-mode` 设置为 `strict` 时，新集群可能无法配置，并报告通用的“等待代理检查”错误消息。根本原因与上述 TLS 错误的情况类似 - Rancher 的代理无法确定 Rancher 正在使用哪个 CA（或无法验证 Rancher 的证书是否确实由指定的证书颁发机构签署）。
+
+要解决此问题，请将 `agent-tls-mode` 设置为 `system-store` 或按照 {xref-tls-secrets}[添加 TLS 密钥] 中的说明上传 Rancher 的 CA。

@@ -1,0 +1,341 @@
+= Aktualisierung des {rancher-product-name} Zertifikats
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-16
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/resources/update-rancher-certificate.adoc 
+:product-path: installation-and-upgrade/resources/update-rancher-certificate.adoc
+ifeval::["{build-type}" != "community"]
+:xref-kubeconfig-file: xref:cluster-admin/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-kubeconfig-file: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+endif::[]
+
+[#_updating_a_private_ca_certificate]
+== Aktualisierung eines privaten CA-Zertifikats
+
+Befolgen Sie diese Schritte, um ein SSL-Zertifikat und eine private CA, die von Rancher {xref-install-rancher} [auf einem Kubernetes-Cluster installiert sind], zu rotieren oder auf ein von einer privaten CA signiertes SSL-Zertifikat zu migrieren.
+
+Eine Zusammenfassung der Schritte lautet wie folgt:
+
+. Erstellen oder aktualisieren Sie das `tls-rancher-ingress` Kubernetes-Geheimnisobjekt mit dem neuen Zertifikat und dem privaten Schlüssel.
+. Erstellen oder aktualisieren Sie das `tls-ca` Kubernetes-Geheimnisobjekt mit dem Root-CA-Zertifikat (nur erforderlich, wenn Sie eine private CA verwenden).
+. Aktualisieren Sie die Rancher-Installation mit der Helm-CLI.
+. Konfigurieren Sie die Rancher-Agenten neu, um dem neuen CA-Zertifikat zu vertrauen.
+. Wählen Sie die erzwungene Aktualisierung der Fleet-Cluster, um den Fleet-Agent mit Rancher zu verbinden.
+
+Die Einzelheiten dieser Anweisungen sind unten aufgeführt.
+
+[#_1_create_update_the_certificate_secret_object]
+=== 1. Erstellen/Aktualisieren des Zertifikat-Secret-Objekts
+
+Zuerst fügen Sie das Serverzertifikat gefolgt von allen Zwischenzertifikaten in eine Datei mit dem Dateinamen `tls.crt` ein und geben den entsprechenden Zertifikatsschlüssel in einer Datei mit dem Dateinamen `tls.key` an.
+
+Verwenden Sie den folgenden Befehl, um das `tls-rancher-ingress` Secret-Objekt im Rancher (lokalen) Management-Cluster zu erstellen:
+
+[,bash]
+----
+kubectl -n cattle-system create secret tls tls-rancher-ingress \
+  --cert=tls.crt \
+  --key=tls.key
+----
+
+Alternativ, um ein vorhandenes `tls-rancher-ingress` Secret-Objekt zu aktualisieren:
+
+[,bash]
+----
+kubectl -n cattle-system create secret tls tls-rancher-ingress \
+  --cert=tls.crt \
+  --key=tls.key \
+  --dry-run --save-config -o yaml | kubectl apply -f -
+----
+
+[#_2_create_update_the_ca_certificate_secret_object]
+=== 2. Erstellen oder Aktualisieren des CA-Zertifikat-Secret-Objekts
+
+Wenn das neue Zertifikat von einer privaten CA signiert wurde, müssen Sie das entsprechende Root-CA-Zertifikat in eine Datei mit dem Dateinamen `cacerts.pem` kopieren und das `tls-ca` Secret-Objekt im `cattle-system` Namespace erstellen oder aktualisieren. Wenn das Zertifikat von einer Zwischen-CA signiert wurde, muss das `cacerts.pem` sowohl die Zwischen- als auch die Root-CA-Zertifikate (in dieser Reihenfolge) enthalten.
+
+Um das ursprüngliche `tls-ca` Secret zu erstellen:
+
+[,bash]
+----
+kubectl -n cattle-system create secret generic tls-ca \
+  --from-file=cacerts.pem
+----
+
+Um ein vorhandenes `tls-ca` Secret zu aktualisieren:
+
+[,bash]
+----
+kubectl -n cattle-system create secret generic tls-ca \
+  --from-file=cacerts.pem \
+  --dry-run --save-config -o yaml | kubectl apply -f -
+----
+
+[#_3_reconfigure_the_rancher_deployment]
+=== 3. Konfigurieren Sie die Rancher-Bereitstellung neu
+
+Wenn die Zertifikatsquelle gleich bleibt (zum Beispiel `secret`), folgen Sie bitte den Schritten in Schritt 3a.
+
+Wenn sich jedoch die Zertifikatsquelle ändert (zum Beispiel von `letsEncrypt` zu `secret`), folgen Sie den Schritten in 3b.
+
+[#_3a_redeploy_the_rancher_pods]
+==== 3a. Stellen Sie die Rancher-Pods erneut bereit
+
+Dieser Schritt ist erforderlich, wenn die Zertifikatsquelle gleich bleibt, aber das CA-Zertifikat aktualisiert wird.
+
+In diesem Szenario ist eine erneute Bereitstellung der Rancher-Pods erforderlich, da das `tls-ca` Secret-Objekt von den Rancher-Pods beim Start gelesen wird.
+
+Der folgende Befehl kann verwendet werden, um die Rancher-Pods erneut bereitzustellen:
+
+[,bash]
+----
+kubectl rollout restart deploy/rancher -n cattle-system
+----
+
+Wenn die Änderung abgeschlossen ist, navigieren Sie zu `\https://<rancher_server_url>/v3/settings/cacerts`, um zu überprüfen, ob der Wert mit dem CA-Zertifikat übereinstimmt, das zuvor im `tls-ca` Secret-Objekt geschrieben wurde. Der CA `cacerts` Wert wird möglicherweise nicht aktualisiert, bis alle neu bereitgestellten Rancher-Pods gestartet sind.
+
+[#_3b_update_the_helm_values_for_rancher]
+==== 3b. Aktualisieren Sie die Helm-Werte für Rancher
+
+Dieser Schritt ist erforderlich, wenn sich die Zertifikatsquelle ändert. Wenn Rancher zuvor so konfiguriert war, dass das standardmäßige selbstsignierte Zertifikat (`ingress.tls.source=rancher`) oder Let's Encrypt (`ingress.tls.source=letsEncrypt`) verwendet wurde und jetzt ein von einer privaten CA signiertes Zertifikat (`ingress.tls.source=secret`) verwendet wird.
+
+Die folgenden Schritte aktualisieren die Helm-Werte für das Rancher-Chart, sodass die Rancher-Pods und der Ingress neu konfiguriert werden, um das neue private CA-Zertifikat zu verwenden, das in Schritt 1 und 2 erstellt wurde.
+
+. Passen Sie die Werte an, die während der ursprünglichen Installation verwendet wurden, speichern Sie die aktuellen Werte mit:
++
+[,bash]
+----
+helm get values rancher -n cattle-system -o yaml > values.yaml
+----
+
+. Rufen Sie die Versionszeichenfolge des derzeit bereitgestellten Rancher-Charts ab, um sie unten zu verwenden:
++
+[,bash]
+----
+helm ls -n cattle-system
+----
+
+. Aktualisieren Sie die aktuellen Helm-Werte in der `values.yaml`-Datei, um Folgendes zu enthalten:
++
+[,yaml]
+----
+ingress:
+  tls:
+    source: secret
+privateCA: true
+----
++
+
+[NOTE]
+.Wichtig:
+====
+   Da das Zertifikat von einer privaten CA signiert ist, ist es wichtig sicherzustellen, dass {xref-helm-chart-options}#_common_options[`privateCA: true`] in der `values.yaml`-Datei gesetzt ist.
+====
+
+. Aktualisieren Sie die Helm-Anwendungsinstanz mit der `values.yaml`-Datei und der aktuellen Chart-Version. Die Version muss übereinstimmen, um ein Upgrade von Rancher zu verhindern.
++
+endif::[]
+[,bash,subs="attributes+"]
+----
+helm upgrade rancher {rancher-helm-repo}/rancher \
+  --namespace cattle-system \
+  -f values.yaml \
+  --version <DEPLOYED_RANCHER_VERSION>
+----
+
+Wenn die Änderung abgeschlossen ist, navigieren Sie zu `\https://<rancher_server_url>/v3/settings/cacerts`, um zu überprüfen, ob der Wert mit dem CA-Zertifikat übereinstimmt, das zuvor im `tls-ca` Secret-Objekt geschrieben wurde. Der CA `cacerts` Wert wird möglicherweise nicht aktualisiert, bis alle Rancher-Pods gestartet sind.
+
+[#_4_reconfigure_rancher_agents_to_trust_the_private_ca]
+=== 4. Rancher-Agenten so konfigurieren, dass sie der privaten CA vertrauen
+
+In diesem Abschnitt werden drei Methoden behandelt, um Rancher-Agenten so zu konfigurieren, dass sie der privaten CA vertrauen. Dieser Schritt ist erforderlich, wenn eine der folgenden Bedingungen zutrifft:
+
+* Rancher wurde zuvor so konfiguriert, dass es das selbstsignierte Zertifikat von Rancher (`ingress.tls.source=rancher`) oder ein von Let's Encrypt ausgestelltes Zertifikat (`ingress.tls.source=letsEncrypt`) verwendet.
+* Das Zertifikat wurde von einer anderen privaten CA signiert.
+
+[#_why_is_this_step_required]
+==== Warum ist dieser Schritt erforderlich?
+
+Wenn Rancher mit einem von einer privaten CA signierten Zertifikat konfiguriert ist, wird die CA-Zertifikatskette von den Rancher-Agent-Containern vertraut. Die Agenten vergleichen die Prüfsumme des heruntergeladenen Zertifikats mit der Umgebungsvariable `CATTLE_CA_CHECKSUM`. Das bedeutet, dass, wenn das von Rancher verwendete private CA-Zertifikat geändert wurde, die Umgebungsvariable `CATTLE_CA_CHECKSUM` entsprechend aktualisiert werden muss.
+
+[#_which_method_should_i_choose]
+==== Welche Methode sollte ich wählen?
+
+Methode 1 ist die einfachste, erfordert jedoch, dass alle Cluster nach der Rotation der Zertifikate mit Rancher verbunden sind. Dies ist normalerweise der Fall, wenn der Prozess direkt nach dem Aktualisieren oder der erneuten Bereitstellung des Rancher-Deployments (Schritt 3) durchgeführt wird.
+
+Wenn die Cluster die Verbindung zu Rancher verloren haben, aber {xref-kubeconfig-file}[Autorisierter Cluster-Endpunkt] (ACE) auf allen Clustern aktiviert ist, dann wählen Sie Methode 2.
+
+Methode 3 kann als Fallback verwendet werden, wenn Methode 1 und 2 nicht möglich sind.
+
+[#_method_1_force_a_redeploy_of_the_rancher_agents]
+==== Methode 1: Erzwingen Sie eine erneute Bereitstellung der Rancher-Agenten
+
+Führen Sie für jeden nachgelagerten Cluster den folgenden Befehl unter Verwendung der Kubeconfig-Datei des Rancher (lokalen) Management-Clusters aus.
+
+[,bash]
+----
+kubectl annotate clusters.management.cattle.io <CLUSTER_ID> io.cattle.agent.force.deploy=true
+----
+
+[NOTE]
+====
+Suchen Sie die Cluster-ID (c-xxxxx) für das Downstream-Cluster; diese kann in der URL-Leiste des Browsers gesehen werden, wenn der Cluster in der Rancher-Benutzeroberfläche unter Clusterverwaltung angezeigt wird.
+====
+
+
+Dieser Befehl bewirkt, dass das Agentenmanifest mit der Prüfsumme des neuen Zertifikats erneut angewendet wird.
+
+[#_method_2_manually_update_the_checksum_environment_variable]
+==== Methode 2: Aktualisieren Sie manuell die Prüfsumme-Umgebungsvariable.
+
+Patchen Sie manuell die Kubernetes-Objekte des Agenten, indem Sie die Umgebungsvariable `CATTLE_CA_CHECKSUM` auf den Wert aktualisieren, der der Prüfsumme des neuen CA-Zertifikats entspricht. Generieren Sie den neuen Prüfsummenwert wie folgt:
+
+[,bash]
+----
+curl -k -s -fL <RANCHER_SERVER_URL>/v3/settings/cacerts | jq -r .value | sha256sum | awk '{print $1}'
+----
+
+Verwenden Sie für jedes Downstream-Cluster eine Kubeconfig, um die Umgebungsvariable für die beiden Agentenbereitstellungen zu aktualisieren. Wenn das {xref-kubeconfig-file}[ACE] für das Cluster aktiviert ist, kann {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[der kubectl-Kontext angepasst werden], um direkt mit dem Downstream-Cluster zu verbinden.
+
+[,bash]
+----
+kubectl edit -n cattle-system ds/cattle-node-agent
+kubectl edit -n cattle-system deployment/cattle-cluster-agent
+----
+
+[#_method_3_manually_redeploy_the_rancher_agents]
+==== Methode 3: Stellen Sie die Rancher-Agenten manuell neu bereit
+
+Mit dieser Methode werden die Rancher-Agenten durch Ausführen einer Reihe von Befehlen auf einem Steuerungsknoten jedes nachgelagerten Clusters erneut angewendet.
+
+Wiederholen Sie die folgenden Schritte für jedes Downstream-Cluster:
+
+. Rufen Sie den kubectl-Befehl zur Agentenregistrierung ab:
+ .. Suchen Sie die Cluster-ID (c-xxxxx) für das Downstream-Cluster, diese ist in der URL sichtbar, wenn Sie das Cluster in der Rancher-Benutzeroberfläche unter Clusterverwaltung anzeigen.
+ .. Fügen Sie die Rancher-Server-URL und die Cluster-ID zur folgenden URL hinzu: `\https://<rancher_server_url>/v3/clusterregistrationtokens?clusterId=<CLUSTER_ID>`
+ .. Kopieren Sie den Befehl aus dem `insecureCommand`-Feld, dieser Befehl wird verwendet, weil ein privates CA im Einsatz ist.
+. Führen Sie den kubectl-Befehl aus dem vorherigen Schritt mit einer Kubeconfig für das Downstream-Cluster mit einer der folgenden Methoden aus:
+ .. Wenn das {xref-kubeconfig-file}[ACE] für das Cluster aktiviert ist, kann {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[der Kontext angepasst werden], um direkt mit dem Downstream-Cluster zu verbinden.
+ .. Alternativ, loggen Sie sich per SSH in den Steuerungsknoten ein:
+  *** RKE: Verwenden Sie die https://github.com/rancherlabs/support-tools/tree/master/how-to-retrieve-kubeconfig-from-custom-cluster[Schritte in diesem Dokument hier], um eine Kubeconfig zu generieren.
+  *** RKE2/K3s: Verwenden Sie die während der Installation ausgefüllte Kubeconfig.
+
+[#_5_force_update_fleet_product_name_clusters_to_reconnect_the_fleet_agent_to_rancher]
+=== 5. Zwingen Sie ein Update der {fleet-product-name} Cluster, um den Fleet-Agent mit Rancher zu verbinden.
+
+Wählen Sie 'Force Update' für die Cluster innerhalb der {xref-fleet-overview}#_accessing_fleet_in_the_rancher_ui[Continuous Delivery] Ansicht der Rancher-Benutzeroberfläche, um dem Fleet-Agent in nachgelagerten Clustern zu ermöglichen, erfolgreich mit Rancher zu verbinden.
+
+[#_why_is_this_step_required_1]
+==== Warum ist dieser Schritt erforderlich?
+
+Fleet-Agenten in von Rancher verwalteten Clustern speichern eine Kubeconfig, die verwendet wird, um sich mit Rancher zu verbinden. Die kubeconfig enthält ein `certificate-authority-data`-Feld, das die CA für das von Rancher verwendete Zertifikat enthält. Bei einer Änderung der CA muss dieser Block aktualisiert werden, damit der Fleet-Agent dem von Rancher verwendeten Zertifikat vertraut.
+
+[#_updating_from_a_private_ca_certificate_to_a_public_ca_certificate]
+== Aktualisierung von einem privaten CA-Zertifikat auf ein öffentliches CA-Zertifikat
+
+Befolgen Sie diese Schritte, um das Gegenteil des oben gezeigten Verfahrens durchzuführen, um von einem von einer privaten CA ausgestellten Zertifikat zu einem öffentlichen oder selbstsignierten CA zu wechseln.
+
+[#_1_create_update_the_certificate_secret_object_1]
+=== 1. Erstellen/Aktualisieren des Zertifikat-Secret-Objekts
+
+Zuerst fügen Sie das Serverzertifikat gefolgt von allen Zwischenzertifikaten in eine Datei mit dem Namen `tls.crt` ein und geben den entsprechenden Zertifikatsschlüssel in einer Datei mit dem Namen `tls.key` an.
+
+Verwenden Sie den folgenden Befehl, um das `tls-rancher-ingress` Secret-Objekt im Rancher (lokalen) Management-Cluster zu erstellen:
+
+[,bash]
+----
+kubectl -n cattle-system create secret tls tls-rancher-ingress \
+  --cert=tls.crt \
+  --key=tls.key
+----
+
+Alternativ, um ein vorhandenes `tls-rancher-ingress` Secret zu aktualisieren:
+
+[,bash]
+----
+kubectl -n cattle-system create secret tls tls-rancher-ingress \
+  --cert=tls.crt \
+  --key=tls.key \
+  --dry-run --save-config -o yaml | kubectl apply -f -
+----
+
+[#_2_delete_the_ca_certificate_secret_object]
+=== 2. Löschen Sie das CA-Zertifikat-Secret-Objekt
+
+Sie werden das `tls-ca` Secret im `cattle-system` Namespace löschen, da es nicht mehr benötigt wird. Sie können auch optional eine Kopie des `tls-ca` Secrets speichern, wenn gewünscht.
+
+Um das vorhandene `tls-ca` Secret zu speichern:
+
+[,bash]
+----
+kubectl -n cattle-system get secret tls-ca -o yaml > tls-ca.yaml
+----
+
+Um das vorhandene `tls-ca` Secret zu löschen:
+
+[,bash]
+----
+kubectl -n cattle-system delete secret tls-ca
+----
+
+[#_3_reconfigure_the_rancher_deployment_1]
+=== 3. Konfigurieren Sie die Rancher-Implementierung neu
+
+Dieser Schritt ist erforderlich, wenn sich die Zertifikatsquelle ändert. In diesem Szenario ändert sich wahrscheinlich nur, weil Rancher zuvor so konfiguriert war, dass es das standardmäßige selbstsignierte Zertifikat (`ingress.tls.source=rancher`) verwendet.
+
+Die folgenden Schritte aktualisieren die Helm-Werte für das Rancher-Chart, sodass die Rancher-Pods und der Ingress neu konfiguriert werden, um das in Schritt 1 erstellte neue Zertifikat zu verwenden.
+
+. Passen Sie die Werte an, die während der ursprünglichen Installation verwendet wurden, speichern Sie die aktuellen Werte mit:
++
+[,bash]
+----
+helm get values rancher -n cattle-system -o yaml > values.yaml
+----
+
+. Holen Sie sich auch die Versionszeichenfolge des derzeit bereitgestellten Rancher-Charts:
++
+[,bash]
+----
+helm ls -n cattle-system
+----
+
+. Aktualisieren Sie die aktuellen Helm-Werte in der `values.yaml`-Datei:
+ .. Da eine private CA nicht mehr verwendet wird, entfernen Sie das `privateCA: true`-Feld oder setzen Sie es auf `false`.
+ .. Passen Sie das `ingress.tls.source`-Feld nach Bedarf an. Bitte {xref-helm-chart-options}#_common_options[verweisen Sie auf die Chart-Optionen] für weitere Details. Hierzu einige Beispiele:
+  ... Wenn Sie eine öffentliche CA verwenden, fahren Sie mit einem Wert von: `secret` fort.
+  ... Wenn Sie Let's Encrypt verwenden, aktualisieren Sie den Wert auf: `letsEncrypt`.
+. Aktualisieren Sie die Helm-Werte für das Rancher-Chart unter Verwendung der `values.yaml`-Datei und der aktuellen Chart-Version, um ein Upgrade zu verhindern:
++
+[,bash,subs="attributes+"]
+----
+helm upgrade rancher {rancher-helm-repo}/rancher \
+  --namespace cattle-system \
+  -f values.yaml \
+  --version <DEPLOYED_RANCHER_VERSION>
+----
+
+[#_4_reconfigure_rancher_agents_for_the_non_private_common_certificate]
+=== 4. Rancher-Agenten für das nicht-private/gemeinsame Zertifikat neu konfigurieren
+
+Da eine private CA nicht mehr verwendet wird, sollte die `CATTLE_CA_CHECKSUM` Umgebungsvariable auf den Downstream-Cluster-Agenten entfernt oder auf "" (einen leeren String) gesetzt werden.
+
+[#_5_force_update_fleet_product_name_clusters_to_reconnect_the_fleet_agent_to_rancher_1]
+=== 5. Führen Sie ein 'Force Update' der {fleet-product-name}-Cluster durch, um den Fleet agent erneut mit Rancher zu verbinden.
+
+Wählen Sie 'Force Update' für die Cluster innerhalb der {xref-fleet-overview}#_accessing_fleet_in_the_rancher_ui[Continuous Delivery] Ansicht der Rancher-Benutzeroberfläche, um dem Fleet agent in Downstream-Clustern zu ermöglichen, erfolgreich mit Rancher zu verbinden.
+
+[#_why_is_this_step_required_2]
+==== Warum ist dieser Schritt erforderlich?
+
+Fleet agents in von Rancher verwalteten Clustern speichern eine kubeconfig, die verwendet wird, um sich mit Rancher zu verbinden. Die Kubeconfig enthält ein `certificate-authority-data`-Feld, das die CA für das von Rancher verwendete Zertifikat enthält. Bei einer Änderung der CA muss dieser Block aktualisiert werden, damit der Fleet agent dem von Rancher verwendeten Zertifikat vertraut.

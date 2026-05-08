@@ -1,0 +1,238 @@
+= Azureのインツリーからアウトオブツリーへの移行
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-azure.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/azure.adoc
+ifeval::["{build-type}" != "community"]
+:xref-azure-cloud-provider: xref:cluster-deployment/set-up-cloud-providers/azure.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-azure-cloud-provider: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/azure.adoc
+endif::[]
+
+Kubernetesは、クラウドプロバイダーをインツリーで維持することから移行しています。
+
+Kubernetes 1.29以降、インツリーのクラウドプロバイダーは無効化されています。インツリーのAzureクラウドプロバイダーを使用するか、インツリーのクラウドプロバイダーからアウトオブツリーのプロバイダーに移行するには、`DisableCloudProviders`と`DisableKubeletCloudCredentialProvider`を無効にする必要があります。必要なフィーチャーゲートは、クラスターのKubelet、コントローラーマネージャー、およびAPIサーバーの高度なクラスター設定で`feature-gates=DisableCloudProviders=false`を追加の引数として設定することで無効にできます。さらに、Kubeletの引数に`DisableKubeletCloudCredentialProvider=false`を設定して、イメージプルの認証情報のためにAzureコンテナレジストリへの認証を行うインツリー機能を有効にします。詳細については、 https://github.com/kubernetes/kubernetes/pull/117503[アップストリームのドキュメント]を参照してください。
+
+Kubernetes v1.30以降、インツリーのクラウドプロバイダーは削除されました。Rancherでは、インツリーからアウトオブツリーのプロバイダーに移行する際にKubernetes v1.30にアップグレードすることができます。
+
+インツリーのクラウドプロバイダーからアウトオブツリーのAzureクラウドプロバイダーに移行するには、既存のクラスターのkubeコントローラーマネージャーを停止し、Azureクラウドコントローラーマネージャーをインストールする必要があります。
+
+移行中にダウンタイムが発生しても問題ない場合は、{xref-azure-cloud-provider}#_using_the_out_of_tree_azure_cloud_provider[外部クラウドプロバイダーをセットアップする]の手順に従ってください。これらの手順は、新しくプロビジョニングされたクラスターのためにアウトオブツリーのクラウドプロバイダーを構成する方法を概説しています。セットアップ中は、古いクラウドプロバイダーが停止し、新しいクラウドプロバイダーが稼働を開始するまでの時間差があるため、ダウンタイムが発生します。
+
+セットアップがコントロールプレーンのダウンタイムを許容できない場合は、リーダー移行を有効にする必要があります。これにより、kubeコントローラーマネージャーのコントローラーからクラウドコントローラーマネージャーの対応するコントローラーへのスムーズな移行が促進されます。
+
+[NOTE]
+.重要:
+====
+Kubernetesの https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#before-you-begin[クラウドコントローラー移行ドキュメント]によれば、同じKubernetesバージョンでの移行が可能ですが、移行はKubernetesのアップグレードの一部であると想定されています。移行前にセットアップをカスタマイズする必要があるかどうかを確認するには、Kubernetesのドキュメントの https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/[クラウドコントローラーマネージャーの使用に関する移行]を参照してください。 https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#default-configuration[移行設定値]を確認してください。クラウドプロバイダーがNode IPAMコントローラーの実装を提供している場合、IPAMコントローラーを https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#node-ipam-controller-migration[移行する必要があります]。
+
+Kubernetes v1.26以降、インツリーの永続ボリュームタイプ`kubernetes.io/azure-disk`と`kubernetes.io/azure-file`は廃止され、もはやサポートされていません。これらのドライバーは非推奨の後に削除される計画はありませんが、対応するCSIドライバー`disk.csi.azure.com`と`file.csi.azure.com`に移行するべきです。ストレージクラスの移行オプションを確認し、クラスターをAzure DisksおよびAzure Files CSIドライバーを使用するようにアップグレードするには、 https://learn.microsoft.com/en-us/azure/aks/csi-migrate-in-tree-volumes[インツリーからCSIドライバーへの移行]を参照してください。
+====
+
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. クラスタ設定を更新してリーダー移行を有効にします：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+このステップでは、クラウドプロバイダーがまだ`azure`であることに注意してください：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: azure
+----
+
+. コントロールプレーンノードをcordonして、Azureクラウドコントローラーポッドが外部クラウドプロバイダーにアップグレードされた後にのみノードで実行されるようにします：
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/control-plane=true"
+----
+
+. Azureクラウドコントローラーマネージャーをデプロイするには、利用可能なオプションのいずれかを使用してください：
+ ** UI：{xref-azure-cloud-provider}#_helm_chart_installation_from_ui[UIからのHelmチャートのインストール]の手順1-10に従って、クラウドコントローラーマネージャーチャートをインストールします。
+ ** CLI:{xref-azure-cloud-provider}#_helm_chart_installation_from_cli[CLIからのHelmチャートのインストール]の手順1-4に従ってください。
+ ** クラスターの追加マニフェストを更新します：手順2-3に従って、{xref-azure-cloud-provider}#_using_the_out_of_tree_azure_cloud_provider[クラウドコントローラーマネージャーチャートをインストール]します。
+
++
+チャートがインストールされていることを確認しますが、新しいポッドはスケジューリング不可にされたコントロールプレーンノードのためにまだ実行されていません。
+
+. リーダー移行を有効にするには、`--enable-leader-migration`を`cloud-controller-manager`のコンテナ引数に追加します：
++
+[,shell]
+----
+kubectl -n kube-system patch deployment cloud-controller-manager \
+--type=json \
+-p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-leader-migration"}]'
+----
+
+. プロビジョニングクラスタを更新してクラウドプロバイダーを変更し、kubeコントローラーマネージャーからリーダー移行引数を削除します。
+Kubernetesのバージョンをアップグレードする場合は、クラスターYAMLファイルの`spec.kubernetesVersion`セクションでもKubernetesのバージョンを設定します。
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: external
+----
++
+kubeコントローラーマネージャーから`enable-leader-migration`を削除します：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
+
+. コントロールプレーンノードのcordonを解除し、Azureクラウドコントローラーポッドがノードで実行されるようにします：
++
+[,shell]
+----
+kubectl uncordon -l "node-role.kubernetes.io/control-plane=true"
+----
+
+. クラスターを更新します。`cloud-controller-manager`ポッドは現在実行中であるべきです。
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. クラウドプロバイダーはノードのProviderIDを設定する責任があります。すべてのノードがProviderIDで初期化されているか確認します：
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+. （オプション）アップグレード後にリーダー移行を無効にすることもできます。リーダー移行は、クラウドコントローラーマネージャーが1つだけであるため、必要ありません。
+ `cloud-controller-manager`デプロイメントを更新して、コンテナ引数からリーダー移行を削除します：
++
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+--
+
+RKE::
++
+--
+. `cluster.yml`でリーダー移行を有効にするためにクラスタ設定を更新します：
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
++
+このステップでは、クラウドプロバイダーがまだ`azure`であることに注意してください：
++
+[,yaml]
+----
+cloud_provider:
+  name: azure
+----
+
+. コントロールプレーンノードをcordonして、Azureクラウドコントローラーポッドが外部クラウドプロバイダーにアップグレードされた後にのみノードで実行されるようにします：
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/controlplane=true"
+----
+
+. Azureクラウドコントローラーマネージャーをインストールするには、新しいクラスターにAzureクラウドプロバイダーをインストールする際と同じ手順に従います：
+ ** UI：{xref-azure-cloud-provider}#_helm_chart_installation_from_ui[UIからのHelmチャートのインストール]の手順1-10に従って、クラウドコントローラーマネージャーチャートをインストールします。
+ ** CLI:クラウドコントローラーマネージャーチャートをインストールするには、{xref-azure-cloud-provider}#_helm_chart_installation_from_cli[CLIからのHelmチャートのインストール]の手順1-4に従ってください。
+. チャートがインストールされていることを確認しますが、新しいポッドはスケジューリング不可にされたコントロールプレーンノードのためにまだ実行されていません。次のステップでクラスターを更新した後、RKEは各ノードをアップグレードし、スケジューリング可能にし、`cloud-controller-manager`ポッドをスケジュールします。
+. リーダー移行を有効にするには、`--enable-leader-migration`を`cloud-controller-manager`のコンテナ引数に追加します：
++
+[,shell]
+----
+kubectl -n kube-system patch deployment cloud-controller-manager \
+--type=json \
+-p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-leader-migration"}]'
+----
+
+. `cluster.yml`を更新することで、クラウドプロバイダーを`external`に変更し、kubeコントローラーマネージャーからリーダー移行引数を削除します。
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external
+----
++
+クラスタで有効にしたくない場合は、`enable-leader-migration`を削除してください：
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
+
+. クラスターのKubernetesバージョンをアップグレードする場合は、Kubernetesバージョンも設定してください。
+. クラスターを更新します。`cloud-controller-manager`ポッドは現在実行中であるべきです。
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. クラウドプロバイダーはノードのProviderIDを設定する責任があります。すべてのノードがProviderIDで初期化されているか確認します：
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+. （オプション）アップグレード後にリーダー移行を無効にすることもできます。リーダー移行は、クラウドコントローラーマネージャーが1つだけであるため、必要ありません。
+`cloud-controller-manager`デプロイメントを更新することで、コンテナ引数からリーダー移行を削除します：
++
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+--
+======

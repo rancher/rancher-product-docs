@@ -1,0 +1,97 @@
+= トラフィック管理のための Istio コンポーネントを設定します。
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc 
+:product-path: observability/istio/guides/set-up-traffic-management.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-generate-and-view-traffic: xref:observability/istio/guides/generate-and-view-traffic.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-generate-and-view-traffic: xref:how-to-guides/advanced-user-guides/istio-setup-guide/generate-and-view-traffic.adoc
+endif::[]
+
+[WARNING]
+====
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio]はRancher v2.12.0以降廃止されました。セキュリティを強化するために、 https://apps.rancher.io[SUSE Application Collection]のIstioビルドに切り替えてください（SUSE Rancher Primeサブスクリプションに含まれています）。
+詳細情報は https://forums.suse.com/t/deprecation-of-rancher-istio/45043[この発表]にあります。
+====
+
+Istio におけるトラフィック管理の中心的な利点は、動的リクエストルーティングを可能にすることです。動的リクエストルーティングの一般的な用途には、カナリアデプロイメントやブルー/グリーンデプロイメントが含まれます。Istio のトラフィック管理における二つの重要なリソースは、_仮想サービス_と_宛先ルール_です。
+
+* https://istio.io/docs/reference/config/networking/v1alpha3/virtual-service/[仮想サービス]はトラフィックをインターセプトし、Kubernetes サービスに向けて指示を出し、リクエストから異なるサービスへトラフィックの割合を分割できるようにします。ホストが指定されたときに適用するルーティングルールのセットを定義するために使用できます。
+* https://istio.io/docs/reference/config/networking/v1alpha3/destination-rule/[宛先ルール]は、仮想サービスからトラフィックを受け取れるサービスのバージョンに関する一元的な情報源として機能します。これらのリソースを使用して、ルーティングが行われた後にサービスに向けられたトラフィックに適用されるポリシーを定義できます。
+
+このセクションでは、サンプル BookInfo アプリの `reviews` マイクロサービスに対応する仮想サービスの例を追加する方法について説明します。このサービスの目的は、`reviews` サービスの二つのバージョン間でトラフィックを分割することです。
+
+この例では、`reviews` サービスへのトラフィックをインターセプトし、その50％を`v1`サービスに、残り50％を`v2`に振り分けます。
+
+この仮想サービスがデプロイメントされた後、トラフィックを生成し、Kiali ビジュアライゼーションからトラフィックが二つのサービスのバージョン間で均等にルーティングされていることを確認します。
+
+`reviews` サービスの仮想サービスと宛先ルールをデプロイするために、
+
+. *☰ > クラスター管理*をクリックします。
+. Istio がインストールされているクラスターに移動し、*Explore*をクリックします。
+. Istio がインストールされているクラスターで、左側のナビゲーションバーから menu:Istio[宛先ルール] をクリックします。
+. ［*作成*］をクリックします。
+. 以下に提供された DestinationRule の yaml をコピーして貼り付けます。
+. ［*作成*］をクリックします。
+. *Edit as YAML* をクリックし、この設定を使用します：
++
+[,yaml]
+----
+ apiVersion: networking.istio.io/v1alpha3
+ kind: DestinationRule
+ metadata:
+   name: reviews
+ spec:
+   host: reviews
+   subsets:
+   - name: v1
+     labels:
+       version: v1
+   - name: v2
+     labels:
+       version: v2
+   - name: v3
+     labels:
+       version: v3
+----
+
+. ［*作成*］をクリックします。
+
+次に、DestinationRule を利用したトラフィックルーティングを提供する仮想サービスをデプロイします：
+
+. サイドナビゲーションバーで *仮想サービス* をクリックします。
+. *Create from Yaml* をクリックします。
+. 以下に提供された仮想サービスの yaml をコピーして貼り付けてください。
+. ［*作成*］をクリックします。
+
+[,yaml]
+----
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: reviews
+spec:
+  hosts:
+  - reviews
+  http:
+  - route:
+    - destination:
+        host: reviews
+        subset: v1
+      weight: 50
+    - destination:
+        host: reviews
+        subset: v3
+      weight: 50
+---
+----
+
+*結果:*このサービスにトラフィックを生成すると（例えば、ingress ゲートウェイの URL を更新することによって）、Kiali のトラフィックグラフは `reviews` サービスへのトラフィックが `v1` と `v3` の間で均等に分配されることを反映します。
+
+[#__xref_istio_generate_and_view_traffic_next_generate_and_view_traffic]
+== {xref-istio-generate-and-view-traffic}[次へ：[トラフィックを生成して表示]

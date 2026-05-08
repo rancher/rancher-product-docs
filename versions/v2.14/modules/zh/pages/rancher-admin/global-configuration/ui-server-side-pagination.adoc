@@ -1,79 +1,88 @@
-= UI Server-Side Pagination
+= UI 服务器端分页
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
+endif::[]
 :revdate: 2025-08-26
 :page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/ui-server-side-pagination.adoc 
+:product-path: rancher-admin/global-configuration/ui-server-side-pagination.adoc
 
-Server-Side Pagination (SSP) is a Rancher feature to provide significant performance improvements across the UI for resources with high counts, restricting the amount of resources browser fetches and stores in memory.
+服务器端分页（SSP）是 Rancher 的一项功能，旨在为高计数资源的 UI 提供显著的性能提升，限制浏览器获取和存储在内存中的资源数量。
 
-Note that SSP is optional, **enabled by default**, and it can be disabled via the feature flag `ui-sql-cache`.
+请注意，SSP 是可选的，**默认启用**，可以通过功能标志 `ui-sql-cache` 禁用。
 
-== Disk Space
+[#_disk_space]
+== 磁盘空间
 
 [IMPORTANT]
 ====
-It is crucial that you review the available disk space on your nodes and plan accordingly before upgrading to Rancher v2.12.0 and later to avoid potential disk pressure and pod eviction issues.
+在升级到 Rancher v2.12.0 及更高版本之前，务必检查节点上的可用磁盘空间并进行相应规划，以避免潜在的磁盘压力和 Pod 驱逐问题。
 ====
 
-The SSP relies on a caching mechanism that introduces a new requirement for ephemeral disk space on your cluster nodes. This cache, an internal SQLite database, is stored within the container's file system. This affects the nodes running the **Rancher server pods** (`rancher` in the `cattle-system` namespace on the local cluster) and the nodes running the **Rancher agent pods** (`cattle-cluster-agent` in the `cattle-system` namespace on all downstream clusters).
+SSP 依赖于一种缓存机制，这为集群节点引入了对临时磁盘空间的新要求。此缓存是一个内部 SQLite 数据库，存储在容器的文件系统中。这会影响运行 **Rancher 服务器 Pod** 的节点（在本地群集的 `rancher` `cattle-system`名称空间中）和运行 **Rancher 代理 Pod** 的节点（在所有下游群集的 `cattle-cluster-agent` `cattle-system`名称空间中）。
 
-The amount of disk space required is dynamic and depends on the quantity and size of Kubernetes resources visualized in the UI. As a guideline, the cache may consume approximately **twice the size of the raw Kubernetes objects** it stores.
+所需的磁盘空间是动态的，取决于在 UI 中可视化的 Kubernetes 资源的数量和大小。作为指导，缓存可能消耗大约 **原始 Kubernetes 对象大小的两倍** 的空间。
 
-For example, internal tests showed that caching 5000 ConfigMaps, totaling 50 MB, consumed 81 MB of disk space. For a conservative, high-level estimate, you can plan for the available disk space on each relevant node to be at least **twice the size of your etcd snapshot**. For most production environments, ensuring a few extra gigabytes of storage are available on the relevant nodes is a safe starting point.
+例如，内部测试显示，缓存 5000 个 ConfigMap，总计 50 MB，消耗了 81 MB 的磁盘空间。对于保守的高层估计，您可以计划每个相关节点的可用磁盘空间至少为 **您的 etcd 快照大小的两倍**。对于大多数生产环境，确保相关节点上有几个额外的千兆字节存储是一个安全的起点。
 
-Please note this space counts against https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#setting-requests-and-limits-for-local-ephemeral-storage[ephemeral storage] requests and limits you might have set for your Rancher container via the `resource` value in the Helm chart. Make sure those settings provide for abundant available space.
+请注意，这个空间会计入您可能为 Rancher 容器通过 Helm 图表中的 `resource` 值设置的 https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#setting-requests-and-limits-for-local-ephemeral-storage[临时存储] 请求和限制。确保这些设置提供充足的可用空间。
 
-If you see the error `database or disk is full (13)` in the pod logs, this is a symptom that more space needs to be allocated.
+如果您在 Pod 日志中看到错误 `database or disk is full (13)`，这表明需要分配更多空间。
 
-SQLite-backed caching persists copies of any cached Kubernetes objects to disk. See <<_encrypting_sqlite_backed_caches,Encrypting SQLite-backed Caching>> if this is a security concern.
+基于 SQLite 的缓存将任何缓存的 Kubernetes 对象的副本持久化到磁盘。如果这涉及安全问题，请参见 <<_encrypting_sqlite_backed_caches,加密基于 SQLite 的缓存>>。
 
-== Enabling Server-Side Pagination
+[#_enabling_server_side_pagination]
+== 启用服务器端分页
 
-. In the upper left corner, click **☰ > Global Settings > Feature Flags**.
-. Find **`ui-sql-cache`** and select **⋮ > Activate > Activate**.
-. Wait for Rancher to restart. This also restarts agents on all downstream clusters.
-. Reload the page with the browser button (or the equivalent keyboard combination, typically `CTRL + R` on Windows and Linux, and `⌘ + R` on macOS).
+. 在左上角，点击 **☰ > 全局设置 > 功能标志**。
+. 找到 **`ui-sql-cache`** 并选择 **⋮ > 激活 > 激活**.
+. 等待 Rancher 重新启动。这也会重新启动所有下游集群上的代理。
+. 使用浏览器按钮重新加载页面（或等效的键盘组合，通常在 Windows 和 Linux 上是 `CTRL + R`，在 macOS 上是 `⌘ + R`）。
 
-== Disabling Server-Side Pagination
+[#_disabling_server_side_pagination]
+== 禁用服务器端分页
 
-. In the upper left corner, click **☰ > Global Settings > Feature Flags**.
-. Find **`ui-sql-cache`** and select **⋮ > Deactivate > Deactivate**.
-. Wait for Rancher to restart. This also restarts agents on all downstream clusters.
-. Reload the page with the browser button (or the equivalent keyboard combination, typically `CTRL + R` on Windows and Linux, and `⌘ + R` on macOS).
+. 在左上角，点击 **☰ > 全局设置 > 功能标志**。
+. 找到 **`ui-sql-cache`** 并选择 **⋮ > 停用 > 停用**。
+. 等待 Rancher 重新启动。这也会重新启动所有下游集群上的代理。
+. 使用浏览器按钮重新加载页面（或等效的键盘组合，通常在 Windows 和 Linux 上是 `CTRL + R`，在 macOS 上是 `⌘ + R`）。
 
-== Encrypting SQLite-backed Caches
+[#_encrypting_sqlite_backed_caches]
+== 加密基于 SQLite 的缓存
 
-UI server-side pagination persists copies of any cached Kubernetes objects to disk. If you are concerned about the safety of this data, you can encrypt all objects before they are persisted to disk, by setting the environment variable `CATTLE_ENCRYPT_CACHE_ALL` to `true` in `rancher` pods in the upstream cluster and `cattle-cluster-agent` pods in the downstream clusters.
+UI 服务器端分页将任何缓存的 Kubernetes 对象的副本持久化到磁盘。如果您担心这些数据的安全性，可以通过在上游集群的 `rancher` pod 和下游集群的 `cattle-cluster-agent` pod 中将环境变量 `CATTLE_ENCRYPT_CACHE_ALL` 设置为 `true`，在持久化到磁盘之前加密所有对象。
 
-Secrets and security Tokens are always encrypted regardless of the above setting.
+无论上述设置如何，机密和安全词元始终是加密的。
 
-== Known Limitations of UI Server-Side Pagination
+[#_known_limitations_of_ui_server_side_pagination]
+== UI 服务器端分页的已知限制
 
-This release improves the performance of most pages used to view, create or edit resources within the `local` or downstream clusters i.e. the Cluster Explorer view. However, RBAC related resources and areas outside the Cluster Explorer are not yet covered by this feature.
+此版本提高了在 `local` 或下游集群中查看、创建或编辑资源的大多数页面的性能，即集群浏览器视图。然而，与 RBAC 相关的资源和集群浏览器之外的区域尚未被此功能覆盖。
 
-Additionally, the following limitations are present when the feature is enabled. These mainly revolve around different sort or filter behaviors in affected lists:
+此外，启用该功能时存在以下限制。这些主要围绕受影响列表中的不同排序或过滤行为：
 
-* Resources in lists are automatically updated, however, not instantaneously.
-* All lists that utilize Server-Side Pagination:
-** `State` column sort and filter features work on the resources `metadata.state.name` field instead of one deduced locally by the UI.
-** Updates are shown every 5 seconds, rather than instantly.
-* Cluster Explorer:
-** Project/Namespace filter does not support filtering namespaces by all namespaces not in a project via the `Not in a Project` entry.
-** `Cluster` group --> `Nodes` page
-*** The following columns are not sortable or filterable: `Roles`, `External/Internal IP`, `CPU`, `RAM` (logic to determine their value is calculated in the browser)
-** `Workloads` list:
-*** The `Workloads` list, which showed multiple different resource types has been removed.
-**** Server-Side Pagination of multiple resources is not currently possible.
-** `Workloads` group --> All lists
-*** `Pod Restarts` and `Workload Health` columns have been removed.
-**** https://github.com/rancher/dashboard/issues/14211[Re-enable Pod Restart Count and Pod Health columns for Workload lists #14211]
-** `Workloads` group / `Job` List
-*** `Duration` is not sortable (sorting on a duration).
-**** https://github.com/rancher/dashboard/issues/12815[Implement more complex server-side pagination sorting #12815]
-** `Workloads` group / `Pod` List
-*** `Images` is not sortable (sorting on an array).
-** `Service Discovery` group / `Ingresses`
-*** `Default` is not sortable/filterable (logic to determine their value is calculated in the browser).
-** `Storage` group / `ConfigMaps`
-*** `Data` is not sortable/filterable (logic to determine their value is calculated in the browser).
-** `Storage` group / `Secrets`
-*** `Data` is not sortable/filterable (logic to determine their value is calculated in the browser).
+* 列表中的资源会自动更新，但不是瞬时更新。
+* 所有使用服务器端分页的列表：
+** `State` 列的排序和过滤功能在资源 `metadata.state.name` 字段上工作，而不是由 UI 本地推导出的字段。
+** 更新每 5 秒显示一次，而不是瞬时显示。
+* 集群浏览器：
+** 项目/命名空间过滤器不支持通过 `Not in a Project` 条目过滤不在项目中的所有命名空间。
+** `Cluster` 组 --> `Nodes` 页面
+*** 以下列无法排序或过滤：`Roles`、`External/Internal IP`、`CPU`、`RAM`（其值的逻辑在浏览器中计算）
+** `Workloads` 列表：
+*** 显示多种不同资源类型的 `Workloads` 列表已被移除。
+**** 当前无法进行多个资源的服务器端分页。
+** `Workloads` 组 --> 所有列表
+*** `Pod Restarts` 和 `Workload Health` 列已被移除。
+**** https://github.com/rancher/dashboard/issues/14211[重新启用工作负载列表的 Pod 重启计数和 Pod 健康列 #14211]
+** `Workloads` 组 / `Job` 列表
+*** `Duration` 不能排序（按持续时间排序）。
+**** https://github.com/rancher/dashboard/issues/12815[实现更复杂的服务器端分页排序 #12815]
+** `Workloads` 组 / `Pod` 列表
+*** `Images` 不能排序（按数组排序）。
+** `Service Discovery` 组 / `Ingresses`
+*** `Default` 不能排序/过滤（其值的逻辑在浏览器中计算）。
+** `Storage` 组 / `ConfigMaps`
+*** `Data` 不能排序/过滤（其值的逻辑在浏览器中计算）。
+** `Storage` 组 / `Secrets`
+*** `Data` 不能排序/过滤（其值的逻辑在浏览器中计算）。

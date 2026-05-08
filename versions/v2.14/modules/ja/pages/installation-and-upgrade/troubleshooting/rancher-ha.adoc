@@ -1,0 +1,131 @@
+= {rancher-product-name} HA
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/rancher-ha.adoc 
+:product-path: installation-and-upgrade/troubleshooting/rancher-ha.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+endif::[]
+
+このページに記載されているコマンド/手順は、Rancher Kubernetes インストールを確認するために使用できます。
+
+正しい kubeconfig を設定したことを確認してください（例えば、`export KUBECONFIG=$PWD/kube_config_cluster.yml`）。
+
+[#_check_rancher_pods]
+== Rancher ポッドを確認する
+
+Rancher ポッドは、`cattle-system` ネームスペースにデプロイされたデプロイメントとして展開されます。
+
+すべてのノードでポッドが実行されているか確認してください：
+
+----
+kubectl -n cattle-system get pods -l app=rancher -o wide
+----
+
+出力の例：
+
+----
+NAME                       READY   STATUS    RESTARTS   AGE   IP          NODE
+rancher-7dbd7875f7-n6t5t   1/1     Running   0          8m    x.x.x.x     x.x.x.x
+rancher-7dbd7875f7-qbj5k   1/1     Running   0          8m    x.x.x.x     x.x.x.x
+rancher-7dbd7875f7-qw7wb   1/1     Running   0          8m    x.x.x.x     x.x.x.x
+----
+
+ポッドが実行できない場合（ステータスが *Running* でない、Ready ステータスが `1/1` を表示していない、または再起動の回数が多い場合）、ポッドの詳細、ログ、およびネームスペースのイベントを確認してください。
+
+[#_pod_details]
+=== ポッドの詳細
+
+----
+kubectl -n cattle-system describe pods -l app=rancher
+----
+
+[#_pod_container_logs]
+=== ポッドコンテナのログ
+
+----
+kubectl -n cattle-system logs -l app=rancher
+----
+
+[#_namespace_events]
+=== ネームスペースのイベント
+
+----
+kubectl -n cattle-system get events
+----
+
+[#_check_ingress]
+== Ingress を確認する
+
+Ingress は、正しい `HOSTS`（設定された FQDN を表示）および `ADDRESS`（ルーティングされるホストアドレス）を持っている必要があります。
+
+----
+kubectl -n cattle-system get ingress
+----
+
+出力の例：
+
+----
+NAME      HOSTS                    ADDRESS                   PORTS     AGE
+rancher   rancher.yourdomain.com   x.x.x.x,x.x.x.x,x.x.x.x   80, 443   2m
+----
+
+[#_check_ingress_controller_logs]
+== Ingress コントローラのログを確認する
+
+設定された Rancher FQDN にアクセスしても UI が表示されない場合、Rancher にアクセスしようとしたときに何が起こったかを確認するために Ingress コントローラのログを確認してください：
+
+----
+kubectl -n traefik logs -l app=traefik
+----
+
+[#_leader_election]
+== リーダー選出
+
+リーダーは、リーダー選出プロセスによって決定されます。リーダーが決定された後、リーダー（`holderIdentity`）は `cattle-controllers` リースに保存され、`kube-system` ネームスペースに格納されます（この例では、`rancher-dbc7ff869-gvg6k`）。
+
+----
+kubectl -n kube-system get lease cattle-controllers
+----
+
+出力の例：
+
+----
+NAME                 HOLDER                    AGE
+cattle-controllers   rancher-dbc7ff869-gvg6k   6h10m
+----
+
+[#_configuration]
+=== 設定
+
+_Rancher 2.8.3 から利用可能_
+
+Kubernetes APIに遅延が発生した場合、リーダーロックを保持しているRancherのレプリカは、リースが無効になる前にリースを更新できない可能性があります。これはRancherのログで確認できます。
+
+----
+E0629 04:13:07.293461      34 leaderelection.go:364] Failed to update lock: Put "https://172.17.0.1:443/apis/coordination.k8s.io/v1/namespaces/kube-system/leases/cattle-controllers?timeout=15m0s": context deadline exceeded
+I0629 04:13:07.293594      34 leaderelection.go:280] failed to renew lease kube-system/cattle-controllers: timed out waiting for the condition
+...
+2024/06/29 04:13:10 [FATAL] leaderelection lost for cattle-controllers
+----
+
+これを軽減するために、`rancher` デプロイメント内で環境変数を設定してリーダー選出のデフォルトパラメータを変更できます。
+
+* `CATTLE_ELECTION_LEASE_DURATION`:https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.LeaseDuration[リースの期間]。デフォルト値は45秒です。
+* `CATTLE_ELECTION_RENEW_DEADLINE`:https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.RenewDeadline[更新期限]。デフォルト値は30秒です。
+* `CATTLE_ELECTION_RETRY_PERIOD`:https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.RetryPeriod[再試行期間]。デフォルト値は2秒です。
+
+例:
+
+----
+kubectl -n cattle-system set env deploy/rancher CATTLE_ELECTION_LEASE_DURATION=2m CATTLE_ELECTION_RENEW_DEADLINE=90s CATTLE_ELECTION_RETRY_PERIOD=10s
+----
+
+これにより、リースの期間、更新期限、再試行期間がそれぞれ120秒、90秒、10秒に一時的に増加します。
+また、これらの環境変数を{xref-helm-chart-options}#_setting_extra_environment_variables[Helmの値を使用して]設定することで、変更を永続的にすることもできます。

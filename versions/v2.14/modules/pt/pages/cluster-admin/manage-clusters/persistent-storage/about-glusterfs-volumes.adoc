@@ -1,0 +1,52 @@
+= GlusterFS Volumes
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: procedimentos/guias-novos-usuarios/gerenciar-clusters/criar-armazenamento-persistente-kubernetes/gerenciar-armazenamento-persistente/sobre-volumes-glusterfs.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/about-glusterfs-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+[NOTE]
+====
+
+Esta seção se aplica apenas a {xref-launch-k8s-with-rancher}[clusters RKE.]
+====
+
+
+Em clusters que armazenam dados em volumes GlusterFS, você pode enfrentar um problema onde os pods falham ao montar volumes após reiniciar o `kubelet`. O registro do `kubelet` mostrará: `transport endpoint is not connected`. Para evitar que isso aconteça, você pode configurar seu cluster para montar o binário `systemd-run` no contêiner `kubelet`. Existem dois requisitos antes que você possa alterar a configuração do cluster:
+
+* O nó precisa ter o binário `systemd-run` instalado (isso pode ser verificado usando o comando `which systemd-run` em cada nó do cluster)
+* O binário `systemd-run` precisa ser compatível com o sistema operacional Debian no qual a imagem hyperkube é baseada (isso pode ser verificado usando o seguinte comando em cada nó do cluster, substituindo a tag da imagem pela versão do Kubernetes que você deseja usar)
+
+----
+docker run -v /usr/bin/systemd-run:/usr/bin/systemd-run -v /usr/lib/x86_64-linux-gnu/libcrypto.so.3:/usr/lib/x86_64-linux-gnu/libcrypto.so.3 -v /lib/systemd/libsystemd-shared-249.so:/lib/systemd/libsystemd-shared-249.so --entrypoint /usr/bin/systemd-run rancher/hyperkube:v1.26.14-rancher1 --version
+----
+
+[CAUTION]
+====
+
+Antes de atualizar seu YAML do Kubernetes para montar o binário `systemd-run`, certifique-se de que o pacote `systemd` está instalado em seus nós do cluster. Se este pacote não estiver instalado _antes_ de que as montagens bind sejam criadas em seu YAML do Kubernetes, o Docker criará automaticamente os diretórios e arquivos em cada nó e não permitirá que a instalação do pacote seja bem-sucedida.
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/usr/bin/systemd-run:/usr/bin/systemd-run"
+      - "/usr/lib/x86_64-linux-gnu/libcrypto.so.3:/usr/lib/x86_64-linux-gnu/libcrypto.so.3"
+      - "/lib/systemd/libsystemd-shared-249.so:/lib/systemd/libsystemd-shared-249.so"
+----
+
+Após a conclusão do provisionamento do cluster, você pode verificar o registro do contêiner `kubelet` para ver se a funcionalidade está ativada procurando pela seguinte linha de log:
+
+----
+Detected OS with systemd
+----

@@ -1,0 +1,114 @@
+= Restaurar un clúster desde una copia de seguridad
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher-launched-kubernetes-clusters-from-backup.adoc 
+:product-path: cluster-admin/backups-and-restore/restore.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-clean-cluster-nodes: xref:cluster-admin/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:cluster-admin/backups-and-restore/backups.adoc
+:xref-ds-backup-restore: xref:cluster-admin/backups-and-restore/backups-and-restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-clean-cluster-nodes: xref:how-to-guides/new-user-guides/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher-launched-kubernetes-clusters.adoc
+:xref-ds-backup-restore: xref:getting-started/installation-and-upgrade/upgrade-and-roll-back-kubernetes.adoc
+endif::[]
+
+La copia de seguridad y recuperación de etcd para {xref-launch-k8s-with-rancher}[clústeres de Kubernetes lanzados por Rancher] se puede realizar fácilmente. Las instantáneas de la base de datos etcd se toman y se guardan ya sea localmente en los nodos etcd o en un destino compatible con S3. Las ventajas de configurar S3 son que si se pierden todos los nodos etcd, tu instantánea se guarda de forma remota y se puede utilizar para restaurar el clúster.
+
+Rancher recomienda habilitar la {xref-ds-backup}#_configuración_de_instantáneas_recursivas[capacidad de configurar instantáneas recursivas de etcd], pero {xref-ds-backup}#_instantáneas_de_un_solo_uso[instantáneas de un solo uso] también se pueden tomar fácilmente. Rancher permite restaurar desde <<_restoring_a_cluster_from_a_snapshot,instantáneas guardadas>>.
+
+Los clústeres también se pueden restaurar a una versión anterior de Kubernetes y a una configuración de clúster anterior.
+
+[#_viewing_available_snapshots]
+== Visualizando instantáneas disponibles
+
+La lista de todas las instantáneas disponibles para el clúster está disponible.
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página de *Clústeres*, ve al clúster donde deseas ver las instantáneas y haz clic en el nombre del clúster.
+. Haz clic en la pestaña *Instantáneas*. Las instantáneas listadas incluyen una marca de tiempo de cuándo fueron creadas.
+
+[#_restoring_a_cluster_from_a_snapshot]
+== Restaurar un clúster desde una instantánea
+
+Si tu clúster de Kubernetes presenta fallos, puedes restaurar el clúster desde una instantánea.
+
+Las instantáneas están compuestas por los datos del clúster en etcd, la versión de Kubernetes y la configuración del clúster en el `cluster.yml.` Estos componentes te permiten seleccionar entre las siguientes opciones al restaurar un clúster desde una instantánea:
+
+* *Restaurar solo el contenido de etcd:* Esta restauración es similar a restaurar a instantáneas en Rancher antes de la v2.4.0.
+* *Restaurar etcd y la versión de Kubernetes:* Esta opción debe utilizarse si una actualización de Kubernetes es la razón por la que tu clúster está fallando, y no has realizado ningún cambio en la configuración del clúster.
+* *Restaurar etcd, versiones de Kubernetes y configuración del clúster:* Esta opción debe utilizarse si cambiaste tanto la versión de Kubernetes como la configuración del clúster al actualizar.
+
+Al retroceder a una versión anterior de Kubernetes, se ignoran las {xref-ds-backup-restore}#_configuración_de_la_estrategia_de_actualización[opciones de estrategia de actualización]. Los nodos de trabajo no se aíslan ni se drenan antes de ser revertidos a la versión anterior de Kubernetes, para que un clúster no saludable pueda ser restaurado más rápidamente a un estado saludable.
+
+[NOTE]
+.Requisito previo:
+====
+Para restaurar instantáneas desde S3, el clúster debe estar configurado para {xref-ds-backup}#_configuración_de_instantáneas_recursivas[tomar instantáneas recursivas en S3.]
+====
+
+
+. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+. En la página de *Clústeres*, ve al clúster donde deseas ver las instantáneas y haz clic en el nombre del clúster.
+. Haz clic en la pestaña *Instantáneas* para ver la lista de instantáneas guardadas.
+. Ve a la instantánea que deseas restaurar y haz clic en *⋮ > Restaurar*.
+. Selecciona un *Tipo de restauración*.
+. Haz clic en *Restaurar*.
+
+*Resultado:* El clúster pasará a un estado `updating` y comenzará el proceso de restauración de los nodos `etcd` desde la instantánea. El clúster se restaura cuando vuelve a un estado `active`.
+
+[#_restoring_a_cluster_from_a_snapshot_when_the_controlplane_etcd_are_completely_unavailable]
+== Restaurando un clúster desde una instantánea cuando el controlplane/etcd están totalmente indisponibles.
+
+En un escenario de recuperación ante desastres, el plano de control y los nodos etcd gestionados por Rancher en un clúster descendente pueden no estar disponibles o funcionando. El clúster puede ser reconstruido añadiendo nuevamente nodos de control y etcd, seguido de la restauración desde una instantánea disponible.
+
+Si tienes una falla completa del clúster, debes eliminar todos los nodos/máquinas etcd de tu clúster antes de poder añadir un nodo etcd "nuevo" para la restauración.
+
+[NOTE]
+====
+Si estás utilizando {xref-ds-backup}#_local_backup_target[instantáneas locales], es *MUY* importante que asegures que respaldas la instantánea correspondiente de la que deseas restaurar desde la carpeta `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/` en el nodo etcd que vas a eliminar. Puedes copiar la instantánea en tu nuevo nodo en la carpeta `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/`. Además, si utilizas instantáneas locales y restauras en un nuevo nodo, la restauración no se puede realizar a través de la interfaz de usuario por ahora.
+====
+
+. Elimina todos los nodos etcd de tu clúster.
+ .. En la esquina superior izquierda, haz clic en *☰ > Gestión de Clústeres*.
+ .. En la página *Clústeres*, ve al clúster del que deseas eliminar nodos.
+ .. En la pestaña *Máquinas*, haz clic en *⋮ > Eliminar* en cada nodo que deseas eliminar. Inicialmente, verás que los nodos quedan en un estado `deleting`, pero una vez que todos los nodos etcd se estén eliminando, serán eliminados juntos. Esto se debe a que Rancher detecta que todos los nodos etcd se están eliminando y procede a omitir la lógica de eliminación segura de etcd.
+. Después de que todos los nodos etcd sean eliminados, añade el nuevo nodo etcd del que planeas restaurar. Asigna al nuevo nodo el rol de `all` (etcd, controlplane y trabajador).
+ ** Si el nodo estaba previamente en un clúster, {xref-clean-cluster-nodes}#_cleaning_up_nodes[límpialo] primero.
+ ** Para clústeres personalizados, ve a la pestaña *Registro* y marca la casilla para `etcd, controlplane, and worker`. Luego copia y ejecuta el comando de registro en tu nodo.
+ ** Para clústeres de controlador de nodos, un nuevo nodo se aprovisiona automáticamente.
++
+En este punto, Rancher indicará que se requiere la restauración desde una instantánea de etcd.
++
+. Restaura desde una instantánea de etcd.
++
+[NOTE]
+====
+Como el nodo etcd es un nodo limpio, es posible que necesites crear manualmente la vía `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/`.
+====
++
+ ** Para las instantáneas de S3, restaura utilizando la interfaz de usuario.
+  ... Haz clic en la pestaña *Instantáneas* para ver la lista de instantáneas guardadas.
+  ... Ve a la instantánea que deseas restaurar y haz clic en *⋮ > Restaurar*.
+  ... Selecciona un *Tipo de restauración*.
+  ... Haz clic en *Restaurar*.
+ ** Para las instantáneas locales, la restauración utilizando la interfaz de usuario no está *disponible*.
+  ... En la esquina superior derecha, haz clic en *⋮ > Editar YAML*.
+  ... El ejemplo de YAML a continuación se puede añadir bajo tu `rkeConfig` para configurar la restauración de etcd:
++
+[,yaml]
+----
+  ...
+  rkeConfig:
+    etcdSnapshotRestore:
+      name: <string> # This field is required. Refers to the filename of the associated etcdsnapshot object.
+  ...
+----
++
+. Después de que la restauración sea exitosa, puedes escalar tus nodos etcd de nuevo a la redundancia deseada.

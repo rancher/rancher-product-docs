@@ -1,23 +1,34 @@
 = {rancher-product-name} HA
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+endif::[]
+:revdate: 2026-03-20
 :page-revdate: {revdate}
+:community-path: troubleshooting/other-troubleshooting-tips/rancher-ha.adoc 
+:product-path: installation-and-upgrade/troubleshooting/rancher-ha.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+endif::[]
 
-本文列出的命令/步骤可用于检查你的 Rancher Kubernetes 安装。
+本页面列出的命令/步骤可用于检查您的 Rancher Kubernetes 安装。
 
-请确保你配置了正确的 kubeconfig（例如，`export KUBECONFIG=$PWD/kube_config_cluster.yml`）。
+确保您配置了正确的 kubeconfig（例如，`export KUBECONFIG=$PWD/kube_config_cluster.yml`）。
 
-== 检查 Rancher Pod
+[#_check_rancher_pods]
+== 检查 Rancher Pods
 
-Rancher pod 会部署为 `cattle-system` 命名空间中的一个 Deployment。
+Rancher pods 作为 Deployment 部署在 `cattle-system` 名称空间中。
 
-检查 pod 是否运行在所有节点上：
+检查所有节点上 pods 是否在运行：
 
 ----
 kubectl -n cattle-system get pods -l app=rancher -o wide
 ----
 
-输出示例：
+示例输出：
 
 ----
 NAME                       READY   STATUS    RESTARTS   AGE   IP          NODE
@@ -26,54 +37,95 @@ rancher-7dbd7875f7-qbj5k   1/1     Running   0          8m    x.x.x.x     x.x.x.
 rancher-7dbd7875f7-qw7wb   1/1     Running   0          8m    x.x.x.x     x.x.x.x
 ----
 
-如果 pod 无法运行（即状态不是 *Running*，Ready 状态未显示 `1/1`，或者有大量 Restarts），请检查 pod 详细信息，日志和命名空间事件。
+如果 pod 无法运行（状态不是 *Running*，就绪状态未显示 `1/1` 或您看到重启次数过高），请检查 pod 详细信息、日志和名称空间事件。
 
+[#_pod_details]
 === Pod 详细信息
 
 ----
 kubectl -n cattle-system describe pods -l app=rancher
 ----
 
+[#_pod_container_logs]
 === Pod 容器日志
 
 ----
 kubectl -n cattle-system logs -l app=rancher
 ----
 
-=== 命名空间事件
+[#_namespace_events]
+=== 名称空间事件
 
 ----
 kubectl -n cattle-system get events
 ----
 
+[#_check_ingress]
 == 检查 Ingress
 
-Ingress 应该具有正确的 `HOSTS`（显示配置的 FQDN）和 `ADDRESS`（将被路由到该主机地址）：
+Ingress 应具有正确的 `HOSTS`（显示配置的 FQDN）和 `ADDRESS`（将被路由到的主机地址）。
 
 ----
 kubectl -n cattle-system get ingress
 ----
 
-输出示例：
+示例输出：
 
 ----
 NAME      HOSTS                    ADDRESS                   PORTS     AGE
 rancher   rancher.yourdomain.com   x.x.x.x,x.x.x.x,x.x.x.x   80, 443   2m
 ----
 
-== 检查 Ingress Controller 日志
+[#_check_ingress_controller_logs]
+== 检查 Ingress 控制器日志
 
-如果访问你配置的 Rancher FQDN 时没有显示 UI，请检查 Ingress Controller 日志以查看尝试访问 Rancher 时发生了什么：
-
-----
-kubectl -n ingress-nginx logs -l app=ingress-nginx
-----
-
-== Leader 选举
-
-Leader 由 Leader 选举确定。确定 Leader 后，Leader（`holderIdentity`）会保存在 `cattle-controllers` ConfigMap 中（在本例中为 `rancher-7dbd7875f7-qbj5k`）：
+当访问您配置的 Rancher FQDN 时未显示 UI，请检查 Ingress 控制器日志以查看您尝试访问 Rancher 时发生了什么：
 
 ----
-kubectl -n kube-system get configmap cattle-controllers -o jsonpath='{.metadata.annotations.control-plane\.alpha\.kubernetes\.io/leader}'
-{"holderIdentity":"rancher-7dbd7875f7-qbj5k","leaseDurationSeconds":45,"acquireTime":"2019-04-04T11:53:12Z","renewTime":"2019-04-04T12:24:08Z","leaderTransitions":0}
+kubectl -n traefik logs -l app=traefik
 ----
+
+[#_leader_election]
+== 领导者选举
+
+领导者通过领导者选举过程确定。在确定领导者后，领导者（`holderIdentity`）将保存在 `cattle-controllers` 租约中，位于 `kube-system` 名称空间中（在此示例中为 `rancher-dbc7ff869-gvg6k`）。
+
+----
+kubectl -n kube-system get lease cattle-controllers
+----
+
+示例输出：
+
+----
+NAME                 HOLDER                    AGE
+cattle-controllers   rancher-dbc7ff869-gvg6k   6h10m
+----
+
+[#_configuration]
+=== 配置
+
+_自 Rancher 2.8.3 起可用_
+
+如果 Kubernetes API 体验到延迟，持有领导者锁的 Rancher 副本可能无法在租约失效之前续订租约，这可以在 Rancher 日志中观察到：
+
+----
+E0629 04:13:07.293461      34 leaderelection.go:364] Failed to update lock: Put "https://172.17.0.1:443/apis/coordination.k8s.io/v1/namespaces/kube-system/leases/cattle-controllers?timeout=15m0s": context deadline exceeded
+I0629 04:13:07.293594      34 leaderelection.go:280] failed to renew lease kube-system/cattle-controllers: timed out waiting for the condition
+...
+2024/06/29 04:13:10 [FATAL] leaderelection lost for cattle-controllers
+----
+
+为了解决这个问题，您可以在 `rancher` 部署中设置环境变量，以修改领导者选举的默认参数：
+
+* `CATTLE_ELECTION_LEASE_DURATION`： https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.LeaseDuration[租约持续时间]。默认值为 45 秒。
+* `CATTLE_ELECTION_RENEW_DEADLINE`： https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.RenewDeadline[续订截止时间]。默认值为 30 秒。
+* `CATTLE_ELECTION_RETRY_PERIOD`： https://pkg.go.dev/k8s.io/client-go/tools/leaderelection#LeaderElectionConfig.RetryPeriod[重试周期]。默认值为 2 秒。
+
+示例：
+
+----
+kubectl -n cattle-system set env deploy/rancher CATTLE_ELECTION_LEASE_DURATION=2m CATTLE_ELECTION_RENEW_DEADLINE=90s CATTLE_ELECTION_RETRY_PERIOD=10s
+----
+
+这将暂时将租约持续时间、续订截止时间和重试周期分别增加到 120、90 和 10 秒。
+或者，为了使这些更改永久生效，可以通过 {xref-helm-chart-options}#_设置额外环境变量[使用 Helm 值] 来设置这些环境变量。

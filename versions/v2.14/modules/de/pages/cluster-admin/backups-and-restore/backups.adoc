@@ -1,0 +1,385 @@
+= Sichern eines Clusters
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher-launched-kubernetes-clusters.adoc 
+:product-path: cluster-admin/backups-and-restore/backups.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+Im Rancher UI kann die etcd-Sicherung und -Wiederherstellung für {xref-launch-k8s-with-rancher}[von Rancher gestartete Kubernetes-Cluster] einfach durchgeführt werden.
+
+Rancher empfiehlt, wiederkehrende `etcd` Snapshots für alle Produktionscluster zu konfigurieren. Zusätzlich können auch einmalige Snapshots erstellt werden.
+
+Snapshots der etcd-Datenbank werden entweder <<_local_backup_target,lokal auf den etcd-Knoten>> oder auf ein <<_s3_backup_target,S3-kompatibles Ziel>> gespeichert. Die Vorteile der Konfiguration von S3 bestehen darin, dass, wenn alle etcd-Knoten verloren gehen, Ihr Snapshot remote gespeichert wird und zur Wiederherstellung des Clusters verwendet werden kann.
+
+[#_how_snapshots_work]
+== Wie Snapshots funktionieren
+
+[#_snapshot_components]
+=== Snapshot-Komponenten
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Wenn Rancher einen Snapshot erstellt, umfasst er drei Komponenten:
+
+* Die Cluster-Daten in etcd
+* Die Kubernetes-Version
+* Die Clusterkonfiguration in Form des `cluster.yml`
+
+Da die Kubernetes-Version jetzt im Snapshot enthalten ist, ist es möglich, einen Cluster auf eine frühere Kubernetes-Version wiederherzustellen.
+--
+
+RKE2/K3s::
++
+--
+Rancher delegiert die Erstellung von Snapshots an die Downstream-Kubernetes-Engine. Wenn die Kubernetes-Engine einen Snapshot erstellt, umfasst sie drei Komponenten:
+
+* Die Cluster-Daten in etcd
+* Die Kubernetes-Version
+* Die Clusterkonfiguration
+
+Da die Kubernetes-Version im Snapshot enthalten ist, ist es möglich, einen Cluster auf eine frühere Kubernetes-Version wiederherzustellen, während auch ein etcd-Snapshot wiederhergestellt wird.
+--
+======
+
+Die mehreren Komponenten des Snapshots ermöglichen es Ihnen, aus den folgenden Optionen auszuwählen, wenn Sie einen Cluster aus einem Snapshot wiederherstellen müssen:
+
+* *Stellen Sie nur die etcd-Inhalte wieder:* Diese Wiederherstellung ähnelt der Wiederherstellung von Snapshots in Rancher vor v2.4.0.
+* *Stellen Sie etcd und Kubernetes-Version wieder her:* Diese Option sollte verwendet werden, wenn ein Kubernetes-Upgrade der Grund ist, warum Ihr Cluster fehlschlägt, und Sie keine Änderungen an der Clusterkonfiguration vorgenommen haben.
+* *Stellen Sie etcd, Kubernetes-Versionen und Clusterkonfiguration wieder her:* Diese Option sollte verwendet werden, wenn Sie sowohl die Kubernetes-Version als auch die Clusterkonfiguration beim Upgrade geändert haben.
+
+Es wird immer empfohlen, vor der Durchführung von Konfigurationsänderungen oder Upgrades einen neuen Snapshot zu erstellen.
+
+[#_generating_the_snapshot_from_etcd_nodes]
+=== Generierung des Snapshots von etcd-Knoten
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Für jeden etcd-Knoten im Cluster wird die Gesundheit des etcd-Clusters überprüft. Wenn der Knoten meldet, dass der etcd-Cluster gesund ist, wird ein Snapshot davon erstellt und optional nach S3 hochgeladen.
+
+Der Snapshot wird in `/opt/rke/etcd-snapshots` gespeichert. Wenn das Verzeichnis auf den Knoten als gemeinsamer Mount konfiguriert ist, wird es überschrieben. In S3 wird der Snapshot immer vom letzten Knoten stammen, der ihn hochlädt, da alle etcd-Knoten ihn hochladen und der letzte verbleibt.
+
+Im Falle, dass mehrere etcd-Knoten existieren, wird ein Snapshot nach der Überprüfung der Clustergesundheit erstellt, sodass er als gültiger Snapshot der Daten im etcd-Cluster betrachtet werden kann.
+--
+
+RKE2/K3s::
++
+--
+Snapshots sind standardmäßig aktiviert.
+
+Das Snapshot-Verzeichnis hat standardmäßig `/var/lib/rancher/<RUNTIME>/server/db/snapshots`, wobei `<RUNTIME>` entweder `rke2` oder `k3s` ist.
+
+In RKE2 werden Snapshots auf jedem etcd-Knoten gespeichert. Wenn Sie mehrere etcd- oder etcd + Control-Plane-Knoten haben, haben Sie mehrere Kopien lokaler etcd-Snapshots.
+--
+====== 
+
+### Benennungskonventionen für Snapshots 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Der Name des Snapshots wird automatisch generiert. Die `--name` Option kann verwendet werden, um den Namen des Snapshots zu überschreiben, wenn einmalige Snapshots mit der RKE CLI erstellt werden.
+
+Wenn Rancher einen Snapshot eines RKE-Clusters erstellt, basiert der Snapshotname auf dem Typ (ob der Snapshot manuell oder wiederkehrend ist) und dem Ziel (ob der Snapshot lokal gespeichert oder in S3 hochgeladen wird). Die Namenskonvention ist wie folgt:
+
+* `m` steht für manuell
+* `r` steht für wiederkehrend
+* `l` steht für lokal
+* `s` steht für S3
+
+Einige Beispiel-Snapshotnamen sind:
+
+* c-9dmxz-rl-8b2cx
+* c-9dmxz-ml-kr56m
+* c-9dmxz-ms-t6bjb
+* c-9dmxz-rs-8gxc8
+--
+
+RKE2/K3s::
++
+--
+Der Name des Snapshots wird automatisch generiert. Die `--name` Option kann verwendet werden, um den Basisnamen des Snapshots zu überschreiben, wenn einmalige Snapshots mit der RKE2 oder K3s CLI erstellt werden.
+
+Wenn Rancher einen Snapshot eines RKE2 oder K3s Clusters erstellt, basiert der Snapshotname auf dem Typ (ob der Snapshot manuell oder wiederkehrend ist) und dem Ziel (ob der Snapshot lokal gespeichert oder in S3 hochgeladen wird). Die Namenskonvention ist wie folgt:
+
+`<name>-<node>-<timestamp>`
+
+`<name>`: ist der Basisname, der von `--name` festgelegt wird und einer der folgenden sein kann
+
+* `etcd-snapshot` wird bei wiederkehrenden Snapshots vorangestellt
+* `on-demand` wird bei manuellen, bedarfsorientierten Snapshots vorangestellt
+
+`<node>`: Node ist der Name des Knotens, auf dem der Snapshot erstellt wurde.
+
+`<timestamp>` ist ein Unix-Zeitstempel des Erstellungsdatums des Snapshots.
+
+Einige Beispiel-Snapshotnamen sind:
+
+* `on-demand-my-super-rancher-k8s-node1-1652288934`
+* `on-demand-my-super-rancher-k8s-node2-1652288936`
+* `etcd-snapshot-my-super-rancher-k8s-node1-1652289945`
+* `etcd-snapshot-my-super-rancher-k8s-node2-1652289948`
+--
+======
+
+### Wie die Wiederherstellung aus einem Snapshot funktioniert 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Bei der Wiederherstellung wird der folgende Prozess verwendet:
+
+. Der Snapshot wird von S3 abgerufen, wenn S3 konfiguriert ist.
+. Der Snapshot wird entpackt (falls gezippt).
+. Einer der etcd-Knoten im Cluster stellt diese Snapshot-Datei den anderen Knoten zur Verfügung.
+. Die anderen etcd-Knoten laden den Snapshot herunter und validieren die Prüfsumme, damit sie alle denselben Snapshot für die Wiederherstellung verwenden.
+. Der Cluster wird wiederhergestellt und nach der Wiederherstellung werden Maßnahmen im Cluster durchgeführt.
+--
+
+RKE2/K3s::
++
+--
+Bei der Wiederherstellung liefert Rancher einige Sets von Plänen zur Durchführung einer Wiederherstellung. Es werden eine Reihe von Phasen verwendet, nämlich:
+
+* Angefangen
+* Herunterfahren
+* Wiederherstellung
+* RestartCluster
+* Abgeschlossen
+
+Wenn die Wiederherstellung des etcd-Snapshots fehlschlägt, wird die Phase auf `Failed` gesetzt.
+
+. Die Anfrage zur Wiederherstellung des etcd-Snapshots wird empfangen, und je nach `restoreRKEConfig` werden die Clusterkonfiguration/die Kubernetes-Version abgeglichen.
+. Die Phase wird auf `Started` gesetzt.
+. Die Phase wird auf `Shutdown` gesetzt, und der gesamte Cluster wird mit Plänen heruntergefahren, die das Skript zur Verteilung `killall.sh` ausführen. Ein neuer Init-Knoten wird gewählt. Wenn der wiederhergestellte Snapshot ein lokaler Snapshot ist, wird der Knoten, auf dem der Snapshot gespeichert ist, als Init-Knoten ausgewählt. Wenn der Snapshot von S3 wiederhergestellt wird, wird der vorhandene Init-Knoten verwendet.
+. Die Phase wird auf `Restore` gesetzt, und der Init-Knoten hat den Snapshot wiederhergestellt.
+. Die Phase wird auf `RestartCluster` gesetzt, und der Cluster wird neu gestartet/wieder dem neuen Init-Knoten beigetreten, der die frisch wiederhergestellten Snapshot-Informationen hat.
+. Die Phase wird auf `Finished` gesetzt, und der Cluster wird als erfolgreich wiederhergestellt angesehen. Der `cattle-cluster-agent` wird sich wieder verbinden, und der Cluster wird den Abgleich abschließen.
+--
+======
+
+## Konfigurieren von wiederkehrenden Snapshots 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Wählen Sie aus, wie oft Sie wiederkehrende Snapshots erstellen möchten und wie viele Snapshots aufbewahrt werden sollen. Die Zeitspanne wird in Stunden gemessen. Mit zeitgestempelten Snapshots hat der Benutzer die Möglichkeit, eine Wiederherstellung zu einem bestimmten Zeitpunkt durchzuführen.
+
+Standardmäßig sind {xref-launch-k8s-with-rancher}[von Rancher gestartete Kubernetes-Cluster] so konfiguriert, dass sie wiederkehrende Snapshots erstellen (die auf der lokalen Festplatte gespeichert werden). Um gegen lokale Festplattenausfälle zu schützen, wird empfohlen, das <<_s3_backup_target,S3-Ziel>> zu verwenden oder den Pfad auf der Festplatte zu replizieren.
+
+Während der Bereitstellung oder Bearbeitung des Clusters finden Sie die Konfiguration für Snapshots im erweiterten Abschnitt für *Cluster-Optionen*. Klicken Sie auf *Erweiterte Optionen anzeigen*.
+
+Im Abschnitt *Erweiterte Cluster-Optionen* stehen mehrere Optionen zur Konfiguration zur Verfügung:
+
+|===
+| Option | Beschreibung | Standardwert
+
+| etcd Snapshot Backup-Ziel
+| Wählen Sie aus, wo die Snapshots gespeichert werden sollen. Die Optionen sind entweder lokal oder in S3
+| lokal
+
+| Wiederkehrende etcd-Snapshots aktiviert
+| Wiederkehrende Snapshots aktivieren/deaktivieren
+| Ja
+
+| Zeitraum für die Erstellung wiederkehrender etcd-Snapshots
+| Zeit in Stunden zwischen den wiederkehrenden Snapshots
+| 12 Stunden
+
+| Anzahl der Aufbewahrung wiederkehrender etcd-Snapshots
+| Anzahl der zu behaltenden Snapshots
+| 6
+|===
+--
+
+RKE2/K3s::
++
+--
+Legen Sie den Zeitplan fest, wie die wiederkehrenden Snapshots erstellt werden sollen und wie viele Snapshots aufbewahrt werden sollen. Der Zeitplan hat das konventionelle Cron-Format. Die Aufbewahrungsrichtlinie bestimmt die Anzahl der Snapshots mit einem bestimmten Namen, die pro Knoten aufbewahrt werden sollen.
+
+Standardmäßig sind {xref-launch-k8s-with-rancher}[von Rancher gestartete Kubernetes-Cluster] so konfiguriert, dass sie alle 5 Stunden beginnend um 0 Uhr wiederkehrende Snapshots (auf der lokalen Festplatte gespeichert) erstellen. Um gegen lokale Festplattenausfälle zu schützen, wird empfohlen, das <<_s3_backup_target,S3-Ziel>> zu verwenden oder den Pfad auf der Festplatte zu replizieren.
+
+Während der Bereitstellung oder Bearbeitung des Clusters finden Sie die Konfiguration für Snapshots unter *Cluster-Konfiguration*. Klicken Sie auf *etcd*.
+
+|===
+| Option | Beschreibung | Standardwert
+
+| Wiederkehrende etcd-Snapshots aktiviert
+| Wiederkehrende Snapshots aktivieren/deaktivieren
+| Ja
+
+| Zeitraum für die Erstellung wiederkehrender etcd-Snapshots
+| Cron-Zeitplan für wiederkehrenden Snapshot
+| `0 */5 * * *`
+
+| Anzahl der aufbewahrten wiederkehrenden etcd-Snapshots
+| Anzahl der zu behaltenden Snapshots
+| 5
+|===
+--
+====== 
+
+## Einmalige Snapshots 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Zusätzlich zu wiederkehrenden Snapshots möchten Sie möglicherweise einen "einmaligen" Snapshot erstellen. Zum Beispiel sollten Sie vor dem Upgrade der Kubernetes-Version eines Clusters am besten eine Sicherung des Cluster-Zustands erstellen, um sich gegen einen Upgrade-Fehler abzusichern.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Navigieren Sie auf der Seite *Cluster* zu dem Cluster, für das Sie einen einmaligen Snapshot erstellen möchten.
+. Klicken Sie auf *⋮ > Snapshot erstellen*.
+--
+
+RKE2/K3s::
++
+--
+Zusätzlich zu wiederkehrenden Snapshots möchten Sie möglicherweise einen "einmaligen" Snapshot erstellen. Zum Beispiel sollten Sie vor dem Upgrade der Kubernetes-Version eines Clusters am besten eine Sicherung des Cluster-Zustands erstellen, um sich gegen einen Upgrade-Fehler abzusichern.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Navigieren Sie auf der Seite *Cluster* zu dem Cluster, für das Sie einen einmaligen Snapshot erstellen möchten.
+. Navigieren Sie zum `Snapshots` Tab und klicken Sie auf `Snapshot Now`
+
+[pass]
+<h3><a id="_how_taking_one_time_snapshots_works"></a>So funktioniert die Erstellung einmaliger Snapshots</h3>
+
+Bei der Erstellung eines einmaligen Snapshots liefert Rancher mehrere Pläne zur Durchführung der Snapshot-Erstellung. Es werden eine Reihe von Phasen verwendet, nämlich:
+
+* Angefangen
+* RestartCluster
+* Abgeschlossen
+
+Wenn die Erstellung des etcd-Snapshots fehlschlägt, wird die Phase auf `Failed` gesetzt.
+
+. Die Anfrage zur Erstellung des etcd-Snapshots wird empfangen.
+. Die Phase wird auf `Started` gesetzt. Alle etcd-Knoten im Cluster erhalten einen Plan zur Erstellung eines etcd-Snapshots gemäß der Clusterkonfiguration.
+. Die Phase wird auf `RestartCluster` gesetzt, und die Pläne auf jedem etcd-Knoten werden auf den ursprünglichen Plan für die etcd-Knoten zurückgesetzt.
+. Die Phase wird auf `Finished` gesetzt.
+--
+====== 
+
+*Ergebnis:* Basierend auf Ihrem <<_snapshot_backup_targets,Snapshot-Sicherungsziel>> wird ein einmaliger Snapshot erstellt und im ausgewählten Sicherungsziel gespeichert.
+
+[#_snapshot_backup_targets]
+== Snapshot-Sicherungsziele
+
+Rancher unterstützt zwei verschiedene Sicherungsziele:
+
+* <<_local_backup_target,Lokales Ziel>>
+* <<_s3_backup_target,S3-Ziel>>
+
+[#_local_backup_target]
+=== Lokales Sicherungsziel
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+Standardmäßig ist das `local` Sicherungsziel ausgewählt. Die Vorteile dieser Option bestehen darin, dass keine externe Konfiguration erforderlich ist. Snapshots werden automatisch lokal auf den etcd-Knoten in den {xref-launch-k8s-with-rancher}[von Rancher gestarteten Kubernetes-Clustern] in `/opt/rke/etcd-snapshots` gespeichert. Alle wiederkehrenden Snapshots werden in festgelegten Intervallen erstellt. Der Nachteil der Verwendung des `local` Sicherungsziels ist, dass im Falle einer totalen Katastrophe und dem Verlust von _allen_ etcd-Knoten keine Möglichkeit besteht, den Cluster wiederherzustellen.
+--
+
+RKE2/K3s::
++
+--
+Standardmäßig ist das `local` Sicherungsziel ausgewählt. Die Vorteile dieser Option bestehen darin, dass keine externe Konfiguration erforderlich ist. Snapshots werden automatisch lokal auf den etcd-Knoten in den {xref-launch-k8s-with-rancher}[von Rancher gestarteten Kubernetes-Clustern] in `/var/lib/rancher/<runtime>/server/db/snapshots` gespeichert, wo `<runtime>` entweder `k3s` oder `rke2` ist. Alle wiederkehrenden Snapshots werden gemäß dem Cron-Zeitplan erstellt. Der Nachteil der Verwendung des `local` Sicherungsziels ist, dass im Falle einer totalen Katastrophe und dem Verlust von _allen_ etcd-Knoten keine Möglichkeit besteht, den Cluster wiederherzustellen.
+--
+======
+
+[#_s3_backup_target]
+=== S3 Sicherungsziel
+
+Wir empfehlen, dass Sie das `S3` Sicherungsziel verwenden. Es ermöglicht Ihnen, Snapshots extern auf einem S3-kompatiblen Backend zu speichern. Da die Snapshots nicht lokal gespeichert werden, können Sie den Cluster auch dann wiederherstellen, wenn Sie alle etcd-Knoten verlieren.
+
+Obwohl das `S3` Sicherungsziel Vorteile gegenüber lokalen Sicherungen bietet, erfordert es zusätzliche Konfiguration.
+
+[CAUTION]
+====
+
+Wenn Sie ein S3 Sicherungsziel verwenden, stellen Sie sicher, dass jeder Cluster seinen eigenen Bucket oder Ordner hat. Rancher befüllt die Snapshot-Informationen aus jedem verfügbaren Snapshot, der im S3-Bucket oder Ordner aufgeführt ist, der für diesen Cluster konfiguriert ist.
+====
+
+
+|===
+| Option | Beschreibung | required
+
+| S3 Bucket-Name
+| Name des S3 Buckets zur Speicherung von Sicherungen
+| *
+
+| S3 Region
+| S3-Region für den Sicherungs-Bucket
+|
+
+| S3 Regions-Endpunkt
+| S3 Regions-Endpunkt für den Sicherungs-Bucket
+| *
+
+| S3 Zugriffsschlüssel
+| S3 Zugriffsschlüssel mit Berechtigung zum Zugriff auf den Sicherungs-Bucket
+| *
+
+| S3 geheimer Schlüssel
+| S3 geheimer Schlüssel mit Berechtigung zum Zugriff auf den Sicherungs-Bucket
+| *
+
+| Benutzerdefiniertes CA-Zertifikat
+| Ein benutzerdefiniertes Zertifikat, das zum Zugriff auf private S3-Backends verwendet wird
+|
+|===
+
+[#_using_a_custom_ca_certificate_for_s3]
+=== Verwendung eines benutzerdefinierten CA-Zertifikats für S3
+
+Der Sicherungs-Snapshot kann auf einer benutzerdefinierten `S3` Sicherung wie https://min.io/[minio] gespeichert werden. Wenn das S3-Backend ein selbstsigniertes oder benutzerdefiniertes Zertifikat verwendet, stellen Sie ein benutzerdefiniertes Zertifikat mit der `Custom CA Certificate` Option zur Verbindung mit dem S3-Backend bereit.
+
+[#_iam_support_for_storing_snapshots_in_s3]
+=== IAM-Unterstützung für das Speichern von Snapshots in S3
+
+Das `S3` Sicherungsziel unterstützt die Verwendung von IAM-Authentifizierung für die AWS-API zusätzlich zur Verwendung von API-Anmeldeinformationen. Eine IAM-Rolle gewährt temporäre Berechtigungen, die eine Anwendung bei API-Aufrufen an den S3-Speicher verwenden kann. Um IAM-Authentifizierung zu verwenden, müssen die folgenden Anforderungen erfüllt sein:
+
+* Die etcd-Knoten des Clusters müssen eine Instanzrolle haben, die Lese- und Schreibzugriff auf den vorgesehenen Sicherungs-Bucket hat.
+* Die etcd-Knoten des Clusters müssen Netzwerkzugang zum angegebenen S3-Endpunkt haben.
+* Die Rancher-Server-Arbeitsknoten müssen eine Instanzrolle haben, die Lese- und Schreibzugriff auf den vorgesehenen Sicherungs-Bucket hat.
+* Die Rancher-Server-Arbeitsknoten müssen Netzwerkzugang zum angegebenen S3-Endpunkt haben.
+
+Um einer Anwendung Zugriff auf S3 zu gewähren, beziehen Sie sich auf die AWS-Dokumentation zu https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2.html[Verwendung einer IAM-Rolle zur Gewährung von Berechtigungen an Anwendungen, die auf Amazon EC2-Instanzen ausgeführt werden.]
+
+[#_viewing_available_snapshots]
+== Verfügbare Snapshots anzeigen
+
+Die Liste aller verfügbaren Snapshots für den Cluster ist in der Rancher-Benutzeroberfläche verfügbar.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der *Cluster*-Seite zu dem Cluster, in dem Sie die Snapshots anzeigen möchten, und klicken Sie auf dessen Namen.
+. Klicken Sie auf die *Snapshots*-Registerkarte, um die Liste der gespeicherten Snapshots anzuzeigen. Diese Snapshots enthalten einen Zeitstempel, wann sie erstellt wurden.
+
+[#_safe_timestamps_rke]
+== Sichere Zeitstempel (RKE)
+
+Snapshot-Dateien sind mit Zeitstempeln versehen, um die Verarbeitung der Dateien mit externen Tools und Skripten zu vereinfachen, aber in einigen S3-kompatiblen Backends waren diese Zeitstempel unbrauchbar.
+
+Die Option `safe_timestamp` wird hinzugefügt, um kompatible Dateinamen zu unterstützen. Wenn dieses Flag auf `true` gesetzt ist, werden alle Sonderzeichen im Zeitstempel des Snapshot-Dateinamens ersetzt.
+
+Diese Option ist nicht direkt in der Benutzeroberfläche verfügbar und ist nur über die `Edit as Yaml` Schnittstelle verfügbar.

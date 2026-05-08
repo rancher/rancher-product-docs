@@ -1,0 +1,182 @@
+= Helm CLI クイックスタート
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-16
+:page-revdate: {revdate}
+:community-path: getting-started/quick-start-guides/deploy-rancher-manager/helm-cli.adoc 
+:product-path: installation-and-upgrade/quick-start/deploy-rancher/helm-cli.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+:xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-bootstrap-password: xref:installation-and-upgrade/resources/bootstrap-password.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+:xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
+:xref-bootstrap-password: xref:getting-started/installation-and-upgrade/resources/bootstrap-password.adoc 
+endif::[]
+
+これらの手順は、概念実証の Rancher インストールをセットアップするための迅速な方法を示しています。
+
+これらの手順では、ローカルワークステーションから通信する Linux 仮想マシンがあることを前提としています。Rancher は Linux マシンにインストールされます。ローカルワークステーションから Rancher にアクセスできるように、そのマシンの IP アドレスを取得する必要があります。Rancher は Kubernetes クラスターをリモートで管理するように設計されているため、将来的に Rancher が管理する Kubernetes クラスターもこの IP アドレスに到達できる必要があります。
+
+Rancher をローカルにインストールすることはお勧めしません。ネットワークの問題を引き起こすためです。localhost に Rancher をインストールすると、Rancher がダウンストリームの Kubernetes クラスターと通信できなくなるため、localhost では Rancher のクラスターのプロビジョニングやクラスター管理機能をテストすることができません。
+
+あなたの Linux マシンはどこにでも存在できます。それは、Amazon EC2 インスタンス、Digital Ocean ドロップレット、または Azure 仮想マシンなどの例です。他の Rancher ドキュメントでは、これらすべての一般的な用語として「ノード」を使用することがよくあります。Linux マシンをデプロイする可能な方法の一つは、{xref-setup-ec2-nodes}[このチュートリアル]に示されているように、Amazon EC2 インスタンスを設定することです。
+
+完全なインストール要件は {xref-install-reqs}[こちら] にあります。
+
+[#_install_k3s_product_name_on_linux]
+== Linux に {k3s-product-name} をインストールする
+
+Rancherは、サポートされているKubernetesバージョンにインストールする必要があります。ご利用の Rancher バージョンに対してサポートされている Kubernetes のバージョンを確認するには、 https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher サポートマトリックス] を参照してください。
+
+K3s（Kubernetes）バージョンを指定するには、K3sインストールスクリプトを実行する際にINSTALL_K3S_VERSION（例：`INSTALL_K3S_VERSION="v1.24.10+k3s1"`）環境変数を使用します。
+
+Linux マシンでこのコマンドを実行して K3s クラスターをインストールします:
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> sh -s - server --cluster-init
+----
+
+`--cluster-init` を使用すると、K3s は組み込みの etcd をデータストアとして使用でき、高可用性セットアップに変換する能力があります。 https://rancher.com/docs/k3s/latest/en/installation/ha-embedded/[組み込み DB を使用した高可用性] を参照してください。
+
+Linux マシンの IP を保存してください。
+
+[#_save_the_kubeconfig_to_your_workstation]
+== kubeconfig をワークステーションに保存します。
+
+kubeconfig ファイルは Kubernetes クラスターにアクセスするために重要です。Linux マシンの `/etc/rancher/k3s/k3s.yaml` にあるファイルをコピーし、ローカルワークステーションの `~/.kube/config` ディレクトリに保存します。これを行う方法の一つは、`scp` ツールを使用し、ローカルマシンでこのコマンドを実行することです：
+
+[tabs]
+======
+Mac と Linux::
++
+--
+----
+scp root@<IP_OF_LINUX_MACHINE>:/etc/rancher/k3s/k3s.yaml ~/.kube/config
+----
+
+場合によっては、シェルに環境変数 `KUBECONFIG=~/.kube/config` が定義されていることを確認する必要があります。たとえば、プロファイルや rc ファイルにエクスポートできます。
+--
+
+Windows::
++
+--
+デフォルトでは、"scp" は認識されないコマンドなので、最初にモジュールをインストールする必要があります。
+
+Windows PowerShell では：
+
+----
+Find-Module Posh-SSH
+Install-Module Posh-SSH
+
+## Get the remote kubeconfig file
+scp root@<IP_OF_LINUX_MACHINE>:/etc/rancher/k3s/k3s.yaml $env:USERPROFILE\.kube\config
+----
+--
+====== 
+
+[#_edit_the_rancher_server_url_in_the_kubeconfig]
+== kubeconfig で Rancher サーバーの URL を編集します。
+
+kubeconfig ファイルでは、`server` フィールドの値を `<IP_OF_LINUX_NODE>:6443` に変更する必要があります。Kubernetes API サーバーにはポート 6443 でアクセスされ、Rancher サーバーにはポート 80 および 443 でアクセスされます。この編集は、ローカルワークステーションから Helm または kubectl コマンドを実行したときに、Rancher がインストールされる Kubernetes クラスターと通信できるようにするために必要です。
+
+[tabs]
+======
+Mac と Linux::
++
+--
+kubeconfig ファイルを編集するために開く方法の一つは、Vim を使用することです：
+
+----
+vi ~/.kube/config
+----
+
+Vim を挿入モードにするには `i` を押します。作業を保存するには `Esc` を押します。次に `:wq` を押し、`Enter` を押します。
+--
+
+Windows::
++
+--
+Windows PowerShell では、kubeconfig ファイルを編集するために `notepad.exe` を使用できます：
+
+----
+notepad.exe $env:USERPROFILE\.kube\config
+----
+
+編集が完了したら、`ctrl+s` を押すか、`File > Save` に移動して作業を保存します。
+--
+====== 
+
+[#_install_rancher_with_helm]
+== Helm を使用して Rancher をインストールします。
+
+次に、ローカルワークステーションから次のコマンドを実行します。 https://kubernetes.io/docs/tasks/tools/#kubectl[kubectl] と https://helm.sh/docs/intro/install/[helm] をインストールする必要があります。
+
+[NOTE]
+====
+
+cert-manager のインストールをカスタマイズする方法についてのオプションを確認するには、 https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[cert-manager ドキュメント] を参照してください。
+====
+
+
+----
+helm repo add rancher-prime <helm-chart-repo-url>
+----
+
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
+
+----
+kubectl create namespace cattle-system
+
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/<VERSION>/cert-manager.crds.yaml
+
+helm repo add jetstack https://charts.jetstack.io
+
+helm repo update
+
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace
+
+# Windows Powershell
+helm install cert-manager jetstack/cert-manager `
+  --namespace cert-manager `
+  --create-namespace
+----
+
+Rancher をインストールするための最終コマンドは以下の通りです。このコマンドは、トラフィックを Linux マシンに転送するドメイン名を必要とします。このチュートリアルの簡潔さのために、概念実証を作成するために偽のドメイン名を使用できます。偽のドメイン名の例は `<IP_OF_LINUX_NODE>.sslip.io` です。
+
+特定の Rancher バージョンをインストールするには、`--version` フラグを使用してください（例：`--version 2.6.6`）。そうでなければ、最新の Rancher がデフォルトでインストールされます。
+
+パスワード要件については、{xref-bootstrap-password}#_password_requirements[起動パスワードの設定] を参照してください。
+
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set hostname=<IP_OF_LINUX_NODE>.sslip.io \
+  --set replicas=1 \
+  --set bootstrapPassword=<PASSWORD_FOR_RANCHER_ADMIN>
+
+# Windows Powershell
+
+helm install rancher rancher-prime/rancher `
+  --namespace cattle-system `
+  --set hostname=<IP_OF_LINUX_NODE>.sslip.io `
+  --set replicas=1 `
+  --set bootstrapPassword=<PASSWORD_FOR_RANCHER_ADMIN>
+----
+
+今、ウェブブラウザで `<IP_OF_LINUX_NODE>.sslip.io` に移動すると、Rancher UI が表示されるはずです。
+
+これらの手順を簡単にするために、偽のドメイン名と自己署名証明書を使用してこのインストールを行いました。したがって、Rancher UI を表示するには、ウェブブラウザにセキュリティ例外を追加する必要があるかもしれません。本番環境のインストールには、負荷分散装置、高可用性セットアップ、実際のドメイン名、実際の証明書が必要です。
+
+これらの手順では、完全なインストール要件や他のインストールオプションが省略されています。これらの手順に問題がある場合は、完全な {xref-install-rancher}[Helm CLI インストールドキュメント] を参照してください。
+
+新しいRancherサーバーで新しいKubernetesクラスターを起動するには、Rancherにクラウド認証情報を設定する必要があるかもしれません。詳細については、{xref-launch-k8s-with-rancher}[Rancher での Kubernetes クラスターの起動] を参照してください。

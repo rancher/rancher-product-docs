@@ -1,0 +1,411 @@
+= 2.プライベートレジストリにイメージを収集・公開する
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-05-06
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/publish-images.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/air-gapped/publish-images.adoc
+ifeval::["{build-type}" != "community"]
+:url-k3s-private-registry: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/private-registry.html
+:xref-use-windows-clusters: xref:cluster-deployment/custom-clusters/windows/use-windows-clusters.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-upgrade-certmanager: xref:installation-and-upgrade/resources/upgrade-cert-manager.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-private-registry: https://docs.k3s.io/installation/private-registry
+:xref-use-windows-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/use-windows-clusters/index.adoc
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-upgrade-certmanager: xref:getting-started/installation-and-upgrade/resources/upgrade-cert-manager.adoc
+endif::[]
+
+このページでは、{rancher-product-name}のエアギャップインストール用にコンテナイメージをプライベートレジストリに収集・公開する手順を説明します。
+
+[IMPORTANT]
+====
+これらの手順で言及されている資産については、Prime Artifacts URLにリストされている任意のRancher Primeバージョンを使用できます。Prime Artifacts URLの詳細については、 https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[Prime専用ドキュメント]をご覧ください。認証が必要です。ログインするには、 https://scc.suse.com/home[SUSEカスタマーセンター（SCC）]の資格情報を使用してください。
+====
+
+デフォルトでは、{xref-cluster-deployment}[Kubernetesクラスターをプロビジョニングする]またはRancherでツールを起動するために使用されるすべてのイメージは、Docker Hubからプルされます。Rancherのエアギャップインストールでは、すべてのイメージをロードするためにRancherサーバーからアクセス可能なプライベートレジストリが必要です。
+
+プライベートレジストリにイメージを投入するプロセスは、Dockerを使用してRancherをインストールする場合とKubernetesクラスターにRancherをインストールする場合で同じです。
+
+このセクションの手順は、Rancherを使用してWindowsノードを持つダウンストリームクラスターをプロビジョニングする予定があるかどうかによって異なります。デフォルトでは、RancherがLinuxノードのみを持つダウンストリームKubernetesクラスターをプロビジョニングすることを前提として、プライベートレジストリを投入する手順を提供します。ただし、{xref-use-windows-clusters}[Windowsノードを使用してダウンストリームKubernetesクラスターをプロビジョニングする]予定がある場合は、必要なイメージをサポートするための別の手順があります。
+
+[NOTE]
+.前提条件:
+====
+使用するために https://docs.docker.com/registry/deploying/#run-an-externally-accessible-registry[プライベートレジストリ]が必要です。
+
+レジストリに証明書がある場合は、プライベートレジストリの追加に関する{url-k3s-private-registry}[K3sドキュメント]を参照してください。証明書とレジストリの設定ファイルは、Rancherコンテナにマウントする必要があります。
+====
+
+[tabs]
+======
+Linux専用クラスター::
++
+--
+LinuxクラスターのみをプロビジョニングするRancherサーバーの場合、プライベートレジストリを投入する手順は以下の通りです。
+
+. <<_1_find_the_required_assets_for_your_rancher_version,Rancherバージョンに必要なアセットを見つける>>
+. <<_2_collect_the_cert_manager_image,cert-managerイメージを収集する>>（独自の証明書を持参するか、ロードバランサーでTLSを終了する場合を除く）
+. <<_3_save_the_images_to_your_workstation,イメージをワークステーションに保存する>>
+. <<_linux_4_populate_the_private_registry,プライベートレジストリに投入する>>
+
+[pass]
+<h3><a id="_prerequisites"></a>前提条件</h3>
+
+これらの手順では、インターネットに接続されたLinuxワークステーション、プライベートレジストリへのアクセス、および少なくとも20GBのディスクスペースを使用することが期待されています。
+
+ARM64ホストを使用する場合、レジストリはマニフェストをサポートしている必要があります。2020年4月現在、Amazon Elastic Container Registryはマニフェストをサポートしていません。
+
+[pass]
+<h3><a id="_1_find_the_required_assets_for_your_rancher_version"></a>1.Rancherバージョンに必要なアセットを見つける</h3>
+
+. https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[Prime Artifacts URL]にアクセスし、インストールしたいRancher v2.x.xリリースを見つけて、*表示*をクリックします。
+. エアギャップ環境下でRancherをインストールするには、次のファイルをダウンロードする必要があります：
++
+|===
+| リリースファイル | 説明
+
+| `rancher-images.txt`
+| このファイルには、Rancherをインストールし、クラスターをプロビジョニングし、Rancherツールを使用するために必要なイメージのリストが含まれています。
+
+| `rancher-save-images.sh`
+| このスクリプトは、Docker Hubから`rancher-images.txt`内のすべてのイメージをプルし、すべてのイメージを`rancher-images.tar.gz`として保存します。
+
+| `rancher-load-images.sh`
+| このスクリプトは、`rancher-images.tar.gz`ファイルからイメージをロードし、それらをプライベートレジストリにプッシュします。
+|===
+
+[#_2_collect_the_cert_manager_image]
+[pass]
+<h3><a class="anchor" id="_2_collect_the_cert_manager_image" href="#_2_collect_the_cert_manager_image"></a>2.cert-managerイメージを収集する</h3>
+
+[NOTE]
+====
+独自の証明書を使用している場合、または外部ロードバランサーでTLSを終了している場合は、このステップをスキップしてください。
+====
+
+Kubernetesインストールでは、Rancherのデフォルトの自己署名TLS証明書を使用することを選択した場合、 https://artifacthub.io/packages/helm/cert-manager/cert-manager[`cert-manager`]イメージを`rancher-images.txt`にも追加する必要があります。
+
+. 最新の`cert-manager` Helmチャートを取得し、イメージの詳細のためにテンプレートを解析します：
++
+[NOTE]
+====
+cert-managerへの最近の変更により、アップグレードが必要です。Rancherをアップグレードしており、cert-managerのバージョンがv0.12.0より古い場合は、{xref-upgrade-certmanager}[アップグレードドキュメント]を参照してください。
+====
++
+[,console]
+----
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm fetch jetstack/cert-manager
+helm template ./cert-manager-<version>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> ./rancher-images.txt
+----
+
+. ソース間の重複を削除するために、イメージリストをソートして一意にします：
++
+[,console]
+----
+sort -u rancher-images.txt -o rancher-images.txt
+----
+
+[#_3_save_the_images_to_your_workstation]
+[pass]
+<h3><a id="_3_save_the_images_to_your_workstation"></a>3.イメージをワークステーションに保存します</h3>
+
+. *(Optional)* プルする前にイメージリストを確認します：
++
+[,console]
+----
+wc -l rancher-images.txt
+head rancher-images.txt
+----
+
+. `rancher-save-images.sh`を実行可能にします：
++
+[,console]
+----
+chmod +x rancher-save-images.sh
+----
+
+. 必要なすべてのイメージのtarballを作成するために、`rancher-images.txt`イメージリストで`rancher-save-images.sh`を実行します：
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./rancher-images.txt
+----
+
+. *(Optional)* カスタム出力ファイルを指定します：
++
+[,console]
+----
+./rancher-save-images.sh \
+  --image-list ./rancher-images.txt \
+  --images rancher-images-custom.tar.gz
+----
++
+*結果:*Dockerはエアギャップインストールで使用されるイメージのプルを開始します。お待ちください。このプロセスには数分かかります。
+
+. tarballが作成されたことを確認します：
++
+[,console]
+----
+ls -lh rancher-images.tar.gz
+----
++
+いくつかのイメージのプルに失敗した場合は、出力を確認し、問題を解決した後に再試行してください。
+
+[#_linux_4_populate_the_private_registry]
+[pass]
+<h3><a id="_linux_4_populate_the_private_registry"></a>4.プライベートレジストリに投入する</h3>
+
+次に、`rancher-images.tar.gz`のイメージをプライベートレジストリに移動します。イメージをロードするためのスクリプトを使用します。
+
+`rancher-images.tar.gz`のイメージをプライベートレジストリに移動します。イメージをロードするためのスクリプトを使用します。
+
+`rancher-images.txt`は、ワークステーション上で`rancher-load-images.sh`スクリプトを実行しているのと同じディレクトリにあることが期待されます。`rancher-images.tar.gz`も同じディレクトリにある必要があります。
+
+. 必要に応じてプライベートレジストリにログインします：
++
+[,console]
+----
+   docker login <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. `rancher-load-images.sh`を実行可能にします：
++
+----
+   chmod +x rancher-load-images.sh
+----
+
+. `rancher-load-images.sh`を使用して、`rancher-images.txt`と`rancher-images.tar.gz`をプライベートレジストリに抽出、タグ付け、プッシュします：
++
+[,console]
+----
+   ./rancher-load-images.sh --image-list ./rancher-images.txt --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+--
+
+LinuxおよびWindowsクラスター::
++
+--
+RancherサーバーでLinuxおよびWindowsクラスターをプロビジョニングする場合、WindowsイメージとLinuxイメージのプライベートレジストリへの投入手順は異なります。WindowsクラスターはLinuxノードとWindowsノードの混合であるため、プライベートレジストリにプッシュされるLinuxイメージはマニフェストです。
+
+[pass]
+<h2><a id="_windows_steps"></a>Windowsの手順</h2>
+
+Windowsイメージは、Windowsサーバーのワークステーションから収集してプッシュする必要があります。
+
+. <<_1_find_the_required_assets_for_your_rancher_version,Rancherバージョンに必要なアセットを見つける>>
+. <<_2_save_the_images_to_your_windows_server_workstation,Windows Serverワークステーションにイメージを保存する>>
+. <<_3_prepare_the_docker_daemon,Dockerデーモンを準備する>>
+. <<_win_4_populate_the_private_registry,プライベートレジストリに投入する>>
+
+[#_prerequisites]
+[pass]
+<h3><a id="_prerequisites"></a>前提条件</h3>
+
+これらの手順では、インターネットアクセス、プライベートレジストリへのアクセス、および少なくとも50 GBのディスクスペースを備えたWindows Server 1809ワークステーションを使用する必要があります。
+
+ワークステーションには、Windowsクラスターをプロビジョニングする際に必要なマニフェストをサポートするために、Docker 18.02以上が必要です。
+
+あなたのレジストリはマニフェストをサポートする必要があります。2020年4月現在、Amazon Elastic Container Registryはマニフェストをサポートしていません。
+
+[#_1_find_the_required_assets_for_your_rancher_version]
+[pass]
+<h3><a id="_1_find_the_required_assets_for_your_rancher_version"></a>1.Rancherバージョンに必要なアセットを見つける</h3>
+
+. https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[Prime Artifacts URL]にアクセスし、インストールしたいRancher v2.x.xリリースを見つけて、*表示*をクリックします。
+. エアギャップ環境にRancherをインストールするには、次のファイルをダウンロードする必要があります：
++
+|===
+| リリースファイル | 説明
+
+| `rancher-windows-images.txt`
+| このファイルには、Windowsクラスターをプロビジョニングするために必要なWindowsイメージのリストが含まれています。
+
+| `rancher-save-images.ps1`
+| このスクリプトは、Docker Hubから`rancher-windows-images.txt`内のすべてのイメージをプルし、すべてのイメージを`rancher-windows-images.tar.gz`として保存します。
+
+| `rancher-load-images.ps1`
+| このスクリプトは、`rancher-windows-images.tar.gz`ファイルからイメージを読み込み、それらをプライベートレジストリにプッシュします。
+|===
+
+[#_2_save_the_images_to_your_windows_server_workstation]
+[pass]
+<h3><a id="_2_save_the_images_to_your_windows_server_workstation"></a>2.イメージをWindows Serverワークステーションに保存してください。</h3>
+
+. `powershell`を使用して、前のステップでダウンロードしたファイルがあるディレクトリに移動します。
+. `rancher-save-images.ps1`を実行して、すべての必要なイメージのtarballを作成します:
++
+[,console]
+----
+./rancher-save-images.ps1
+----
++
+*結果:*Dockerはエアギャップインストールに使用されるイメージのプルを開始します。お待ちください。このプロセスには数分かかります。プロセスが完了すると、現在のディレクトリに`rancher-windows-images.tar.gz`という名前のtarballが生成されます.出力がディレクトリにあることを確認してください。
+
+[#_3_prepare_the_docker_daemon]
+[pass]
+<h3><a id="_3_prepare_the_docker_daemon"></a>3.Dockerデーモンを準備します。</h3>
+
+Dockerデーモンの`allow-nondistributable-artifacts`設定フィールドにプライベートレジストリのアドレスを追加します（`C:\ProgramData\Docker\config\daemon.json`）。Windowsイメージのベースイメージは`mcr.microsoft.com`レジストリによって管理されているため、この手順は必要です。MicrosoftレジストリのレイヤーはDocker Hubに存在せず、プライベートレジストリにプルする必要があります.
+
+[,json]
+----
+   {
+     ...
+     "allow-nondistributable-artifacts": [
+       ...
+       "<REGISTRY.YOURDOMAIN.COM:PORT>"
+     ]
+     ...
+   }
+----
+
+[#_win_4_populate_the_private_registry]
+[pass]
+<h3><a id="_win_4_populate_the_private_registry"></a>4.プライベートレジストリを投入します。</h3>
+
+スクリプトを使用して、`rancher-windows-images.tar.gz`のイメージをプライベートレジストリに移動します.
+
+`rancher-windows-images.txt`は、ワークステーション上で`rancher-load-images.ps1`スクリプトを実行しているのと同じディレクトリにあることが期待されます。`rancher-windows-images.tar.gz`も同じディレクトリにある必要があります。
+
+. `powershell`を使用して、必要に応じてプライベートレジストリにログインします。
++
+[,console]
+----
+docker login <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. `powershell`を使用して、`rancher-load-images.ps1`を使って`rancher-images.tar.gz`からイメージを抽出し、タグ付けして、プライベートレジストリにプッシュします。
++
+[,console]
+----
+./rancher-load-images.ps1 --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+[pass]
+<h2><a id="_linux_steps"></a>Linuxの手順</h2>
+
+LinuxのイメージはLinuxホストから収集してプッシュする必要がありますが、_Windowsのイメージをプライベートレジストリに投入した後でなければなりません_.これらの手順は、Linux専用の手順とは異なり、プッシュされるLinuxイメージは、実際にはWindowsとLinuxのイメージをサポートするマニフェストを生成します.
+
+[pass]
+<h3><a id="_prerequisites"></a>前提条件</h3>
+
+Linuxのイメージをプライベートレジストリに投入する前に、Windowsのイメージを投入しておく必要があります。すでにLinuxのイメージでレジストリを埋めている場合は、これらの指示に従って再度実行する必要があります。これにより、WindowsとLinuxのイメージをサポートするマニフェストが公開されます。
+
+これらの手順では、インターネットに接続されたLinuxワークステーション、プライベートレジストリへのアクセス、および少なくとも20GBのディスクスペースを使用することが期待されています。
+
+ワークステーションには、Windowsクラスターをプロビジョニングする際に必要なマニフェストをサポートするために、Docker 18.02以上が必要です。
+
++++<a name="linux-1">++++++</a>+++
+
+[pass]
+<h3><a id="_1_find_the_required_assets_for_your_rancher_version"></a>1.Rancherバージョンに必要なアセットを見つける</h3>
+
+. 私たちの https://github.com/rancher/rancher/releases[リリースページ]にアクセスし、インストールしたいRancher v2.x.xのリリースを見つけてください。`rc`または`Pre-release`とマークされたリリースは、プロダクション環境には安定していないため、ダウンロードしないでください。*アセット*をクリックします。
+. リリースの*アセット*セクションから、以下のファイルをダウンロードしてください。
+
+|===
+| リリースファイル | 説明
+
+| `rancher-images.txt`
+| このファイルには、Rancherをインストールし、クラスターをプロビジョニングし、Rancherツールを使用するために必要なイメージのリストが含まれています。
+
+| `rancher-windows-images.txt`
+| このファイルには、Windowsクラスターをプロビジョニングするために必要なイメージのリストが含まれています。
+
+| `rancher-save-images.sh`
+| このスクリプトは、Docker Hubから`rancher-images.txt`内のすべてのイメージをプルし、すべてのイメージを`rancher-images.tar.gz`として保存します。
+
+| `rancher-load-images.sh`
+| このスクリプトは、`rancher-images.tar.gz`ファイルからイメージをロードし、それらをプライベートレジストリにプッシュします。
+|===
+
++++<a name="linux-2">++++++</a>+++
+
+[pass]
+<h3><a id="_2_collect_all_the_required_images"></a>2.必要なすべてのイメージを収集してください。</h3>
+
+*Rancher生成の自己署名証明書を使用したKubernetesインストールの場合:*Kubernetesインストールでは、Rancherのデフォルトの自己署名TLS証明書を使用することを選択した場合、 https://artifacthub.io/packages/helm/cert-manager/cert-manager[`cert-manager`]のイメージを`rancher-images.txt`にも追加する必要があります。独自の証明書を使用している場合は、このステップをスキップできます。
+
+. 最新の`cert-manager` Helmチャートを取得し、イメージの詳細のためにテンプレートを解析します：
++
+[NOTE]
+====
+cert-managerへの最近の変更により、アップグレードが必要です。Rancherをアップグレードしており、cert-managerのバージョンがv0.12.0より古い場合は、{xref-upgrade-certmanager}[アップグレードドキュメント]を参照してください。
+====
++
+[,console]
+----
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm fetch jetstack/cert-manager
+helm template ./cert-manager-<version>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> ./rancher-images.txt
+----
+
+. ソース間の重複を削除するために、イメージリストをソートして一意にします：
++
+[,console]
+----
+sort -u rancher-images.txt -o rancher-images.txt
+----
+
++++<a name="linux-3">++++++</a>+++
+
+[pass]
+<h3><a id="_3_save_the_images_to_your_workstation"></a>3.イメージをワークステーションに保存します</h3>
+
+. `rancher-save-images.sh`を実行可能にします：
++
+----
+chmod +x rancher-save-images.sh
+----
+
+. `rancher-save-images.sh`を、`rancher-images.txt`にあるイメージリストと共に実行して、必要なすべてのイメージのtarballを作成します:
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./rancher-images.txt
+----
+
+*結果:*Dockerはエアギャップインストールに使用されるイメージのプルを開始します。お待ちください。このプロセスには数分かかります。プロセスが完了すると、現在のディレクトリに`rancher-images.tar.gz`という名前のtarballが出力されます。出力がディレクトリにあることを確認してください。
+
++++<a name="linux-4">++++++</a>+++
+
+[pass]
+<h3><a id="_4_populate_the_private_registry"></a>4.プライベートレジストリを投入します.</h3>
+
+`rancher-images.tar.gz`のイメージを`rancher-load-images.sh script`を使用してプライベートレジストリに移動します。
+
+イメージリスト、`rancher-images.txt`または`rancher-windows-images.txt`は、ワークステーション上で`rancher-load-images.sh`スクリプトを実行しているのと同じディレクトリにある必要があります。`rancher-images.tar.gz`も同じディレクトリにあるべきです。
+
+. 必要に応じてプライベートレジストリにログインします：
++
+[,console]
+----
+docker login <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. `rancher-load-images.sh`を実行可能にします：
++
+----
+chmod +x rancher-load-images.sh
+----
+
+. `rancher-load-images.sh`を使用して、`rancher-images.tar.gz`からイメージを抽出し、タグ付けして、プライベートレジストリにプッシュします:
+
+[,console]
+----
+./rancher-load-images.sh --image-list ./rancher-images.txt \
+   --windows-image-list ./rancher-windows-images.txt \
+   --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+--
+======
+
+[#_xref_install_kubernetes_adoc_next_step_for_kubernetes_installs_launch_a_kubernetes_cluster]
+== xref:./install-kubernetes.adoc[Kubernetesインストールの次のステップ - Kubernetesクラスターを起動する]

@@ -1,0 +1,113 @@
+= Instalando {rancher-product-name} em um Ambiente VMware vSphere
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-server/on-premises-rancher-in-vsphere.adoc 
+:product-path: installation-and-upgrade/best-practices/rancher-on-vsphere.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+Este guia descreve uma arquitetura de referência para instalar o Rancher em um cluster Kubernetes RKE em um ambiente VMware vSphere. Ele também descreve as melhores práticas padrão do vSphere conforme documentado pela VMware.
+
+.Visão geral da solução
+image::rancher-on-prem-vsphere.svg[Visão Geral da Solução]
+
+[#_1_load_balancer_considerations]
+== 1. Considerações sobre o Balanceador de Carga
+
+Um balanceador de carga é necessário para direcionar o tráfego para as cargas de trabalho do Rancher que residem nos nós RKE.
+
+[#_leverage_fault_tolerance_and_high_availability]
+=== Aproveite a Tolerância a Falhas e a Alta Disponibilidade
+
+Aproveite o uso de um balanceador de carga externo (hardware ou software) que tenha funcionalidade de alta disponibilidade (F5, NSX-T, Keepalived, etc).
+
+[#_back_up_load_balancer_configuration]
+=== Fazer Backup da Configuração do Balanceador de Carga
+
+No caso de uma atividade de Recuperação de Desastres, a disponibilidade da configuração do balanceador de carga agilizará o processo de recuperação.
+
+[#_configure_health_checks]
+=== Configurar Verificações de Saúde
+
+Configure o balanceador de carga para marcar automaticamente os nós como indisponíveis se uma verificação de saúde falhar. Por exemplo, o NGINX pode facilitar isso com:
+
+`max_fails=3 fail_timeout=5s`
+
+[#_leverage_an_external_load_balancer]
+=== Aproveite um balanceador de carga externo
+
+Evite implementar um balanceador de carga de software dentro do cluster de gerenciamento.
+
+[#_secure_access_to_rancher]
+=== Acesse o Rancher de forma segura
+
+Configure regras apropriadas de gateway de segurança / ACL para expor apenas o acesso ao Rancher
+
+[#_2_vm_considerations]
+== 2. Considerações sobre VM
+
+[#_size_the_vms_according_to_rancher_documentation]
+=== Dimensione as VMs de acordo com a documentação do Rancher
+
+Veja {xref-install-reqs}[Requisitos de Instalação].
+
+[#_leverage_vm_templates_to_construct_the_environment]
+=== Utilize Modelos de VM para Construir o Ambiente
+
+Para facilitar a consistência das Máquinas Virtuais implantadas no ambiente, considere o uso de "Imagens Douradas" na forma de modelos de VM. O Packer pode ser usado para realizar isso, adicionando maiores opções de personalização.
+
+[#_leverage_drs_anti_affinity_rules_where_possible_to_separate_rancher_cluster_nodes_across_esxi_hosts]
+=== Utilize Regras de Anti-Afinidade do DRS (Quando Possível) para separar os nós do cluster Rancher entre hosts ESXi
+
+Fazer isso garantirá que as VMs dos nós sejam distribuídas entre vários hosts ESXi - prevenindo um único ponto de falha no nível do host.
+
+[#_leverage_drs_anti_affinity_rules_where_possible_to_separate_rancher_cluster_nodes_across_datastores]
+=== Utilize Regras de Anti-Afinidade do DRS (Quando Possível) para separar os nós do cluster Rancher entre datastores
+
+Fazer isso garantirá que as VMs dos nós sejam distribuídas entre vários datastores - prevenindo um único ponto de falha no nível do datastore.
+
+[#_configure_vms_as_appropriate_for_kubernetes]
+=== Configure as VMs conforme apropriado para Kubernetes
+
+É importante seguir as melhores práticas do K8s e ETCD ao implantar seus nós, incluindo desabilitar o swap, verificar se você tem conectividade de rede total entre todas as máquinas no cluster, usando nomes de host, endereços MAC e product_uuids exclusivos para cada nó.
+
+[#_3_network_considerations]
+== 3. Considerações de Rede
+
+[#_leverage_low_latency_high_bandwidth_connectivity_between_etcd_nodes]
+=== Utilize Conectividade de Baixa Latência e Alta Largura de Banda Entre os Nós do ETCD
+
+Implante membros do ETCD dentro de um único data center, quando possível, para evitar sobrecargas de latência e reduzir a probabilidade de partição de rede. Para a maioria das configurações, conexões de 1Gb serão suficientes. Para clusters grandes, conexões de 10Gb podem reduzir o tempo necessário para restaurar a partir de backup.
+
+[#_consistent_ip_addressing_for_vms]
+=== Endereçamento IP consistente para VMs
+
+Cada nó utilizado deve ter um IP estático configurado. No caso de DHCP, cada nó deve ter uma reserva de DHCP para garantir que o nó receba o mesmo IP alocado.
+
+[#_4_storage_considerations]
+== 4. Considerações de Armazenamento
+
+[#_leverage_ssd_drives_for_etcd_nodes]
+=== Utilize unidades SSD para nós ETCD
+
+O ETCD é muito sensível à latência de gravação. Portanto, utilize discos SSD sempre que possível.
+
+[#_5_backups_and_disaster_recovery]
+== 5. Backups e Recuperação de Desastres
+
+[#_perform_regular_management_cluster_backups]
+=== Realize backups regulares do cluster de gerenciamento.
+
+O Rancher armazena seus dados no datastore ETCD do cluster Kubernetes em que está localizado. Assim como em qualquer cluster Kubernetes, realize backups frequentes e testados deste cluster.
+
+[#_back_up_rancher_cluster_node_vms]
+=== Faça backup das VMs dos nós do cluster Rancher.
+
+Incorpore as VMs do nó de gerenciamento do Rancher dentro de uma política padrão de backup de VMs.

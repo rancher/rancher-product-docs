@@ -1,0 +1,43 @@
+= ロールベースのアクセス制御
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/prometheus-federator/rbac.adoc 
+:product-path: observability/monitoring-and-dashboards/prometheus-federator/rbac.adoc
+ifeval::["{build-type}" != "community"]
+:xref-prometheus-federator: xref:observability/monitoring-and-dashboards/prometheus-federator/prometheus-federator.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-prometheus-federator: xref:reference-guides/prometheus-federator/index.adoc
+endif::[]
+
+このセクションでは、Prometheus Federatorのロールベースのアクセス制御（RBAC）に関する期待事項を説明します。
+
+{xref-prometheus-federator}[ネームスペース]に関するセクションで説明されているように、Prometheus Federatorは、プロジェクトオーナー、プロジェクトメンバー、およびプロジェクトレベルの権限を持つクラスター内の他のユーザー（例：単一のラベルセレクターで特定された一連のネームスペース内の権限）が、プロジェクト登録ネームスペース（デフォルトでプロジェクトにインポートされる）および既にプロジェクトを構成しているネームスペースを除いて、最小限の権限を持つことを期待しています。したがって、プロジェクトオーナーがプロジェクトネームスペース内の他のユーザーに特定のチャート権限を割り当てられるように、Helmプロジェクトオペレーターは次のバインディングを自動的に監視します。
+
+* ClusterRoleBindings
+* プロジェクトリリースネームスペース内のロールバインディング
+
+これらのバインディングのいずれかに変更があった場合、Helmプロジェクトオペレーターは、バインディングが指す`roleRef`が以下に提供された名前のClusterRoleと一致するかどうかを確認します。
+
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.admin`
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.edit`
+* `helmProjectOperator.releaseRoleBindings.clusterRoleRefs.view`
+
+デフォルトでは、これらのroleRefsはそれぞれ`admin`、`edit`、`view`に対応し、これらは https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[デフォルトのKubernetesユーザー向けロール]です。
+
+[NOTE]
+====
+
+Rancher RBACユーザーにとって、これらの https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles[デフォルトのKubernetesユーザー向けロール]は、`Project Owner`、`Project Member`、`Read-Only`のデフォルトプロジェクトロールテンプレートに直接対応します。
+====
+
+
+もし`roleRef`が一致する場合、Helmプロジェクトオペレーターは、バインディングのすべてのユーザーおよびグループの`subjects`をフィルタリングし、それを使用してプロジェクトリリースネームスペース内の各ロールに対して、ロールと同じ名前および次のラベルを持つRoleBindingを自動的に構築します。
+
+* `helm.cattle.io/project-helm-chart-role: {{ .Release.Name }}`
+* `helm.cattle.io/project-helm-chart-role-aggregate-from: <admin|edit|view>`
+
+デフォルトでは、`rancher-project-monitoring`、Prometheus Federatorによってデプロイされた基盤となるチャートは、プロジェクトリリースネームスペースごとに3つのデフォルトロールを作成し、`admin`、`edit`、`view`のユーザーにプロジェクトモニタリングスタックのPrometheus、Alertmanager、Grafana UIを表示する権限を提供し、最小権限を提供します。ただし、クラスター管理者が特定のユーザーに追加の権限を割り当てたい場合、プロジェクトリリースネームスペース内の特定のユーザーに直接RoleBindingsを割り当てるか、上記の2つのラベルを持つロールを作成して、プロジェクトオーナーがプロジェクト登録ネームスペース内のユーザーにこれらのRBACロールを割り当てることを制御できるようにすることができます。

@@ -1,0 +1,125 @@
+= 3. Installieren Sie {rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-04-21
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/rancher-hinter-einem-http-proxy/rancher-installieren.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/http-proxy/install-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-tls-secrets: xref:installation-and-upgrade/resources/tls-secrets.adoc
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-tls-secrets: xref:getting-started/installation-and-upgrade/resources/add-tls-secrets.adoc
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+endif::[]
+
+
+Jetzt, da Sie einen laufenden RKE2/K3s-Cluster haben, können Sie Rancher darin installieren. Aus Sicherheitsgründen muss der gesamte Datenverkehr zu Rancher mit TLS verschlüsselt werden. Für dieses Tutorial werden Sie automatisch ein selbstsigniertes Zertifikat über https://cert-manager.io/[cert-manager] ausstellen. In einem realen Anwendungsfall werden Sie wahrscheinlich Let's Encrypt verwenden oder Ihr eigenes Zertifikat bereitstellen.
+
+[#_install_the_helm_cli]
+== Installieren Sie die Helm-Kommandozeilenschnittstelle
+
+Installieren Sie die https://helm.sh/docs/intro/install/[Helm] CLI auf einem Host, auf dem Sie eine kubeconfig haben, um auf Ihren Kubernetes-Cluster zuzugreifen:
+
+----
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod +x get_helm.sh
+sudo ./get_helm.sh
+----
+
+[#_install_cert_manager]
+== Installieren Sie cert-manager
+
+Fügen Sie das Helm-Repository für cert-manager hinzu:
+
+----
+helm repo add jetstack https://charts.jetstack.io
+----
+
+Erstellen Sie einen Namespace für cert-manager:
+
+----
+kubectl create namespace cert-manager
+----
+
+Installieren Sie die CustomResourceDefinitions von cert-manager:
+
+----
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/<VERSION>/cert-manager.crds.yaml
+----
+
+Und installieren Sie es mit Helm. Beachten Sie, dass cert-manager auch Ihren Proxy benötigt, falls es mit Let's Encrypt oder anderen externen Zertifikatsausstellern kommunizieren muss:
+
+[NOTE]
+====
+
+Um Optionen zu sehen, wie Sie die Installation von cert-manager anpassen können (einschließlich für Fälle, in denen Ihr Cluster PodSecurityPolicies verwendet), siehe die https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[Dokumentation zu cert-manager].
+====
+
+
+----
+helm upgrade --install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --set http_proxy=http://${proxy_host} \
+  --set https_proxy=http://${proxy_host} \
+  --set no_proxy=127.0.0.0/8\\,10.0.0.0/8\\,cattle-system.svc\\,172.16.0.0/12\\,192.168.0.0/16\\,.svc\\,.cluster.local
+----
+
+Jetzt sollten Sie warten, bis cert-manager mit dem Starten fertig ist:
+
+----
+kubectl rollout status deployment -n cert-manager cert-manager
+kubectl rollout status deployment -n cert-manager cert-manager-webhook
+----
+
+[#_install_rancher_product_name]
+== Installieren Sie {rancher-product-name}
+
+Als Nächstes können Sie {rancher-product-name} selbst installieren. Zuerst fügen Sie das Helm-Repository hinzu:
+
+[sh,subs="attributes+"]
+----
+helm repo add {rancher-helm-repo} <helm-chart-repo-url>
+----
+
+ifeval::["{build-type}" == "product"]
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
+endif::[]
+
+Erstellen Sie einen Namespace:
+
+----
+kubectl create namespace cattle-system
+----
+
+Und installieren Sie Rancher mit Helm. Rancher benötigt ebenfalls eine Proxy-Konfiguration, damit es mit externen Anwendungskatalogen kommunizieren oder Kubernetes-Version-Update-Metadaten abrufen kann:
+
+[sh,subs="attributes+"]
+----
+helm upgrade --install rancher {rancher-helm-repo}/rancher \
+   --namespace cattle-system \
+   --set hostname=rancher.example.com \
+   --set proxy=http://${proxy_host} \
+   --set noProxy=127.0.0.0/8\\,10.0.0.0/8\\,cattle-system.svc\\,172.16.0.0/12\\,192.168.0.0/16\\,.svc\\,.cluster.local
+----
+
+Nachdem die Implementierung abgeschlossen ist:
+
+----
+kubectl rollout status deployment -n cattle-system rancher
+----
+
+Sie können jetzt zu `https://rancher.example.com` navigieren und Rancher verwenden.
+
+[#_additional_resources]
+== Zusätzliche Ressourcen
+
+Diese Ressourcen könnten hilfreich sein, wenn Sie Rancher installieren:
+
+* {xref-helm-chart-options}[Rancher_Helm_Chart_Optionen]
+* {xref-tls-secrets}[TLS-Geheimnisse_hinzufügen]
+* {xref-install-upgrade-troubleshooting}[Troubleshooting Rancher Kubernetes Installations]

@@ -1,0 +1,123 @@
+= Migration von VMware vSphere In-tree zu Out-of-tree
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-vsphere.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/vsphere.adoc
+:experimental:
+
+Kubernetes entfernt sich von der Pflege von Cloud-Anbietern in-tree. VMware vSphere hat einen Out-of-tree-Cloud-Anbieter, der durch die Installation des vSphere-Cloud-Anbieters und der Cloud-Speicher-Plugins verwendet werden kann.
+
+Diese Seite behandelt, wie man vom in-tree vSphere-Cloud-Anbieter zu Out-of-tree migriert und die bestehenden VMs nach der Migration verwaltet.
+
+Es folgen die Schritte, die in der offiziellen https://vsphere-csi-driver.sigs.k8s.io/features/vsphere_csi_migration.html[vSphere-Migrationsdokumentation] bereitgestellt werden, und es werden die Schritte beschrieben, die in Rancher durchzuführen sind.
+
+[#_cloud_config_format_limitation]
+== Einschränkung des Cloud-Config-Formats
+
+Bestehende Volumes, die mit dem folgenden Cloud-Config-Format bereitgestellt wurden, werden aufgrund eines bestehenden Fehlers in der vSphere Cloud Storage-Schnittstelle (CSI) nicht migriert.
+
+Wenn die Cloud-Config dieses Format für den Datenspeicher- und Ressourcenpool-Pfad hat, kann der vSphere CSI-Treiber es nicht erkennen:
+
+[,yaml]
+----
+default-datastore: </datacenter>/datastore/<default-datastore-name>
+resourcepool-path: "</datacenter>/host/<cluster-name>/Resources/<resource-pool-name>"
+----
+
+Volumes, die mit dem in-tree-Anbieter im folgenden Format bereitgestellt wurden, werden korrekt migriert:
+
+[,yaml]
+----
+default-datastore: <default-datastore-name>
+resourcepool-path: "<cluster-name>/Resources/<resource-pool-name>"
+----
+
+Upstream-Fehler: https://github.com/kubernetes-sigs/vsphere-csi-driver/issues/628
+
+Rancher-Problem, das diesen Fehler verfolgt: https://github.com/rancher/rancher/issues/31105
+
+[#_prerequisites]
+== Voraussetzungen
+
+* Die vSphere CSI-Migration erfordert vSphere 7.0u1. Um bestehende in-tree vSphere-Volumes verwalten zu können, aktualisieren Sie vSphere auf 7.0u1.
+* Die Kubernetes-Version muss 1.19 oder höher sein.
+
+[#_migration]
+== Migration
+
+[#_1_install_the_cpi_plugin]
+=== 1. Installieren Sie das CPI-Plugin
+
+Bevor Sie CPI installieren, müssen Sie alle Knoten mit `node.cloudprovider.kubernetes.io/uninitialized=true:NoSchedule` tainten.
+
+Dies kann durch Ausführen der folgenden Befehle erfolgen:
+
+----
+curl -O https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+----
+
+oder:
+
+----
+wget https://raw.githubusercontent.com/rancher/helm3-charts/56b622f519728378abeddfe95074f1b87ab73b1e/charts/vsphere-cpi/taints.sh
+chmod +x taints.sh
+./taints.sh <path to kubeconfig if running the command outside the cluster>
+----
+
+Sobald alle Knoten durch das Ausführen des Skripts getaintet wurden, starten Sie das Helm vSphere CPI Chart.
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, in dem das vSphere CPI Chart installiert werden soll, und klicken Sie auf *Entdecken*.
+. Klicken Sie auf menu:Apps[Charts].
+. Klicken Sie auf *vSphere CPI*.
+. Klicken Sie auf *Installieren*.
+. Füllen Sie die erforderlichen vCenter-Details aus und klicken Sie auf *Installieren*.
+
+vSphere CPI initialisiert alle Knoten mit ProviderID, die vom vSphere CSI-Treiber benötigt wird.
+
+Überprüfen Sie, ob alle Knoten mit der ProviderID mit dem folgenden Befehl initialisiert sind:
+
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+[#_2_install_the_csi_driver]
+=== 2. Installieren Sie den CSI-Treiber
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, in dem das vSphere CSI Chart installiert werden soll, und klicken Sie auf *Entdecken*.
+. Klicken Sie auf menu:Apps[Charts].
+. Klicken Sie auf *vSphere CSI*.
+. Klicken Sie auf *Installieren*.
+. Füllen Sie die erforderlichen vCenter-Details aus und klicken Sie auf *Installieren*.
+. Aktivieren Sie *Helm-Optionen vor der Installation anpassen* und klicken Sie auf *Weiter*.
+. Aktivieren Sie im Tab *Funktionen* *CSI-Migration*.
+. Optional können Sie zum Tab *Speicher* gehen und einen Datenspeicher einrichten. Dieses Chart erstellt eine StorageClass mit dem `csi.vsphere.vmware.com` als Provisioner. Sie können die URL des Datenspeichers angeben, die für die CSI-Volumenbereitstellung verwendet werden soll, während Sie diese StorageClass erstellen. Die Datenspeicher-URL kann im vSphere-Client gefunden werden, indem Sie den Datenspeicher auswählen und zum Tab Zusammenfassung gehen. Füllen Sie die Details für die StorageClass aus.
+. Klicken Sie auf *Installieren*.
+
+[#_3_edit_the_cluster_to_enable_csi_migration_feature_flags]
+=== 3. Bearbeiten Sie den Cluster, um die CSI-Migrationsfunktionsflags zu aktivieren.
+
+. Während Sie den Cluster bearbeiten, wählen Sie, wenn die Kubernetes-Version kleiner als 1.19 ist, die Kubernetes-Version 1.19 oder höher aus dem Dropdown-Menü *Kubernetes-Version* aus.
+. Um die Funktionsflags zu aktivieren, klicken Sie auf "Als YAML bearbeiten" und fügen Sie Folgendes unter kube-controller und kubelet hinzu:
++
+[,yaml]
+----
+   extra_args:
+     feature-gates: "CSIMigration=true,CSIMigrationvSphere=true"
+----
+
+[#_4_drain_worker_nodes]
+=== 4. Entleeren Sie die Arbeitsknoten.
+
+Die Worker-Knoten müssen während des Upgrades entleert werden, bevor die Argumente des Kubelets und des Kube-Controller-Managers geändert werden.
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Gehen Sie zu dem Cluster, in dem Sie die Worker-Knoten entleeren möchten, und klicken Sie auf *⋮ > Konfiguration bearbeiten*.
+. Im Abschnitt *Erweiterte Optionen* setzen Sie das Feld *Maximale nicht verfügbare Worker-Knoten* auf 1.
+. Um die Knoten während des Upgrades zu entleeren, wählen Sie menu:Knoten entleeren[Ja] aus.
+. Setzen Sie *Force* und *Delete Local Data* auf *true*.
+. Klicken Sie auf *Speichern*, um den Cluster zu aktualisieren.

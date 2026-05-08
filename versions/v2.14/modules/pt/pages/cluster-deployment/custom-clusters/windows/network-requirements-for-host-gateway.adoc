@@ -1,0 +1,55 @@
+= Requisitos de rede para gateway de host (L2bridge)
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: como-fazer/guias-para-novos-usuarios/clusters-kubernetes-no-rancher-configuração/requisitos-de-rede-para-gateway-de-host.adoc 
+:product-path: cluster-deployment/custom-clusters/windows/network-requirements-for-host-gateway.adoc
+
+Esta seção descreve como configurar clusters personalizados do Windows que estão usando _gateway de host (L2bridge)_.
+
+[#_disabling_private_ip_address_checks]
+== Desabilitando verificações de endereço IP privado
+
+Se você estiver usando o modo _gateway de host (L2bridge)_ e hospedando seus nós em qualquer um dos serviços de nuvem listados abaixo, você deve desabilitar as verificações de endereço IP privado para seus hosts Linux ou Windows na inicialização. Para desabilitar essa verificação para cada nó, siga as instruções fornecidas por cada serviço abaixo.
+
+|===
+| Serviço | Instruções para desabilitar verificações de endereço IP privado
+
+| Amazon EC2
+| https://docs.aws.amazon.com/vpc/latest/userguide/VPC_NAT_Instance.html#EIP_Disable_SrcDestCheck[Desabilitando verificações de origem/destino]
+
+| Google GCE
+| https://cloud.google.com/vpc/docs/using-routes#canipforward[Habilitando encaminhamento de IP para instâncias] (Por padrão, uma VM não pode encaminhar um pacote originado por outra VM)
+
+| Azure VM
+| https://docs.microsoft.com/en-us/azure/virtual-network/virtual-network-network-interface#enable-or-disable-ip-forwarding[Habilitar ou desabilitar encaminhamento de IP]
+|===
+
+[#_cloud_hosted_vm_routes_configuration]
+== Configuração de rotas de VM hospedadas na nuvem
+
+Se você estiver usando o https://github.com/coreos/flannel/blob/master/Documentation/backends.md#host-gw[*gateway de host (L2bridge)*] como backend do Flannel, todos os contêineres no mesmo nó pertencem a uma sub-rede privada, e o tráfego é roteado de uma sub-rede em um nó para uma sub-rede em outro nó através da rede do host.
+
+* Quando os nós de trabalho são provisionados na AWS, clusters de virtualização ou servidores bare metal, certifique-se de que eles pertençam à mesma sub-rede de camada 2. Se os nós não pertencerem à mesma sub-rede de camada 2, `host-gw` a rede não funcionará.
+* Quando os nós de trabalho são provisionados no GCE ou Azure, eles não estão na mesma sub-rede de camada 2. Os nós no GCE e Azure pertencem a uma rede roteável de camada 3. Siga as instruções abaixo para configurar o GCE e o Azure para que a rede da nuvem saiba como rotear as sub-redes do host em cada nó.
+
+Para configurar o roteamento de sub-rede do host no GCE ou Azure, primeiro execute o seguinte comando para descobrir as sub-redes do host em cada nó de trabalho:
+
+[,bash]
+----
+kubectl get nodes -o custom-columns=nodeName:.metadata.name,nodeIP:status.addresses[0].address,routeDestination:.spec.podCIDR
+----
+
+Em seguida, siga as instruções para cada provedor de nuvem para configurar regras de roteamento para cada nó:
+
+|===
+| Serviço | Instruções
+
+| Google GCE
+| Para GCE, adicione uma rota estática para cada nó: https://cloud.google.com/vpc/docs/using-routes#addingroute[Adicionando uma rota estática].
+
+| Azure VM
+| Para Azure, crie uma tabela de roteamento: https://docs.microsoft.com/en-us/azure/virtual-network/virtual-networks-udr-overview#user-defined[Rotas personalizadas: definidas pelo usuário].
+|===

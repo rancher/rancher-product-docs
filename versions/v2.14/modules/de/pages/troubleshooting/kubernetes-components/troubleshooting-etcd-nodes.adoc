@@ -1,0 +1,340 @@
+= Fehlerbehebung bei etcd-Knoten
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: troubleshooting/kubernetes-components/troubleshooting-etcd-nodes.adoc 
+:product-path: troubleshooting/kubernetes-components/troubleshooting-etcd-nodes.adoc
+
+Dieser Abschnitt enthält Befehle und Tipps zur Fehlersuche bei Knoten mit der Rolle `etcd`.
+
+[#_checking_if_the_etcd_container_is_running]
+== Überprüfen, ob der etcd-Container läuft
+
+Der Container für etcd sollte den Status *Up* haben. Die Dauer, die nach *Up* angezeigt wird, ist die Zeit, die der Container bereits läuft.
+
+----
+docker ps -a -f=name=etcd$
+----
+
+Beispielausgabe:
+
+----
+CONTAINER ID   IMAGE                                 COMMAND                  CREATED          STATUS          PORTS     NAMES
+d26adbd23643   rancher/mirrored-coreos-etcd:v3.5.7   "/usr/local/bin/etcd…"   30 minutes ago   Up 30 minutes             etcd
+----
+
+[#_etcd_container_logging]
+== etcd-Container-Protokollierung
+
+Die Protokollierung des Containers kann Informationen darüber enthalten, was das Problem sein könnte.
+
+----
+docker logs etcd
+----
+
+|===
+| Protokoll | Erklärung
+
+| `health check for peer xxx could not connect: dial tcp IP:2380: getsockopt: connection refused`
+| Eine Verbindung zur angegebenen Adresse auf Port 2380 kann nicht hergestellt werden. Überprüfen Sie, ob der etcd-Container auf dem Host mit der angegebenen Adresse läuft.
+
+| `xxx is starting a new election at term x`
+| Der etcd-Cluster hat sein Quorum verloren und versucht, einen neuen Leader zu etablieren. Dies kann passieren, wenn die Mehrheit der Knoten, die etcd ausführen, ausfällt oder nicht erreichbar ist.
+
+| `connection error: desc = "transport: Error while dialing dial tcp 0.0.0.0:2379: i/o timeout"; Reconnecting to {0.0.0.0:2379 0  <nil>}`
+| Die Host-Firewall verhindert die Netzwerkkommunikation.
+
+| `rafthttp: request cluster ID mismatch`
+| Der Knoten mit der etcd-Instanz, die `rafthttp: request cluster ID mismatch` protokolliert, versucht, einem Cluster beizutreten, das bereits mit einem anderen Peer gebildet wurde. Der Knoten sollte aus dem Cluster entfernt und erneut hinzugefügt werden.
+
+| `rafthttp: failed to find member`
+| Der Clusterzustand (`/var/lib/etcd`) enthält falsche Informationen, um dem Cluster beizutreten. Der Knoten sollte aus dem Cluster entfernt, das Zustandsverzeichnis sollte bereinigt und der Knoten sollte erneut hinzugefügt werden.
+|===
+
+[#_etcd_cluster_and_connectivity_checks]
+== etcd-Cluster- und Konnektivitätsprüfungen
+
+Die Adresse, an der etcd lauscht, hängt von der Adresskonfiguration des Hosts ab, auf dem etcd läuft. Wenn eine interne Adresse für den Host konfiguriert ist, auf dem etcd läuft, muss der Endpunkt für `etcdctl` ausdrücklich angegeben werden. Wenn einer der Befehle mit `Error:  context deadline exceeded` antwortet, ist die etcd-Instanz nicht gesund (entweder ist das Quorum verloren oder die Instanz ist nicht korrekt im Cluster verbunden).
+
+[#_check_etcd_members_on_all_nodes]
+=== Überprüfen Sie die etcd-Mitglieder auf allen Knoten.
+
+Die Ausgabe sollte alle Knoten mit der Rolle `etcd` enthalten und die Ausgabe sollte auf allen Knoten identisch sein.
+
+Befehl:
+
+----
+docker exec etcd etcdctl member list
+----
+
+[#_check_endpoint_status]
+=== Überprüfen Sie den Endpunktstatus
+
+Die Werte für `RAFT TERM` sollten gleich sein und `RAFT INDEX` sollte nicht zu weit voneinander entfernt sein.
+
+Befehl:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint status --write-out table
+----
+
+Beispielausgabe:
+
+----
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| ENDPOINT        |        ID        | VERSION | DB SIZE | IS LEADER | RAFT TERM | RAFT INDEX |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| https://IP:2379 | 333ef673fc4add56 |  3.5.7  |   24 MB |     false |        72 |      66887 |
+| https://IP:2379 | 5feed52d940ce4cf |  3.5.7  |   24 MB |      true |        72 |      66887 |
+| https://IP:2379 | db6b3bdb559a848d |  3.5.7  |   25 MB |     false |        72 |      66887 |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+----
+
+[#_check_endpoint_health]
+=== Überprüfen Sie die Endpunktgesundheit
+
+Befehl:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint health
+----
+
+Beispielausgabe:
+
+----
+https://IP:2379 is healthy: successfully committed proposal: took = 2.113189ms
+https://IP:2379 is healthy: successfully committed proposal: took = 2.649963ms
+https://IP:2379 is healthy: successfully committed proposal: took = 2.451201ms
+----
+
+[#_check_connectivity_on_port_tcp_2379]
+=== Überprüfen Sie die Konnektivität am Port TCP/2379
+
+Befehl:
+
+----
+for endpoint in $(docker exec etcd etcdctl member list | cut -d, -f5); do
+   echo "Validating connection to ${endpoint}/health"
+   docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -w "\n" --cacert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CACERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --cert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --key $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_KEY" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) "${endpoint}/health"
+done
+----
+
+Beispielausgabe:
+
+----
+Validating connection to https://IP:2379/health
+{"health": "true"}
+Validating connection to https://IP:2379/health
+{"health": "true"}
+Validating connection to https://IP:2379/health
+{"health": "true"}
+----
+
+[#_check_connectivity_on_port_tcp_2380]
+=== Überprüfen Sie die Konnektivität am Port TCP/2380
+
+Befehl:
+
+----
+for endpoint in $(docker exec etcd etcdctl member list | cut -d, -f4); do
+  echo "Validating connection to ${endpoint}/version";
+  docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl --http1.1 -s -w "\n" --cacert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CACERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --cert $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_CERT" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) --key $(docker inspect -f '{{range $index, $value := .Config.Env}}{{if eq (index (split $value "=") 0) "ETCDCTL_KEY" }}{{range $i, $part := (split $value "=")}}{{if gt $i 1}}{{print "="}}{{end}}{{if gt $i 0}}{{print $part}}{{end}}{{end}}{{end}}{{end}}' etcd) "${endpoint}/version"
+done
+----
+
+Beispielausgabe:
+
+----
+Validating connection to https://IP:2380/version
+{"etcdserver":"3.5.7","etcdcluster":"3.5.0"}
+Validating connection to https://IP:2380/version
+{"etcdserver":"3.5.7","etcdcluster":"3.5.0"}
+Validating connection to https://IP:2380/version
+{"etcdserver":"3.5.7","etcdcluster":"3.5.0"}
+----
+
+[#_etcd_alarms]
+== etcd-Alarme
+
+etcd wird Alarme auslösen, zum Beispiel wenn der Speicherplatz ausgeht.
+
+Befehl:
+
+----
+docker exec etcd etcdctl alarm list
+----
+
+Beispielausgabe, wenn der NOSPACE-Alarm ausgelöst wird:
+
+----
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+----
+
+[#_etcd_space_errors]
+== etcd-Speicherfehler
+
+Verwandte Fehlermeldungen sind `etcdserver: mvcc: database space exceeded` oder `applying raft message exceeded backend quota`. Alarm `NOSPACE` wird ausgelöst.
+
+Lösungen:
+
+* <<_compact_the_keyspace,Den Schlüsselraum komprimieren>>
+* <<_defrag_all_etcd_members,Alle etcd-Mitglieder defragmentieren>>
+* <<_check_endpoint_status,Überprüfen Sie den Endpunktstatus>>
+* <<_disarm_alarm,Alarm deaktivieren>>
+
+[#_compact_the_keyspace]
+=== Den Schlüsselraum komprimieren
+
+Befehl:
+
+----
+rev=$(docker exec etcd etcdctl endpoint status --write-out json | egrep -o '"revision":[0-9]*' | egrep -o '[0-9]*')
+docker exec etcd etcdctl compact "$rev"
+----
+
+Beispielausgabe:
+
+----
+compacted revision xxx
+----
+
+[#_defrag_all_etcd_members]
+=== Alle etcd-Mitglieder defragmentieren
+
+Befehl:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl defrag
+----
+
+Beispielausgabe:
+
+----
+Finished defragmenting etcd member[https://IP:2379]
+Finished defragmenting etcd member[https://IP:2379]
+Finished defragmenting etcd member[https://IP:2379]
+----
+
+[#_check_endpoint_status_1]
+=== Überprüfen Sie den Endpunktstatus
+
+Befehl:
+
+----
+docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint status --write-out table
+----
+
+Beispielausgabe:
+
+----
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| ENDPOINT        |        ID        | VERSION | DB SIZE | IS LEADER | RAFT TERM | RAFT INDEX |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+| https://IP:2379 |  e973e4419737125 |  3.5.7  |  553 kB |     false |        32 |    2449410 |
+| https://IP:2379 | 4a509c997b26c206 |  3.5.7  |  553 kB |     false |        32 |    2449410 |
+| https://IP:2379 | b217e736575e9dd3 |  3.5.7  |  553 kB |      true |        32 |    2449410 |
++-----------------+------------------+---------+---------+-----------+-----------+------------+
+----
+
+[#_disarm_alarm]
+=== Alarm deaktivieren
+
+Nachdem überprüft wurde, dass die DB-Größe nach der Komprimierung und Defragmentierung gesunken ist, muss der Alarm deaktiviert werden, damit etcd wieder Schreibvorgänge zulässt.
+
+Befehl:
+
+----
+docker exec etcd etcdctl alarm list
+docker exec etcd etcdctl alarm disarm
+docker exec etcd etcdctl alarm list
+----
+
+Beispielausgabe:
+
+----
+docker exec etcd etcdctl alarm list
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+memberID:x alarm:NOSPACE
+docker exec etcd etcdctl alarm disarm
+docker exec etcd etcdctl alarm list
+----
+
+[#_configure_log_level]
+== Protokollebene konfigurieren
+
+[NOTE]
+====
+
+In etcd v3.5 oder später können Sie die Protokollebene nicht mehr dynamisch ändern.
+====
+
+
+[#_etcd_v3_5_and_later]
+=== etcd v3.5 und später
+
+Um die Protokollebene für etcd zu konfigurieren, bearbeiten Sie die Cluster-YAML:
+
+----
+services:
+  etcd:
+    extra_args:
+      log-level: "debug"
+----
+
+[#_etcd_v3_4_and_earlier]
+=== etcd v3.4 und früher
+
+In früheren etcd-Versionen können Sie die API verwenden, um die Protokollebene dynamisch zu ändern.  Konfigurieren Sie das Debug-Logging mit den folgenden Befehlen:
+
+----
+docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -XPUT -d '{"Level":"DEBUG"}' --cacert $(docker exec etcd printenv ETCDCTL_CACERT) --cert $(docker exec etcd printenv ETCDCTL_CERT) --key $(docker exec etcd printenv ETCDCTL_KEY) $(docker exec etcd printenv ETCDCTL_ENDPOINTS)/config/local/log
+----
+
+Um die Protokollebene auf den Standardwert (`INFO`) zurückzusetzen, können Sie den folgenden Befehl verwenden.
+
+Befehl:
+
+----
+docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -XPUT -d '{"Level":"INFO"}' --cacert $(docker exec etcd printenv ETCDCTL_CACERT) --cert $(docker exec etcd printenv ETCDCTL_CERT) --key $(docker exec etcd printenv ETCDCTL_KEY) $(docker exec etcd printenv ETCDCTL_ENDPOINTS)/config/local/log
+----
+
+[#_etcd_content]
+== etcd-Inhalt
+
+Wenn Sie den Inhalt Ihres etcd untersuchen möchten, können Sie entweder Streaming-Ereignisse beobachten oder etcd direkt abfragen. Siehe unten für Beispiele.
+
+[#_watch_streaming_events]
+=== Streaming-Ereignisse beobachten
+
+Befehl:
+
+----
+docker exec etcd etcdctl watch --prefix /registry
+----
+
+Wenn Sie nur die betroffenen Schlüssel sehen möchten (und nicht die Binärdaten), können Sie `| grep -a ^/registry` an den Befehl anhängen, um nur nach Schlüsseln zu filtern.
+
+[#_query_etcd_directly]
+=== etcd direkt abfragen
+
+Befehl:
+
+----
+docker exec etcd etcdctl get /registry --prefix=true --keys-only
+----
+
+Sie können die Daten verarbeiten, um eine Zusammenfassung der Anzahl pro Schlüssel zu erhalten. Verwenden Sie dazu den folgenden Befehl:
+
+----
+docker exec etcd etcdctl get /registry --prefix=true --keys-only | grep -v ^$ | awk -F'/' '{ if ($3 ~ /cattle.io/) {h[$3"/"$4]++} else { h[$3]++ }} END { for(k in h) print h[k], k }' | sort -nr
+----
+
+[#_replacing_unhealthy_etcd_nodes]
+== Ungesunde etcd-Knoten ersetzen
+
+Wenn ein Knoten in Ihrem etcd-Cluster ungesund wird, empfiehlt es sich, den fehlgeschlagenen oder ungesunden Knoten zu reparieren oder zu entfernen, bevor Sie einen neuen etcd-Knoten zum Cluster hinzufügen.

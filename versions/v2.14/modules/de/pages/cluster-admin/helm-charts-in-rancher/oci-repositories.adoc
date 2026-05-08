@@ -1,0 +1,129 @@
+= Verwendung von OCI-basierten Helm-Chart-Repositories
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/helm-charts-in-rancher/oci-repositories.adoc 
+:product-path: cluster-admin/helm-charts-in-rancher/oci-repositories.adoc
+ifeval::["{build-type}" != "community"]
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-logging-troubleshooting: xref:einblick/protokollierung/fehlerbehebung.adoc
+:xref-helm-charts-in-rancher: xref:cluster-admin/helm-charts-in-rancher/helm-charts-in-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-logging-troubleshooting: xref:troubleshooting/other-troubleshooting-tips/logging.adoc
+:xref-helm-charts-in-rancher: xref:how-to-guides/new-user-guides/helm-charts-in-rancher/index.adoc
+endif::[]
+
+Helm v3 führte die Speicherung von Helm-Charts als https://opencontainers.org/about/overview/[Open Container Initiative (OCI)]-Artefakte in Container-Registries ein. Mit Rancher v2.9.0 können Sie https://helm.sh/docs/topics/registries/[OCI-basierte Helm-Chart-Repositories] neben HTTP-basierten und Git-basierten Repositories hinzufügen. Das bedeutet, dass Sie Apps bereitstellen können, die als OCI-Artefakte gespeichert sind.
+
+[#_add_an_oci_based_helm_chart_repository]
+== Fügen Sie ein OCI-basiertes Helm-Chart-Repository hinzu
+
+Um ein OCI-basiertes Helm-Chart-Repository über die Rancher-Benutzeroberfläche hinzuzufügen:
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Finden Sie den Namen des Clusters, auf dessen Repositories Sie zugreifen möchten. Klicken Sie auf *Erkunden* am Ende der Zeile des Clusters.
+. Wählen Sie in der linken Navigationsleiste menu:Apps[Repositories] aus.
+. Klicken Sie auf *Erstellen*.
+. Geben Sie einen *Namen* für die Registry ein. Wählen Sie *OCI Repository* als Ziel.
+. Geben Sie die *OCI Repository Host-URL* für die Registry ein. Der Endpunkt der Registry darf nichts außer OCI Helm-Chart-Artefakten enthalten. Die Artefakte sollten alle eindeutige Namen haben. Wenn Sie versuchen, einen Endpunkt hinzuzufügen, der andere Arten von Dateien oder Artefakten enthält, wird das OCI-Repository nicht hinzugefügt.
+
+[NOTE]
+====
+Sie können das *OCI URL* Feld verwenden, um zu verfeinern, wie viele Charts aus der Registry für die Installation auf Rancher verfügbar sind. Allgemeinere Endpunkte zielen auf mehr Charts ab, wie die folgenden Beispiele zeigen:
+
+....
+- `oci://<registry-host>`: Every chart in the registry becomes available for installation, regardless of namespace or tag.
+- `oci://<registry-host>/<namespace>`: Every chart in the specified namespace within the registry becomes available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>`: Only the specified chart and any associated tags or versions of that chart become available for installation.
+- `oci://<registry-host>/<namespace>/<chart-name>:<tag>`: Only the chart with the specified tag becomes available for installation.
+....
+====
+
+
+. Richten Sie die Authentifizierung ein. Wählen Sie *BasicAuth* aus dem Authentifizierungsfeld und geben Sie einen Benutzernamen und ein Passwort ein, wie erforderlich. Andernfalls erstellen oder wählen Sie ein *Authentifizierungs-Geheimnis* aus. Siehe <<_authentication_for_oci_based_helm_chart_repositories,Authentifizierung>> für eine vollständige Beschreibung.
+. (optional) Geben Sie ein base64-kodiertes DER-Zertifikat im Feld *CA-Zertifikat-Bündel* ein. Dieses Feld ist für Fälle gedacht, in denen Sie ein privates OCI-basiertes Helm-Chart-Repository haben und Rancher die Zertifikate vertrauen soll.
+. (optional) Um unsichere Verbindungen ohne SSL-Überprüfung zuzulassen, wählen Sie *TLS-Überprüfung überspringen*. Um Rancher zu zwingen, HTTP anstelle von HTTPS zu verwenden, um Anfragen an das Repository zu senden, wählen Sie *Unsicheres einfaches HTTP*.
+. (optional) Wenn Ihr Repository eine Richtlinie zur Ratenbegrenzung hat und möglicherweise mit dem Statuscode `429 Too Many Requests` antwortet, möchten Sie möglicherweise die Felder unter *Exponential Back Off* ausfüllen:
+ ** *Minimale Wartezeit*: Die minimale Dauer in Sekunden, die Rancher warten sollte, bevor es einen neuen Versuch startet. Der Standardwert beträgt 1 Sekunde.
+ ** *Maximale Wartezeit*: Die maximale Dauer in Sekunden, die Rancher warten sollte, bevor es einen neuen Versuch startet. Der Standardwert beträgt 5 Sekunden.
+ ** *Maximale Anzahl an Wiederholungen*: Der Standardwert beträgt 5 Wiederholungen.
+
++
+Sobald diese Werte festgelegt sind, reagiert Rancher auf den Statuscode `429`, indem es die Anfragen basierend auf den minimalen und maximalen Wartezeiten gestaffelt sendet. Die Wartezeit zwischen den Wiederholungen erhöht sich exponentiell, bis Rancher die maximal festgelegte Anzahl an Wiederholungen gesendet hat. Siehe <<_rate_limiting_of_oci_based_helm_chart_repositories,Rate-Limitierung>> für weitere Details.
+. Fügen Sie beliebige Labels und Annotationen hinzu.
+. Klicken Sie auf *Erstellen*.
+
+Es kann einige Zeit dauern, bis das OCI-basierte Helm-Chart-Repository aktiviert ist. Dies gilt insbesondere, wenn der OCI-Endpunkt mehrere Namespaces enthält.
+
+[#_authentication_for_oci_based_helm_chart_repositories]
+== Authentifizierung für OCI-basierte Helm-Chart-Repositories
+
+Rancher unterstützt BasicAuth für OCI-Registries. Sie müssen ein https://kubernetes.io/docs/concepts/configuration/secret/#basic-authentication-secret[*BasicAuth* Kubernetes-Geheimnis] erstellen. Sie können das Geheimnis auch {xref-secrets}[über die Rancher-Benutzeroberfläche erstellen].
+
+Die CRD, die mit dem OCI-basierten Helm-Chart-Repository verknüpft ist, ist `ClusterRepo`.
+
+[#_view_helm_charts_in_oci_based_helm_chart_repositories]
+== Helm-Charts in OCI-basierten Helm-Chart-Repositories anzeigen
+
+Um Helm-Charts im OCI-basierten Helm-Chart-Repository anzuzeigen, nachdem es einen `Active` Zustand erreicht hat:
+
+. Klicken Sie auf *☰*. Unter *Cluster erkunden* im linken Navigationsmenü wählen Sie einen Cluster aus.
+. Klicken Sie auf menu:Apps[Diagramme].
+. Wählen Sie das OCI-basierte Helm-Chart-Repository aus dem Dropdown-Menü aus.
+
+[#_refresh_an_oci_based_helm_chart_repository]
+== Ein OCI-basiertes Helm-Chart-Repository aktualisieren
+
+Rancher aktualisiert das OCI-basierte Helm-Chart-Repository automatisch alle 6 Stunden.
+
+Wenn Sie sofort aktualisieren müssen, können Sie {xref-helm-charts-in-rancher}#_refresh_chart_repositories[eine manuelle Aktualisierung durchführen].
+
+[#_update_an_oci_based_helm_chart_repository_configuration]
+== Konfiguration eines OCI-basierten Helm-Chart-Repositorys aktualisieren.
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Finden Sie den Namen des Clusters, auf dessen Repositories Sie zugreifen möchten. Klicken Sie auf *Erkunden* am Ende der Zeile des Clusters.
+. Wählen Sie in der linken Navigationsleiste menu:Apps[Repositories] aus.
+. Wählen Sie die Zeile, die mit dem OCI-basierten Helm-Chart-Repository verknüpft ist, und klicken Sie auf *⋮*.
+. Wählen Sie im Untermenü *Konfiguration bearbeiten* aus.
+
+[#_delete_an_oci_based_helm_chart_repository]
+== Ein OCI-basiertes Helm-Chart-Repository löschen
+
+. Klicken Sie auf *☰ > Clusterverwaltung*.
+. Finden Sie den Namen des Clusters, auf dessen Repositories Sie zugreifen möchten. Klicken Sie auf *Erkunden* am Ende der Zeile des Clusters.
+. Wählen Sie in der linken Navigationsleiste menu:Apps[Repositories] aus.
+. Wählen Sie die Zeile, die mit dem OCI-basierten Helm-Chart-Repository verknüpft ist, und klicken Sie auf *Löschen*.
+
+[#_size_limitations_of_oci_based_helm_chart_repositories_in_rancher]
+== Größenbeschränkungen von OCI-basierten Helm-Chart-Repositories in Rancher
+
+Aus Sicherheitsgründen gibt es Einschränkungen, wie groß ein Helm-Chart sein kann, das Sie über ein OCI-basiertes Helm-Chart-Repository bereitstellen können, und wie viele Metadaten Sie verwenden können, um die Helm-Charts innerhalb eines einzelnen OCI-Endpunkts zu beschreiben.
+
+Rancher kann OCI-Helm-Charts mit einer Größe von bis zu 20 MB bereitstellen.
+
+[#_rate_limiting_of_oci_based_helm_chart_repositories]
+== Ratenbegrenzung von OCI-basierten Helm-Chart-Repositories
+
+Verschiedene OCI-Registries implementieren die Ratenbegrenzung auf unterschiedliche Weise.
+
+Die meisten Server geben einen `Retry-After` Header zurück, der angibt, wie lange man warten muss, bevor die Ratenbegrenzung aufgehoben wird.
+
+Docker Hub gibt einen `429` Statuscode zurück, wenn alle zugewiesenen Anfragen abgeschlossen sind. Es gibt auch einen `RateLimit-Remaining` Header zurück, der die Ratenbegrenzungsrichtlinie beschreibt.
+
+Rancher überprüft derzeit den `Retry-After` Header. Es verarbeitet auch Docker Hub-ähnliche Antworten (Statuscode `429` und den `RateLimit-Remaining` Header) und wartet automatisch, bevor eine neue Anfrage gestellt wird. Bei der Verarbeitung von `Retry-After` oder Docker Hub-ähnlichen Antworten ignoriert Rancher `ExponentialBackOff` Werte.
+
+Wenn Sie ein OCI-basiertes Helm-Chart-Repository haben, das die `Retry-After` oder `RateLimit-Remaining` Header nicht implementiert und denken, dass Sie möglicherweise irgendwann von der Ratenbegrenzung betroffen sind, füllen Sie die Felder unter *Exponential Back Off* aus, wenn Sie das Repository hinzufügen.
+
+Wenn Sie beispielsweise ein OCI-basiertes Helm-Chart-Repository haben, das keinen `Retry-After` Header zurückgibt, aber wissen, dass der Server 50 Anfragen in 24 Stunden zulässt, können Sie Rancher einen *Min Wait* Wert von *86400* Sekunden, einen *Max Wait* Wert von *90000* Sekunden und einen *Max Number of Retries* Wert von *1* bereitstellen. Wenn Rancher dann von dem Server in der Ratenbegrenzung betroffen ist, wird Rancher 24 Stunden warten, bevor es erneut versucht. Die Anfrage sollte erfolgreich sein, da Rancher in den vorherigen 24 Stunden keine anderen Anfragen gesendet hat.
+
+[#_troubleshooting_oci_based_helm_registries]
+== Fehlerbehebung bei OCI-basierten Helm-Repositorys
+
+* Um die Protokollierungsinformationen zu verbessern, {xref-logging-troubleshooting}#_kubernetes_install[aktivieren Sie die Debug-Option] beim Bereitstellen von Rancher.
+* Wenn es eine Diskrepanz zwischen den Inhalten des Repositories und Rancher gibt, sollten Sie das Cluster-Repository als ersten Schritt aktualisieren. Wenn die Diskrepanz weiterhin besteht, löschen Sie das OCI-basierte Helm-Chart-Repository von Rancher und fügen Sie es erneut hinzu. Das Löschen des Repositories löscht keine bereits installierten Helm-Charts.
+* Apps, die über OCI-basierte Helm-Chart-Repositories installiert wurden, unterliegen einem bekannten Problem, wie Rancher die Informationen zu aktualisierbaren Versionen anzeigt. Siehe den Abschnitt {xref-helm-charts-in-rancher}#_limitations[Limitations] von *Helm Charts and Apps* für weitere Details.

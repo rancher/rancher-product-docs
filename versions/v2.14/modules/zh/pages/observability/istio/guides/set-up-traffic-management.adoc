@@ -1,63 +1,73 @@
-= 5. 设置 Istio 的流量管理组件
+= 设置 Istio 的流量管理组件
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-05
+endif::[]
+:revdate: 2025-10-01
 :page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/istio-setup-guide/set-up-traffic-management.adoc 
+:product-path: observability/istio/guides/set-up-traffic-management.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio-generate-and-view-traffic: xref:observability/istio/guides/generate-and-view-traffic.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio-generate-and-view-traffic: xref:how-to-guides/advanced-user-guides/istio-setup-guide/generate-and-view-traffic.adoc
+endif::[]
 
 [WARNING]
 ====
-https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] will be deprecated in Rancher v2.12.0; turn to the https://apps.rancher.io[SUSE Application Collection] build of Istio for enhanced security (included in SUSE Rancher Prime subscriptions).
-Detailed information can be found in https://forums.suse.com/t/deprecation-of-rancher-istio/45043[this announcement]
+https://github.com/rancher/charts/tree/release-v2.11/charts/rancher-istio[Rancher-Istio] 自 Rancher v2.12.0 起已被弃用；请转向 https://apps.rancher.io[SUSE 应用程序集合] 版本的 Istio，以获得增强的安全性（包含在 SUSE Rancher Prime 订阅中）。
+详细信息可以在 https://forums.suse.com/t/deprecation-of-rancher-istio/45043[此公告] 中找到。
 ====
 
-Istio 中流量管理的一个核心优势是允许动态请求路由。动态请求路由通常应用于金丝雀部署和蓝/绿部署等。Istio 流量管理中的两个关键资源是__虚拟服务__和__目标规则__。
+Istio 流量管理的一个主要优势是它允许动态请求路由。动态请求路由的一些常见应用包括金丝雀部署和蓝绿部署。Istio 流量管理中的两个关键资源是_虚拟服务_和_目标规则_。
 
-* https://istio.io/docs/reference/config/networking/v1alpha3/virtual-service/[虚拟服务]：拦截并将流量重定向到你的 Kubernetes Service 上。这样，你可以将部分请求流量分配到不同的服务上。你可以使用这些服务来定义一组路由规则，用于主机寻址。
-* https://istio.io/docs/reference/config/networking/v1alpha3/destination-rule/[目标规则]：作为唯一可信来源，表明哪些服务版本可用于接收虚拟服务的流量。你可以使用这些资源来定义策略，这些策略适用于路由发生后用于服务的流量。
+* https://istio.io/docs/reference/config/networking/v1alpha3/virtual-service/[虚拟服务]拦截并引导流量到您的 Kubernetes 服务，允许您将请求的流量百分比分配到不同的服务。您可以使用它们定义一组路由规则，以便在访问主机时应用。
+* https://istio.io/docs/reference/config/networking/v1alpha3/destination-rule/[目标规则]作为唯一依据，指明哪些服务版本可接收来自虚拟服务的流量。您可以使用这些资源来定义在流量路由完成后应用于目标服务的策略。
 
-本文介绍如何在示例 BookInfo 应用中添加与 `reviews` 微服务对应的虚拟服务示例。此服务的目的是在 `reviews` 服务的两个版本之间划分流量。
+本节描述如何添加一个示例虚拟服务，该服务对应于示例 BookInfo 应用中的`reviews`微服务。该服务的目的是在`reviews`服务的两个版本之间分配流量。
 
-在这个示例中，我们将流量带到 `reviews` 服务中并拦截流量，这样，50% 的流量会流向服务的 `v1`，另外 50% 的流量会流向 `v2 `。
+在这个示例中，我们将流量引导到`reviews`服务，并拦截它，使得50%的流量发送到`v1`服务，50%的流量发送到`v2`。
 
-部署这个虚拟服务后，我们将生成流量，并通过 Kiali 可视化看到流量平均路由到服务的两个版本中。
+在部署此虚拟服务后，我们将生成流量，并从 Kiali 可视化中看到流量在两个版本的服务之间均匀路由。
 
-要为 `reviews` 服务部署虚拟服务和目标规则：
+要部署`reviews`服务的虚拟服务和目标规则，
 
-. 点击 *☰ > 集群管理*。
-. 转到安装了 Istio 的集群，然后单击 *Explore*。
-. 在安装了 Istio 的集群中，点击左侧导航栏中的 menu:Istio[DestinationRules]。
-. 单击**创建**。
-. 复制并粘贴下面的 DestinationRule YAML。
-. 单击**创建**。
-. 单击**以 YAML 文件编辑**并使用此配置：
+. 单击 *☰ > 集群管理*。
+. 请前往安装了 Istio 的集群并点击*探索*。
+. 在安装了 Istio 的集群中，点击左侧导航栏中的menu:Istio[目标规则]。
+. 单击*创建*。
+. 复制并粘贴下面提供的DestinationRule yaml。
+. 单击*创建*。
+. 点击*以YAML格式编辑*并使用以下配置：
 +
 [,yaml]
 ----
-apiVersion: networking.istio.io/v1alpha3
-kind: DestinationRule
-metadata:
-  name: reviews
-spec:
-  host: reviews
-  subsets:
-  - name: v1
-    labels:
-      version: v1
-  - name: v2
-    labels:
-      version: v2
-  - name: v3
-    labels:
-      version: v3
+ apiVersion: networking.istio.io/v1alpha3
+ kind: DestinationRule
+ metadata:
+   name: reviews
+ spec:
+   host: reviews
+   subsets:
+   - name: v1
+     labels:
+       version: v1
+   - name: v2
+     labels:
+       version: v2
+   - name: v3
+     labels:
+       version: v3
 ----
 
-. 单击**创建**。
+. 单击*创建*。
 
-然后，部署提供利用 DestinationRule 的流量路由的 VirtualService：
+然后部署提供流量路由的虚拟服务，该服务利用目标规则：
 
-. 单击侧导航栏中的 *VirtualService*。
-. 单击**使用 YAML 文件创建**。
-. 复制并粘贴下面的 VirtualService YAML。
-. 单击**创建**。
+. 点击侧边导航栏中的*虚拟服务*。
+. 点击*从Yaml创建*。
+. 复制并粘贴下面提供的 VirtualService yaml。
+. 单击*创建*。
 
 [,yaml]
 ----
@@ -81,8 +91,7 @@ spec:
 ---
 ----
 
-*结果*：生成流到该服务的流量时（例如，刷新 Ingress Gateway URL），你可以在 Kiali 流量图中看到流到 `reviews` 服务的流量被平均分配到了 `v1` 和 `v3`。
+*结果：*当您向此服务生成流量时（例如，通过刷新入口网关 URL），Kiali 流量图将反映 `reviews` 服务的流量在 `v1` 和 `v3` 之间均匀分配。
 
-== 后续步骤
-
-xref:observability/istio/guides/generate-and-view-traffic.adoc[生成和查看流量]
+[#__xref_istio_generate_and_view_traffic_next_generate_and_view_traffic]
+== {xref-istio-generate-and-view-traffic}[下一步：生成并查看流量]

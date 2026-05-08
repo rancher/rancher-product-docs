@@ -1,0 +1,75 @@
+= Habilitación de la retención de usuarios
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-user-retention.adoc 
+:product-path: rancher-admin/users/authn-and-authz/enable-user-retention.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-webhook: xref:security/rancher-webhook/rancher-webhook.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-webhook: xref:reference-guides/rancher-webhook.adoc
+endif::[]
+
+En Rancher v2.8.5 y versiones posteriores, puedes habilitar la retención de usuarios para desactivar o eliminar automáticamente las cuentas de usuario inactivas después de un período de tiempo configurable.
+
+La función de retención de usuarios está desactivada por defecto.
+
+[#_enabling_user_retention_with_kubectl]
+== Habilitación de la retención de usuarios con kubectl
+
+Para habilitar la retención de usuarios, debes establecer `user-retention-cron`. También debes establecer al menos uno de `disable-inactive-user-after` o `delete-inactive-user-after`. Puedes usar `kubectl edit setting <name-of-setting>` para abrir tu editor de elección y establecer estos valores.
+
+[#_configuring_rancher_to_delete_users_disable_users_or_combine_operations]
+== Configuración de Rancher para eliminar usuarios, desactivar usuarios o combinar operaciones
+
+Rancher utiliza dos configuraciones globales de retención de usuarios para determinar si y cuándo se desactivan o eliminan los usuarios después de un cierto período de inactividad. Las cuentas desactivadas deben ser reactivadas antes de que los usuarios puedan iniciar sesión de nuevo. Si una cuenta se elimina sin ser desactivada, los usuarios pueden iniciar sesión a través de la autenticación externa y la cuenta eliminada será recreada.
+
+Las configuraciones globales, `disable-inactive-user-after` y `delete-inactive-user-after`, no se bloquean entre sí para ejecutarse.
+
+Por ejemplo, puedes establecer que ambas operaciones se ejecuten. Si le das a `disable-inactive-user-after` una duración más corta que `delete-inactive-user-after`, el proceso de retención de usuarios desactiva las cuentas inactivas antes de eliminarlas.
+
+También puedes editar algunas configuraciones de retención de usuarios en el `UserAttribute` de un usuario específico. Establecer estos valores anula las configuraciones globales. Consulta <<_user_specific_user_retention_overrides,User-specific User Retention Overrides>> para más detalles.
+
+[#_required_user_retention_settings]
+=== Configuraciones de retención de usuarios requeridas
+
+Las siguientes son configuraciones globales:
+
+* `user-retention-cron`: Describe con qué frecuencia se ejecuta el proceso de retención de usuarios. El valor es una expresión cron (por ejemplo, `0 * * * *` para cada hora).
+* `disable-inactive-user-after`: La cantidad de tiempo que una cuenta de usuario puede estar inactiva antes de que el proceso desactive la cuenta. Desactivar una cuenta obliga al usuario a solicitar que un administrador reactive la cuenta antes de que pueda iniciar sesión para usarla. Los valores se expresan en https://pkg.go.dev/time#ParseDuration[unidades de tiempo.Duration] (por ejemplo, `720h` para 720 horas o 30 días). El valor debe ser mayor que `auth-user-session-ttl-minutes`, que es `16h` por defecto. Si el valor no está establecido, se establece en la cadena vacía, o es igual a 0, el proceso no desactiva ninguna cuenta inactiva.
+* `delete-inactive-user-after`: La cantidad de tiempo que una cuenta de usuario puede estar inactiva antes de que el proceso elimine la cuenta. Los valores se expresan en unidades de tiempo.Duration (por ejemplo, `720h` para 720 horas o 30 días). El valor debe ser mayor que `auth-user-session-ttl-minutes`, que es `16h` por defecto. El valor debe ser mayor que `336h` (14 días), de lo contrario, es rechazado por el webhook de Rancher. Si necesitas que el valor sea inferior a 14 días, puedes {xref-rancher-webhook}#_bypassing_the_webhook[omitir el webhook]. Si el valor no está establecido, se establece en la cadena vacía, o es igual a 0, el proceso no elimina ninguna cuenta inactiva.
+
+[#_optional_user_retention_settings]
+=== Configuraciones de retención de usuarios opcionales
+
+Las siguientes son configuraciones globales:
+
+* `user-retention-dry-run`: Si se establece en `true`, el proceso de retención de usuarios se ejecuta sin eliminar ni desactivar realmente ninguna cuenta de usuario. Esto puede ayudar a probar el comportamiento de retención de usuarios antes de permitir que el proceso desactive o elimine cuentas de usuario en un entorno de producción.
+* `user-last-login-default`: Si un usuario no tiene `UserAttribute.LastLogin` establecido en su cuenta, se utiliza esta configuración en su lugar. El valor se expresa como una https://datatracker.ietf.org/doc/html/rfc3339#section-5.6[fecha-hora RFC 3339] truncada al último segundo; por ejemplo, `2023-03-01T00:00:00Z`. Si el valor se establece en la cadena vacía o es igual a 0, esta configuración no se utiliza.
+
+[#_user_specific_user_retention_overrides]
+==== Anulaciones de retención de usuarios específicas del usuario
+
+Las siguientes son anulaciones específicas del usuario a la configuración global para casos especiales. Estas configuraciones se aplican editando el `UserAttribute` asociado a una cuenta dada:
+
+----
+kubectl edit userattribute <user-name>
+----
+
+* `disableAfter`: La anulación específica del usuario para `disable-inactive-user-after`. El valor se expresa en https://pkg.go.dev/time#ParseDuration[unidades de tiempo.Duration] y se trunca al segundo. Si el valor se establece en `0s`, entonces la cuenta no estará sujeta a desactivación.
+* `deleteAfter`: La anulación específica del usuario para `delete-inactive-user-after`. El valor se expresa en https://pkg.go.dev/time#ParseDuration[unidades de tiempo.Duration] y se trunca al segundo. Si el valor se establece en `0s`, entonces la cuenta no estará sujeta a eliminación.
+
+[#_viewing_user_retention_settings_in_the_rancher_ui]
+== Visualizando la configuración de retención de usuarios en la interfaz de Rancher
+
+Puedes ver qué configuraciones de retención de usuarios se aplican a qué usuarios.
+
+. En la esquina superior izquierda, haz clic en *☰ > Usuarios y Autenticación*.
+. En el menú de navegación de la izquierda, selecciona *Usuarios*.
+
+Las columnas *Desactivar Después* y *Eliminar Después* para cada cuenta de usuario indican cuánto tiempo puede estar inactiva la cuenta antes de ser desactivada o eliminada de Rancher. También hay una columna *Último Inicio de Sesión* que indica aproximadamente cuándo fue la última vez que la cuenta estuvo activa.
+
+La misma información está disponible si haces clic en el nombre de un usuario en la tabla *Usuarios* y seleccionas la pestaña *Detalle*.

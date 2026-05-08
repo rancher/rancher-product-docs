@@ -1,0 +1,80 @@
+= Volumes iSCSI
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/nouveaux-guides-utilisateurs/gerer-des-clusters/creer-un-stockage-persistent-kubernetes/gerer-le-stockage-persistent/installer-des-volumes-iscsi.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/install-iscsi-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+Dans {xref-launch-k8s-with-rancher}[Clusters Kubernetes lancés par Rancher] qui stockent des données sur des volumes iSCSI, vous pouvez rencontrer un problème où les kubelets échouent à se connecter automatiquement aux volumes iSCSI. Cet échec est probablement dû à un problème d'incompatibilité impliquant l'outil initiateur iSCSI. Vous pouvez résoudre ce problème en installant l'outil initiateur iSCSI sur chacun de vos nœuds de cluster.
+
+Les clusters Kubernetes lancés par Rancher stockant des données sur des volumes iSCSI utilisent l'http://www.open-iscsi.com/[outil initiateur iSCSI], qui est intégré dans l'image Docker `rancher/hyperkube` du kubelet. Depuis chaque kubelet (c'est-à-dire, l'_initiateur_), l'outil découvre et lance des sessions avec un volume iSCSI (c'est-à-dire, le _cible_). Cependant, dans certains cas, les versions de l'outil initiateur iSCSI installées sur l'initiateur et la cible peuvent ne pas correspondre, entraînant un échec de connexion.
+
+Si vous rencontrez ce problème, vous pouvez le contourner en installant l'outil initiateur sur chaque nœud de votre cluster. Vous pouvez installer l'outil initiateur iSCSI en vous connectant à vos nœuds de cluster et en entrant l'une des commandes suivantes{nbsp}:
+
+|===
+| Plate-forme | Nom du paquetage | Commande d'installation
+
+| Ubuntu/Debian
+| `open-iscsi`
+| `sudo apt install open-iscsi`
+
+| RHEL
+| `iscsi-initiator-utils`
+| `yum install iscsi-initiator-utils -y`
+|===
+
+Après avoir installé l'outil initiateur sur vos nœuds, modifiez le YAML de votre cluster, en éditant la configuration du kubelet pour monter le binaire iSCSI et la configuration, comme indiqué dans l'exemple ci-dessous.
+
+[NOTE]
+.Notes
+====
+
+* Avant de mettre à jour votre YAML Kubernetes pour monter le binaire iSCSI et la configuration, assurez-vous que le paquet `open-iscsi` (deb) ou `iscsi-initiator-utils` (yum) est installé sur vos nœuds de cluster. Si ce paquet n'est pas installé _avant_ la création des montages bind dans votre YAML Kubernetes, Docker créera automatiquement les répertoires et les fichiers sur chaque nœud et empêchera l'installation du paquet de réussir.
+* L'exemple de YAML ci-dessous ne s'applique pas à K3s, mais uniquement aux clusters RKE. Puisque le kubelet K3s ne s'exécute pas dans un conteneur, l'ajout de liaisons supplémentaires n'est pas nécessaire. Cependant, tous les outils iSCSI doivent toujours être installés sur vos nœuds K3s.
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+----
+
+Si vous utilisez RHEL 7.9, vous devez monter le fichier `/usr/lib64/libcrypto.so.10` comme indiqué dans l'exemple ci-dessous.
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.10:/usr/lib/libcrypto.so.10"
+----
+
+Si vous utilisez RHEL 8.6, vous devez monter le fichier `/usr/lib64/libcrypto.so.1.1` comme indiqué dans l'exemple ci-dessous.
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.1.1:/usr/lib/libcrypto.so.1.1"
+----
+
+[TIP]
+====
+
+Pour vérifier qu'iscsiadm fonctionne correctement, vous pouvez exécuter la commande `docker exec kubelet iscsiadm --version` sur n'importe quel nœud.
+====
+

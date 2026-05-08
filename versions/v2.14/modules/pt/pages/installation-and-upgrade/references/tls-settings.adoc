@@ -1,0 +1,141 @@
+= Configurações de TLS
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/installation-references/tls-settings.adoc 
+:product-path: installation-and-upgrade/references/tls-settings.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+endif::[]
+
+Alterar as configurações padrão de TLS depende do método de instalação escolhido.
+
+[#_running_rancher_in_a_highly_available_kubernetes_cluster]
+== Executando o Rancher em um cluster Kubernetes altamente disponível
+
+Quando você instala um cluster Kubernetes gerenciado pelo Rancher, o TLS é descarregado no controlador de entrada do cluster. Traefik é o controlador de entrada padrão para K3s e pode ser usado com RKE2, consulte https://doc.traefik.io/traefik/https/tls/#tls-options[Opções de TLS] para mais informações.
+
+[#_running_rancher_in_a_single_docker_container]
+== Executando o Rancher em um único contêiner Docker
+
+A configuração padrão de TLS aceita apenas TLS 1.2 e suítes de cifras TLS seguras. Você pode alterar isso definindo as seguintes variáveis de ambiente:
+
+|===
+| Parâmetro | Descrição | Default | Opções disponíveis
+
+| `CATTLE_TLS_MIN_VERSION`
+| Versão mínima do TLS
+| `1.2`
+| `1.0`, `1.1`, `1.2`, `1.3`
+
+| `CATTLE_TLS_CIPHERS`
+| Suítes de cifras TLS permitidas
+| `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256`, +
+`TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384`, +
+`TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305`, +
+`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, +
+`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`, +
+`TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305`
+| Veja https://golang.org/pkg/crypto/tls/#pkg-constants[constantes TLS do Golang]
+|===
+
+[#_agent_tls_enforcement]
+== Aplicação de TLS do Agente
+
+A configuração `agent-tls-mode` controla como os agentes do Rancher (`cluster-agent`, `fleet-agent` e `system-agent`) validam o certificado do Rancher.
+
+Quando o valor é definido como `strict`, os agentes do Rancher confiam apenas em certificados gerados pela Autoridade Certificadora contida na configuração `cacerts`.
+Quando o valor é definido como `system-store`, os agentes do Rancher confiam em qualquer certificado gerado por uma Autoridade Certificadora pública contida no armazenamento de confiança do sistema operacional, incluindo aqueles assinados por autoridades como Let's Encrypt. Isso pode representar um risco de segurança, uma vez que qualquer certificado gerado por essas autoridades externas, que estão fora do controle do usuário, é considerado válido nesse estado.
+
+Enquanto a opção `strict` habilita um nível mais elevado de segurança, ela exige que o Rancher tenha acesso à CA que gerou o certificado visível para os agentes. No caso de certas configurações de certificado (notavelmente, certificados externos), isso não é automático, e configuração extra é necessária. Veja o {xref-install-rancher}#_3_choose_your_ssl_configuration[guia de instalação] para mais informações sobre quais cenários requerem configuração extra.
+
+No Rancher v2.9.0 e versões posteriores, essa configuração padrão é `strict` em novas instalações. Para usuários instalando ou atualizando a partir de uma versão anterior do Rancher, está definido como `system-store`.
+
+[#_preparing_for_the_setting_change]
+=== Preparando para a Mudança de Configuração
+
+Cada cluster contém uma condição no campo de status chamada `AgentTlsStrictCheck`. Se `AgentTlsStrictCheck` estiver definido como `"True"`, isso indica que os agentes do cluster estão prontos para operar em modo `strict`. Você pode inspecionar manualmente cada cluster para ver se estão prontos usando a interface do Rancher ou um comando kubectl como o seguinte:
+
+[,bash]
+----
+## the below command skips ouputs $CLUSTER_NAME,$STATUS for all non-local clusters
+kubectl get cluster.management.cattle.io -o jsonpath='{range .items[?(@.metadata.name!="local")]}{.metadata.name},{.status.conditions[?(@.type=="AgentTlsStrictCheck")].status}{"\n"}{end}'
+----
+
+[#_changing_the_setting]
+=== Mudando a Configuração
+
+Você pode alterar a configuração usando a interface do Rancher ou a opção `agentTLSMode` {xref-helm-chart-options}[do helm chart].
+
+[NOTE]
+====
+
+Se você especificar o valor através do helm chart, poderá modificar o valor apenas com o Helm.
+====
+
+
+[CAUTION]
+====
+
+Dependendo da sua configuração, pode ser necessária uma ação adicional, como o upload da Autoridade Certificadora que assinou seus certificados. Revise o {xref-install-rancher}#_3_choose_your_ssl_configuration[guia de instalação] antes de alterar a configuração para ver se algum requisito adicional se aplica à sua configuração.
+====
+
+
+Para alterar o valor da configuração através da interface, navegue até a página *Configurações Globais* e encontre a configuração `agent-tls-mode` perto da parte inferior da página. Quando você altera a configuração através da interface, o Rancher primeiro verifica se todos os clusters downstream têm a condição `AgentTlsStrictCheck` definida como `"True"` antes de permitir a solicitação. Isso previne interrupções devido a uma incompatibilidade de certificado.
+
+[#_overriding_the_setting_validation_checks]
+==== Substituindo as Verificações de Validação da Configuração
+
+Em alguns casos, você pode querer substituir a verificação que garante que todos os agentes possam aceitar a nova configuração TLS:
+
+[CAUTION]
+====
+
+O Rancher verifica o status de todos os clusters downstream para evitar interrupções. Substituir essa verificação não é recomendado e deve ser feito com grande cautela.
+====
+
+
+. Como administrador, gere um kubeconfig para o cluster local. Nos exemplos abaixo, isso foi salvo no arquivo `local_kubeconfig.yaml`.
+. Recupere a configuração atual e salve-a em `setting.yaml`:
++
+[,bash]
+----
+kubectl get setting agent-tls-mode -o yaml --kubeconfig=local_kubeconfig.yaml > setting.yaml
+----
+
+. Atualize o arquivo `setting.yaml`, substituindo `value` por `strict`. Adicionar a anotação `cattle.io/force: "true"` substitui a verificação da condição do cluster e deve ser feito com muito cuidado:
+
+[CAUTION]
+====
+
+Incluir a anotação `cattle.io/force` com qualquer valor (incluindo, por exemplo, `"false"`) substitui a verificação da condição do cluster.
+====
+
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+customized: false
+default: strict
+kind: Setting
+metadata:
+  name: agent-tls-mode
+  annotations:
+    cattle.io/force: "true"
+source: ""
+value: strict
+----
+
+. Aplique a nova versão da configuração:
++
+[,bash]
+----
+kubectl apply -f setting.yaml --kubeconfig=local_kubeconfig.yaml
+----

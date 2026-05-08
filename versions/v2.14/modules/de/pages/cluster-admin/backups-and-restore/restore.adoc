@@ -1,0 +1,114 @@
+= Wiederherstellen eines Clusters aus Sicherung
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher-launched-kubernetes-clusters-from-backup.adoc 
+:product-path: cluster-admin/backups-and-restore/restore.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-clean-cluster-nodes: xref:cluster-admin/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:cluster-admin/backups-and-restore/backups.adoc
+:xref-ds-backup-restore: xref:cluster-admin/backups-and-restore/backups-and-restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-clean-cluster-nodes: xref:how-to-guides/new-user-guides/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher-launched-kubernetes-clusters.adoc
+:xref-ds-backup-restore: xref:getting-started/installation-and-upgrade/upgrade-and-roll-back-kubernetes.adoc
+endif::[]
+
+Die Sicherung und Wiederherstellung von etcd für {xref-launch-k8s-with-rancher}[von Rancher gestartete Kubernetes-Cluster] kann einfach durchgeführt werden. Snapshots der etcd-Datenbank werden entweder lokal auf den etcd-Knoten oder auf ein S3-kompatibles Ziel gespeichert. Die Vorteile der Konfiguration von S3 bestehen darin, dass, wenn alle etcd-Knoten verloren gehen, Ihr Snapshot remote gespeichert wird und zur Wiederherstellung des Clusters verwendet werden kann.
+
+Rancher empfiehlt, die {xref-ds-backup}#_konfigurieren_von_wiederkehrenden_snapshots[Option zur Einrichtung wiederkehrender Snapshots von etcd], aber {xref-ds-backup}#_einmalige_snapshots[einstellbare einmalige Snapshots] können ebenfalls einfach erstellt werden. Rancher erlaubt die Wiederherstellung aus <<_restoring_a_cluster_from_a_snapshot,gespeicherten Snapshots>>.
+
+Cluster können auch auf eine frühere Kubernetes-Version und Clusterkonfiguration wiederhergestellt werden.
+
+[#_viewing_available_snapshots]
+== Verfügbare Snapshots anzeigen
+
+Die Liste aller verfügbaren Snapshots für den Cluster ist verfügbar.
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der *Cluster*-Seite zu dem Cluster, in dem Sie die Snapshots anzeigen möchten, und klicken Sie auf den Namen des Clusters.
+. Klicken Sie auf die Registerkarte *Snapshots*. Die aufgelisteten Snapshots enthalten einen Zeitstempel, wann sie erstellt wurden.
+
+[#_restoring_a_cluster_from_a_snapshot]
+== Wiederherstellen eines Clusters aus einem Snapshot
+
+Wenn Ihr Kubernetes-Cluster beschädigt ist, können Sie den Cluster aus einem Snapshot wiederherstellen.
+
+Snapshots bestehen aus den Cluster-Daten in etcd, der Kubernetes-Version und der Cluster-Konfiguration in der `cluster.yml.` Diese Komponenten ermöglichen es Ihnen, aus den folgenden Optionen bei der Wiederherstellung eines Clusters aus einem Snapshot auszuwählen:
+
+* *Stellen Sie nur die etcd-Inhalte wieder:* Diese Wiederherstellung ähnelt der Wiederherstellung von Snapshots in Rancher vor v2.4.0.
+* *Stellen Sie etcd und Kubernetes-Version wieder her:* Diese Option sollte verwendet werden, wenn ein Kubernetes-Upgrade der Grund ist, warum Ihr Cluster fehlschlägt, und Sie keine Änderungen an der Clusterkonfiguration vorgenommen haben.
+* *Stellen Sie etcd, Kubernetes-Versionen und Clusterkonfiguration wieder her:* Diese Option sollte verwendet werden, wenn Sie sowohl die Kubernetes-Version als auch die Clusterkonfiguration beim Upgrade geändert haben.
+
+Beim Zurücksetzen auf eine frühere Kubernetes-Version werden die {xref-ds-backup-restore}#_konfigurieren_der_upgrade-strategie[Upgrade-Strategieoptionen] ignoriert. Worker-Knoten werden nicht abgeriegelt oder entleert, bevor sie auf die ältere Kubernetes-Version zurückgesetzt werden, damit ein nicht funktionsfähiger Cluster schneller in einen funktionsfähigen Zustand wiederhergestellt werden kann.
+
+[NOTE]
+.Voraussetzung:
+====
+Um Snapshots von S3 wiederherzustellen, muss der Cluster so konfiguriert sein, dass er {xref-ds-backup}#_konfigurieren_von_wiederkehrenden_snapshots[wiederkehrende Snapshots auf S3 erstellt.]
+====
+
+
+. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+. Gehen Sie auf der *Cluster*-Seite zu dem Cluster, in dem Sie die Snapshots anzeigen möchten, und klicken Sie auf den Namen des Clusters.
+. Klicken Sie auf die *Snapshots*-Registerkarte, um die Liste der gespeicherten Snapshots anzuzeigen.
+. Gehen Sie zu dem Snapshot, den Sie wiederherstellen möchten, und klicken Sie auf *⋮ > Wiederherstellen*.
+. Wählen Sie einen *Wiederherstellungstyp* aus.
+. Klicken Sie auf *Wiederherstellen*.
+
+*Ergebnis:* Der Cluster wird in den `updating` Zustand übergehen und der Prozess zur Wiederherstellung der `etcd` Knoten aus dem Snapshot wird beginnen. Der Cluster ist wiederhergestellt, wenn er in einen `active` Zustand zurückkehrt.
+
+[#_restoring_a_cluster_from_a_snapshot_when_the_controlplane_etcd_are_completely_unavailable]
+== Wiederherstellung eines Clusters aus einem Snapshot, wenn die Control Plane/etcd vollständig nicht verfügbar ist.
+
+In einem Szenario zur Wiederherstellung nach einer Katastrophe sind der Controlplane und die von Rancher in einem Downstream-Cluster verwalteten etcd-Knoten möglicherweise nicht mehr verfügbar oder funktionsfähig. Der Cluster kann wieder aufgebaut werden, indem die Controlplane- und etcd-Knoten erneut hinzugefügt werden, gefolgt von der Wiederherstellung aus einem verfügbaren Snapshot.
+
+Wenn Sie einen vollständigen Clusterausfall haben, müssen Sie alle etcd-Knoten/Maschinen aus Ihrem Cluster entfernen, bevor Sie einen "neuen" etcd-Knoten zur Wiederherstellung hinzufügen können.
+
+[NOTE]
+====
+Wenn Sie {xref-ds-backup}#_local_backup_target[lokale Snapshots] verwenden, ist es *SEHR* wichtig, dass Sie sicherstellen, dass Sie den entsprechenden Snapshot, von dem Sie wiederherstellen möchten, aus dem `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/` Ordner auf dem etcd-Knoten, den Sie entfernen werden, sichern. Sie können den Snapshot in den `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/` Pfad auf Ihrem neuen Knoten kopieren. Darüber hinaus kann die Wiederherstellung bei Verwendung von lokalen Snapshots und der Wiederherstellung auf einen neuen Knoten derzeit nicht über die Benutzeroberfläche erfolgen.
+====
+
+. Entfernen Sie alle etcd-Knoten aus Ihrem Cluster.
+ .. Klicken Sie in der oberen linken Ecke auf *☰ > Clusterverwaltung*.
+ .. Gehen Sie auf der *Clusters*-Seite zu dem Cluster, aus dem Sie Knoten entfernen möchten.
+ .. Klicken Sie in der *Machines*-Registerkarte auf *⋮ > Löschen* bei jedem Knoten, den Sie löschen möchten. Zunächst werden die Knoten in einem `deleting` Zustand hängen bleiben, aber sobald alle etcd-Knoten gelöscht werden, werden sie zusammen entfernt. Dies liegt daran, dass Rancher sieht, dass alle etcd-Knoten gelöscht werden, und die Logik zur sicheren Entfernung von etcd "kurzschließt".
+. Nachdem alle etcd-Knoten entfernt wurden, fügen Sie den neuen etcd-Knoten hinzu, von dem Sie planen, wiederherzustellen. Weisen Sie dem neuen Knoten die Rolle `all` (etcd, Controlplane und Worker) zu.
+ ** Wenn der Knoten zuvor in einem Cluster war, {xref-clean-cluster-nodes}#_cleaning_up_nodes[reinigen Sie den Knoten] zuerst.
+ ** Für benutzerdefinierte Cluster gehen Sie zur *Registration*-Registerkarte und aktivieren Sie das Kästchen für `etcd, controlplane, and worker`. Kopieren Sie dann den Registrierungsbefehl und führen Sie ihn auf Ihrem Knoten aus.
+ ** Für Knoten-Treiber-Cluster wird automatisch ein neuer Knoten bereitgestellt.
++
+An dieser Stelle wird Rancher anzeigen, dass eine Wiederherstellung aus dem etcd-Snapshot erforderlich ist.
++
+. Wiederherstellung aus einem etcd-Snapshot.
++
+[NOTE]
+====
+Da der etcd-Knoten ein sauberer Knoten ist, müssen Sie möglicherweise den `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/` Pfad manuell erstellen.
+====
++
+ ** Für S3-Snapshots verwenden Sie die Benutzeroberfläche zur Wiederherstellung.
+  ... Klicken Sie auf die *Snapshots*-Registerkarte, um die Liste der gespeicherten Snapshots anzuzeigen.
+  ... Gehen Sie zu dem Snapshot, den Sie wiederherstellen möchten, und klicken Sie auf *⋮ > Wiederherstellen*.
+  ... Wählen Sie einen *Wiederherstellungstyp* aus.
+  ... Klicken Sie auf *Wiederherstellen*.
+ ** Für lokale Snapshots ist die Wiederherstellung über die Benutzeroberfläche *nicht* verfügbar.
+  ... Klicken Sie in der oberen rechten Ecke auf *⋮ > YAML bearbeiten*.
+  ... Das folgende Beispiel-YAML kann unter Ihrem `rkeConfig` hinzugefügt werden, um die etcd-Wiederherstellung zu konfigurieren:
++
+[,yaml]
+----
+  ...
+  rkeConfig:
+    etcdSnapshotRestore:
+      name: <string> # This field is required. Refers to the filename of the associated etcdsnapshot object.
+  ...
+----
++
+. Nach erfolgreicher Wiederherstellung können Sie Ihre etcd-Knoten wieder auf die gewünschte Redundanz skalieren.

@@ -1,0 +1,140 @@
+= Ingress NGINXの退役に関するガイド
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-25
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-resources-setup/load-balancer-and-ingress-controller/guide-to-ingress-nginx-retirement.adoc 
+:product-path: cluster-admin/kubernetes-resources/load-balancer-and-ingress-controller/guide-to-ingress-retirement.adoc
+:description: Ingress NGINXの退役に関するガイド
+ifeval::["{build-type}" != "community"]
+:url-storage-longhorn-ingress-traefik: https://documentation.suse.com/cloudnative/storage/1.11/en/longhorn-system/system-access/longhorn-ingress-traefik.html
+:url-continuous-delivery-webhook: https://documentation.suse.com/cloudnative/continuous-delivery/latest/en/how-tos-for-users/webhook.html
+:xref-rancher-on-amazon-eks: xref:installation-and-upgrade/hosted-kubernetes/rancher-on-amazon-eks.adoc#_5_install_an_ingress
+:xref-rancher-on-aks: xref:installation-and-upgrade/hosted-kubernetes/rancher-on-aks.adoc#_5_install_an_ingress
+:xref-rancher-on-gke: xref:installation-and-upgrade/hosted-kubernetes/rancher-on-gke.adoc#_7_install_an_ingress
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-storage-longhorn-ingress-traefik: https://longhorn.io/docs/1.11.1/deploy/accessing-the-ui/longhorn-ingress-traefik/#additional-steps-for-aws-eks-kubernetes-clusters
+:url-continuous-delivery-webhook: https://fleet.rancher.io/0.15/how-tos-for-users/webhook#_1_configure_the_webhook_service
+:xref-rancher-on-amazon-eks: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rancher-on-amazon-eks.adoc#_5_install_an_ingress
+:xref-rancher-on-aks: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rancher-on-aks.adoc#_5_install_an_ingress
+:xref-rancher-on-gke: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rancher-on-gke.adoc#_7_install_an_ingress
+endif::[]
+
+Kubernetes SIG Networkとセキュリティ対応委員会は、 https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/[Ingress NGINXプロジェクトの退役]を発表しました。アップストリームのベストエフォートメンテナンスおよび関連するすべてのアップストリームリリース、バグ修正、セキュリティ更新は、2026年3月に終了しました。
+
+この移行期間中、
+
+ifeval::["{build-type}" != "community"]
+SUSEは、延長サポートのタイムラインとTraefikへの明確な移行パスを提供します。
+endif::[]
+ifeval::["{build-type}" == "community"]
+Rancherは、Traefikへの明確な移行パスを提供します。
+endif::[]
+
+このガイドは、特定のデプロイメントシナリオに基づいて進める方法に関する情報を集約しています。
+
+[#_support_and_timelines]
+== サポートとタイムライン
+
+ifeval::["{build-type}" != "community"]
+すぐに移行できない組織のために、{rancher-product-name} LTSはRKE2バージョン1.35の延長サポートを提供します。
+
+[IMPORTANT]
+.Ingress NGINXの延長サポート
+====
+{rancher-product-name} LTSは、2027年12月までIngress NGINXコンポーネントの重要な共通脆弱性および露出（CVE）に対するパッチを提供します。この期間中に新機能は追加されません。
+====
+endif::[]
+
+ifeval::["{build-type}" == "community"]
+RancherとRKE2のライフサイクルは、アップストリームの退役スケジュールに合わせています。
+
+[IMPORTANT]
+====
+2026年3月以降、アップストリームのIngress NGINXイメージは更新を受けなくなります。この日以降にパッチで構築されたイメージは、商業顧客に制限されています。ユーザーは、継続的なセキュリティと互換性を確保するために、この期限前にTraefikまたは他のサポートされているIngressコントローラーに移行する必要があります。
+====
+endif::[]
+
+[#_migration_paths_by_environment]
+== 環境別の移行パス
+
+ifeval::["{build-type}" != "community"]
+移行の準備が整った組織には、SUSEがTraefikへのサポートされたパスを提供します。
+endif::[]
+ifeval::["{build-type}" == "community"]
+RancherとRKE2のライフサイクルは、アップストリームの退役スケジュールに合わせています。
+endif::[]
+
+Traefikには、既存のIngress NGINXアノテーションを解釈できる互換性層が含まれています。正しい移行アプローチを見つけるために、以下でクラスター環境を特定してください。
+
+[#_standalone_rke2_clusters]
+=== スタンドアロンRKE2クラスター
+
+現在Ingress NGINXを使用しているスタンドアロンまたはインポートされたRKE2クラスターの場合、公式の https://support.scc.suse.com/s/kb/Migrating-from-Ingress-NGINX-to-Traefik-in-a-standalone-RKE2-cluster?language=en_US[スタンドアロンRKE2クラスターの移行ガイド]に従ってください。
+
+移行プロセスは、4段階の戦略を含みます：
+
+. *デュアルIngressコントローラーの設定:*一時的で競合しないポートを使用して、Ingress NGINXと並行してTraefikを有効にします。
+. *並行移行と検証:*Ingressリソースを複製し、既存のアノテーションに対するTraefikの処理をテストします。
+. *最終切り替え:*Ingress NGINXを削除し、標準ポートを使用するようにTraefikを構成します。
+. *クリーンアップ:*レガシーIngressオブジェクトを削除します。
+
+[#_rancher_server_on_rke2_local_clusters]
+=== RKE2上のRancherサーバー（ローカルクラスター）
+
+Rancherローカルクラスターを移行する際、Rancher Ingressリソースはロックアウトを防ぐために特別な取り扱いが必要です。RKE2クラスター内のRancher IngressをTraefikに移行するための特定の https://support.scc.suse.com/s/kb/How-to-migrate-the-Rancher-Ingress-to-Traefik-in-an-RKE2-cluster?language=en_US[ガイド]に従ってください。このガイドはスタンドアロン移行フェーズに基づいていますが、Rancher管理サーバーに合わせた手順が含まれています。
+
+[#_downstream_rke2_clusters_provisioned_by_rancher]
+=== ダウンストリームRKE2クラスター (Rancher によってプロビジョニング)
+
+{rancher-product-name} によってプロビジョニングおよび管理されている RKE2 クラスターでは、マイグレーションオプションがユーザーインターフェースに直接統合されています。
+
+[NOTE]
+====
+ifeval::["{build-type}" != "community"]
+このマイグレーションオプションは、Rancher v2.13.5 以上および v2.14 でのみ可能です。
+endif::[]
+ifeval::["{build-type}" == "community"]
+このマイグレーションオプションは、Rancher v2.14.0 以上でのみ可能です。
+endif::[]
+====
+
+クラスター構成インターフェースは、デュアルモードのマイグレーションオプションを提供します。これにより、クラスター管理画面からIngress NGINXからTraefikへのトラフィックを安全にテストおよび移行できます。
+
+[#_rancher_on_managed_kubernetes_amazon_eks_azure_aks_google_gke]
+=== 管理された Kubernetes 上の Rancher (Amazon EKS、Azure AKS、Google GKE)
+
+{rancher-product-name} を {xref-rancher-on-amazon-eks}[Amazon Elastic Kubernetes Service (EKS)]、{xref-rancher-on-aks}[Azure Kubernetes Service (AKS)]、または {xref-rancher-on-gke}[Google Kubernetes Engine (GKE)] などの管理された Kubernetes サービスで実行する場合、Traefikへの移行を推奨します。
+
+ifeval::["{build-type}" != "community"]
+{rancher-product-name} の顧客は、アプリケーションコレクションを活用して Traefik プロキシをデプロイおよび管理できます。
+endif::[]
+ifeval::["{build-type}" == "community"]
+ユーザーは、アップストリームの Traefik プロキシ配布にデプロイし、移行する必要があります。
+endif::[]
+
+ifeval::["{build-type}" != "community"]
+[#_impact_on_other_suse_products]
+== 他の SUSE 製品への影響
+endif::[]
+ifeval::["{build-type}" == "community"]
+[#_impact_on_projects]
+== プロジェクトへの影響
+endif::[]
+
+Ingress NGINXの退役は、他の 
+
+ifeval::["{build-type}" != "community"]
+SUSE 製品に次のような影響を与えます：
+endif::[]
+ifeval::["{build-type}" == "community"]
+projects
+endif::[]
+
+次のような方法で：
+
+* {longhorn-product-name}:Longhorn バックエンドには影響がありません。ただし、管理者は Longhorn UI をアップグレードするために Ingress を再構成する必要があります。詳細については、{url-storage-longhorn-ingress-traefik}[基本認証 Traefik を使用して Ingress を作成する]を参照してください。
+* {fleet-product-name}:Webhook サービスの構成に影響があります。詳細については、{url-continuous-delivery-webhook}[Fleet ドキュメント]を参照してください。
+* 他のプロジェクトのドキュメントにおけるIngress NGINXの参照は削除されました。

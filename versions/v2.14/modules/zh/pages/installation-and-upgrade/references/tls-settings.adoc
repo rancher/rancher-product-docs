@@ -1,36 +1,141 @@
 = TLS 设置
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2025-08-25
+endif::[]
+:revdate: 2026-03-20
 :page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/installation-references/tls-settings.adoc 
+:product-path: installation-and-upgrade/references/tls-settings.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+endif::[]
 
-更改默认 TLS 设置的方法取决于它的安装方式。
+更改默认 TLS 设置取决于所选择的安装方法。
 
+[#_running_rancher_in_a_highly_available_kubernetes_cluster]
 == 在高可用 Kubernetes 集群中运行 Rancher
 
-当你在 Kubernetes 集群内安装 Rancher 时，TLS 会在集群的 Ingress Controller 上卸载。可用的 TLS 设置取决于使用的 Ingress Controller：
+当您安装 Rancher 管理的 Kubernetes 集群时，TLS 会在集群的入口控制器处卸载。Traefik 是 K3s 的默认入口，并且可以与 RKE2 一起使用，更多信息请参见 https://doc.traefik.io/traefik/https/tls/#tls-options[TLS 选项]。
 
-* nginx-ingress-controller（RKE2 默认）：link:https://kubernetes.github.io/ingress-nginx/user-guide/tls/#default-tls-version-and-ciphers[默认的 TLS 版本和密码]。
-* traefik（K3s 默认）：link:https://doc.traefik.io/traefik/https/tls/#tls-options[TLS 选项]。
-
+[#_running_rancher_in_a_single_docker_container]
 == 在单个 Docker 容器中运行 Rancher
 
-默认 TLS 配置仅支持 TLS 1.2 和安全的 TLS 密码套件。你可以通过设置以下环境变量来更改此配置：
+默认的 TLS 配置仅接受 TLS 1.2 和安全的 TLS 密码套件。您可以通过设置以下环境变量来更改此设置：
 
 |===
-| 参数 | 描述 | 默认 | 可用选项
+| 参数 | 说明 | 默认值 | 可用选项
 
 | `CATTLE_TLS_MIN_VERSION`
-| 最小 TLS 版本
+| 最低 TLS 版本
 | `1.2`
 | `1.0`, `1.1`, `1.2`, `1.3`
 
 | `CATTLE_TLS_CIPHERS`
-| 支持的 TLS 密码套件
-| `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256`, +
-`TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384`, +
-`TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305`, +
-`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, +
-`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`, +
+| 允许的 TLS 密码套件
+| `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256` +
+`TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384` +
+`TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305` +
+`TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256` +
+`TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384` +
 `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305`
-| 详情请参见 https://golang.org/pkg/crypto/tls/#pkg-constants[Golang TLS 常量]。
+| 查看 https://golang.org/pkg/crypto/tls/#pkg-constants[Golang TLS 常量]
 |===
+
+[#_agent_tls_enforcement]
+== 代理 TLS 强制执行
+
+`agent-tls-mode` 设置控制 Rancher 的代理（`cluster-agent`、`fleet-agent`和`system-agent`）如何验证 Rancher 的证书。
+
+当值设置为 `strict` 时，Rancher 的代理仅信任在 `cacerts` 设置中包含的证书颁发机构生成的证书。
+当值设置为 `system-store` 时，Rancher 的代理信任操作系统信任存储中包含的由公共证书颁发机构生成的任何证书，包括由 Let's Encrypt 等机构签署的证书。这可能会带来安全风险，因为在这种状态下，任何由这些用户无法控制的外部机构生成的证书都被视为有效。
+
+虽然 `strict` 选项提供了更高的安全级别，但它要求 Rancher 能够访问生成供代理验证证书的证书颁发机构。在某些证书配置的情况下（特别是外部证书），这不是自动的，需要额外配置。有关哪些场景需要额外配置，请参见 {xref-install-rancher}#_3_choose_your_ssl_configuration[安装指南]。
+
+在 Rancher v2.9.0 及更高版本中，此设置在新安装时默认为 `strict`。对于从先前的 Rancher 版本安装或升级的用户，它被设置为 `system-store`。
+
+[#_preparing_for_the_setting_change]
+=== 准备更改设置
+
+每个集群在状态字段中包含一个名为 `AgentTlsStrictCheck` 的条件。如果 `AgentTlsStrictCheck` 设置为 `"True"`，这表示该集群的代理已准备好以 `strict` 模式运行。您可以手动检查每个集群，以查看它们是否准备好，使用 Rancher UI 或以下 kubectl 命令：
+
+[,bash]
+----
+## the below command skips ouputs $CLUSTER_NAME,$STATUS for all non-local clusters
+kubectl get cluster.management.cattle.io -o jsonpath='{range .items[?(@.metadata.name!="local")]}{.metadata.name},{.status.conditions[?(@.type=="AgentTlsStrictCheck")].status}{"\n"}{end}'
+----
+
+[#_changing_the_setting]
+=== 更改设置
+
+您可以使用 Rancher UI 或 `agentTLSMode` {xref-helm-chart-options}[helm chart 选项] 来更改设置。
+
+[NOTE]
+====
+
+如果您通过 Helm chart 指定值，则只能使用 Helm 修改该值。
+====
+
+
+[CAUTION]
+====
+
+根据您的证书设置，可能需要额外的操作，例如上传签署您证书的证书颁发机构。在更改设置之前，请查看 {xref-install-rancher}#_3_choose_your_ssl_configuration[安装指南]，以查看是否有任何额外要求适用于您的设置。
+====
+
+
+要通过 UI 更改设置的值，请导航到 *全局设置* 页面，并在页面底部找到 `agent-tls-mode` 设置。当您通过 UI 更改设置时，Rancher 首先检查所有下游集群的条件 `AgentTlsStrictCheck` 是否设置为 `"True"`，然后才允许请求。这可以防止因证书不匹配而导致的停机。
+
+[#_overriding_the_setting_validation_checks]
+==== 覆盖设置验证检查
+
+在某些情况下，您可能希望覆盖确保所有代理可以接受新 TLS 配置的检查：
+
+[CAUTION]
+====
+
+Rancher 检查所有下游集群的状态，以防止停机。不建议覆盖此检查，并且应谨慎进行。
+====
+
+
+. 作为管理员，为本地群集生成 kubeconfig。在以下示例中，这被保存到 `local_kubeconfig.yaml` 文件。
+. 检索当前设置并将其保存到 `setting.yaml`：
++
+[,bash]
+----
+kubectl get setting agent-tls-mode -o yaml --kubeconfig=local_kubeconfig.yaml > setting.yaml
+----
+
+. 更新 `setting.yaml` 文件，将 `value` 替换为 `strict`。添加 `cattle.io/force: "true"` 注释会覆盖集群条件检查，应该谨慎进行：
+
+[CAUTION]
+====
+
+包含任何值的 `cattle.io/force` 注释（例如 `"false"`）会覆盖集群条件检查。
+====
+
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+customized: false
+default: strict
+kind: Setting
+metadata:
+  name: agent-tls-mode
+  annotations:
+    cattle.io/force: "true"
+source: ""
+value: strict
+----
+
+. 应用设置的新版本：
++
+[,bash]
+----
+kubectl apply -f setting.yaml --kubeconfig=local_kubeconfig.yaml
+----

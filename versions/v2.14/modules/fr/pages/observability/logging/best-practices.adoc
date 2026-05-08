@@ -1,0 +1,98 @@
+= Meilleures pratiques de journalisation
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/logging-best-practices.adoc 
+:product-path: observability/logging/best-practices.adoc
+
+Dans ce guide, nous recommandons les meilleures pratiques pour la journalisation au niveau du cluster et la journalisation des applications.
+
+* <<_cluster_level_logging,Journalisation au niveau du cluster>>
+* <<_application_logging,Journalisation des applications>>
+* <<_general_best_practices,Meilleures pratiques générales>>
+
+Avant Rancher v2.5, la journalisation dans Rancher était historiquement une intégration assez statique. Il y avait une liste fixe d'agrégateurs parmi lesquels choisir (ElasticSearch, Splunk, Kafka, Fluentd et Syslog), et seulement deux points de configuration à choisir (Niveau de cluster et Niveau de projet).
+
+Rancher offre une expérience flexible pour l'agrégation des journaux. Avec la fonctionnalité de journalisation, les administrateurs et les utilisateurs peuvent déployer une journalisation qui répond à des critères de collecte précis tout en offrant un plus large éventail de destinations et d'options de configuration.
+
+"Sous le capot", la journalisation de Rancher utilise le https://github.com/kube-logging/logging-operator[Opérateur de journalisation]. Nous assurons la gestion de cet opérateur (et de ses ressources), et intégrons cette expérience à la gestion de vos clusters Rancher.
+
+[#_cluster_level_logging]
+== Journalisation au niveau du cluster
+
+[#_cluster_wide_scraping]
+=== Scraping à l'échelle du cluster
+
+Pour certains utilisateurs, il est souhaitable de récupérer les journaux de chaque conteneur s'exécutant dans le cluster. Cela coïncide généralement avec la demande (ou l'exigence) de votre équipe de sécurité de collecter tous les journaux de tous les points d'exécution.
+
+Dans ce scénario, il est recommandé de créer au moins deux objets _ClusterOutput_ - un pour votre équipe de sécurité (si vous avez cette exigence), et un pour vous-mêmes, les administrateurs du cluster. Lors de la création de ces objets, veillez à choisir un point de terminaison de sortie capable de gérer le trafic de journaux important provenant de l'ensemble du cluster. Assurez-vous également de choisir un index approprié pour recevoir tous ces journaux.
+
+Une fois que vous avez créé ces objets _ClusterOutput_, créez un _ClusterFlow_ pour collecter tous les journaux. Ne définissez aucune règle _Include_ ou _Exclude_ sur ce flux. Cela garantira que tous les journaux de l'ensemble du cluster sont collectés. Si vous avez deux _ClusterOutputs_, assurez-vous d'envoyer les journaux à tous deux.
+
+[#_kubernetes_components]
+=== Composants Kubernetes
+
+Les _ClusterFlows_ ont la capacité de collecter des journaux de tous les conteneurs sur tous les hôtes dans le cluster Kubernetes. Cela fonctionne bien dans les cas où ces conteneurs font partie d'un pod Kubernetes.
+
+Une future version de Rancher inclura le nom du conteneur source, ce qui permettra de filtrer ces journaux de composants. Une fois ce changement effectué, vous pourrez personnaliser un _ClusterFlow_ pour récupérer *uniquement* les journaux de composants Kubernetes et les diriger vers une sortie appropriée.
+
+[#_application_logging]
+== Journalisation des applications
+
+La meilleure pratique, non seulement dans Kubernetes mais dans toutes les applications basées sur des conteneurs, est de diriger les journaux d'application vers `stdout`/`stderr`. L'environnement d'exécution de conteneur va alors capturer ces journaux et faire *quelque chose* avec eux - généralement les écrire dans un fichier. En fonction de l'environnement d'exécution de conteneur (et de sa configuration), ces journaux peuvent se retrouver dans un nombre quelconque d'emplacements.
+
+Dans le cas où les journaux sont écrits dans un fichier, Kubernetes aide en créant un répertoire `/var/log/containers` sur chaque hôte. Ce répertoire crée des liens symboliques vers les fichiers journaux à leur destination réelle (qui peut différer en fonction de la configuration ou de l'environnement d'exécution de conteneur).
+
+La journalisation Rancher lira toutes les entrées de journal dans `/var/log/containers`, garantissant que toutes les entrées de journal de tous les conteneurs (en supposant une configuration par défaut) auront l'opportunité d'être collectées et traitées.
+
+[#_specific_log_files]
+=== Fichiers journaux spécifiques
+
+La collecte de journaux ne récupère que les journaux `stdout`/`stderr` des pods dans Kubernetes. Mais que faire si nous voulons collecter des journaux d'autres fichiers générés par des applications{nbsp}? Ici, un sidecar de streaming de journaux (ou deux) peut être utile.
+
+L'objectif de la mise en place d'un sidecar de streaming est de prendre les fichiers journaux qui sont écrits sur disque et de faire en sorte que leur contenu soit diffusé vers `stdout`. De cette manière, l'Opérateur de Journalisation peut récupérer ces journaux et les envoyer à votre sortie souhaitée.
+
+Pour configurer cela, modifiez votre ressource de charge de travail (par exemple, Déploiement) et ajoutez la définition de sidecar suivante{nbsp}:
+
+[,yaml]
+----
+...
+containers:
+- args:
+  - -F
+  - /path/to/your/log/file.log
+  command:
+  - tail
+  image: busybox
+  name: stream-log-file-[name]
+  volumeMounts:
+  - mountPath: /path/to/your/log
+    name: mounted-log
+...
+----
+
+Cela ajoutera un conteneur à votre définition de charge de travail qui diffusera désormais le contenu de (dans cet exemple) `/path/to/your/log/file.log` vers `stdout`.
+
+Ce flux de journaux est ensuite automatiquement collecté selon les _Flux_ ou _ClusterFlows_ que vous avez configurés. Vous souhaiterez peut-être également envisager de créer un _Flux_ spécifiquement pour ce fichier journal en ciblant le nom du conteneur. Voir l'exemple{nbsp}:
+
+[,yaml]
+----
+...
+spec:
+  match:
+  - select:
+      container_names:
+      - stream-log-file-name
+...
+----
+
+[#_general_best_practices]
+== Meilleures pratiques générales
+
+* Lorsque cela est possible, produisez des entrées de journal structurées (par exemple, `syslog`, JSON). Cela facilite le traitement de l'entrée de journal car des analyseurs sont déjà écrits pour ces formats.
+* Essayez de fournir le nom de l'application qui crée l'entrée de journal, dans l'entrée elle-même. Cela peut faciliter le dépannage car les objets Kubernetes ne portent pas toujours le nom de l'application comme nom de l'objet. Par exemple, un ID de pod peut être quelque chose comme `myapp-098kjhsdf098sdf98` qui ne fournit pas beaucoup d'informations sur l'application s'exécutant à l'intérieur du conteneur.
+* Sauf dans le cas de la collecte de tous les journaux à l'échelle du cluster, essayez de restreindre vos objets _Flux_ et _ClusterFlow_ de manière stricte. Cela facilite le dépannage lorsque des problèmes surviennent et aide également à garantir que des entrées de journal non liées n'apparaissent pas dans votre agrégateur. Un exemple de restriction stricte serait de contraindre un _Flux_ à un seul _Déploiement_ dans un espace de noms, ou peut-être même à un seul conteneur dans un _Pod_.
+* Gardez la verbosité des journaux basse sauf lors du dépannage. Une forte verbosité des journaux pose un certain nombre de problèmes, le principal étant *bruit* : des événements significatifs peuvent être noyés dans une mer de messages `DEBUG`. Cela est en partie atténué par des alertes automatisées et des scripts, mais une journalisation très verbeuse impose toujours une pression excessive sur l'infrastructure de journalisation.
+* Lorsque cela est possible, essayez de fournir un ID de transaction ou de requête avec l'entrée de journal. Cela peut faciliter le suivi de l'activité de l'application à travers plusieurs sources de journaux, en particulier lors de la gestion d'applications distribuées.

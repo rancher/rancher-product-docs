@@ -1,0 +1,127 @@
+= バックアップ、復元、および災害復旧
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-13
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/index.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/back-up-restore-and-disaster-recovery.adoc
+:experimental:
+:keywords: ["rancher backup restore", "rancher backup and restore", "backup restore rancher", "rancher backup and restore rancher"]
+ifeval::["{build-type}" != "community"]
+:xref-fleet-overview: xref:integrations/fleet/overview.adoc
+:xref-migrate-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/migrate-to-a-new-cluster.adoc
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-rancher-restore: xref:rancher-admin/back-up-restore-and-disaster-recovery/restore.adoc
+:xref-rancher-backup-storage-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/storage.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-fleet-overview: xref:integrations-in-rancher/fleet/overview.adoc
+:xref-migrate-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/migrate-rancher-to-new-cluster.adoc
+:xref-backup-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc
+:xref-rancher-restore: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/restore-rancher.adoc
+:xref-rancher-backup-storage-config: xref:reference-guides/backup-restore-configuration/storage-configuration.adoc
+endif::[]
+
+このセクションでは、Rancherのバックアップを作成する方法、バックアップからRancherを復元する方法、および新しいKubernetesクラスターにRancherを移行する方法を学びます。
+
+`rancher-backup`オペレーターは、任意のKubernetesクラスター上でRancherのバックアップと復元に使用されます。このアプリケーションはHelmチャートであり、Rancherの*Apps*ページを通じて、またはHelm CLIを使用してデプロイできます。`rancher-backup` Helmチャートは https://github.com/rancher/charts/tree/release-v2.6/charts/rancher-backup[こちらです。]
+
+バックアップ・復元オペレーターはローカルクラスタにインストールする必要があり、Rancherアプリのみをバックアップします。バックアップおよび復元操作は、ローカルKubernetesクラスター内でのみ実行されます。
+
+[#_backup_and_restore_for_rancher_installed_with_docker]
+== DockerでインストールされたRancherのバックアップと復元
+
+DockerでインストールされたRancherについては、バックアップを実行するにはxref:[このページ]を参照し、復元を実行するにはxref:[このページ]を参照してください。
+
+[#_how_backups_and_restores_work]
+== バックアップと復元の仕組み
+
+`rancher-backup`オペレーターは、3つのカスタムリソースを導入します：バックアップ、復元、およびリソースセット。次のクラスター範囲のカスタムリソース定義がクラスターに追加されます：
+
+* `backups.resources.cattle.io`
+* `resourcesets.resources.cattle.io`
+* `restores.resources.cattle.io`
+
+リソースセットは、バックアップが必要なKubernetesリソースを定義します。リソースセットは、Rancherのバックアップに必要な値が事前定義されているため、Rancher UIで構成することはできません。このリソースセットは変更しないでください。
+
+バックアップカスタムリソースが作成されると、`rancher-backup`オペレーターは`kube-apiserver`を呼び出して、バックアップカスタムリソースが参照するリソースセット内のリソースを取得します。
+
+その後、オペレーターは.tar.gz形式のバックアップファイルを作成し、バックアップリソースで構成された場所に保存します。
+
+Restoreカスタムリソースが作成されると、オペレーターはRestoreで指定されたバックアップの.tar.gzファイルにアクセスし、そのファイルからアプリケーションを復元します。
+
+バックアップおよび復元のカスタムリソースは、Rancher UIで作成するか、`kubectl apply`を使用して作成できます。
+
+[NOTE]
+====
+
+Rancher v2.6.3のv1.22クラスターに既存のバックアップファイルを復元する方法については、{xref-migrate-cluster}#_2_restore_from_backup_using_a_restore_custom_resource[こちら]を参照してください。
+====
+
+
+[#_installing_the_rancher_backup_operator]
+== rancher-backupオペレーターのインストール
+
+`rancher-backup`オペレーターは、Rancher UIからインストールするか、Helm CLIを使用してインストールできます。いずれの場合も、`rancher-backup` HelmチャートはRancherサーバーを実行しているKubernetesクラスターにインストールされます。これはクラスター管理者専用の機能であり、*ローカルクラスタ*のみに利用可能です。 (_Rancher UIに`rancher-backup`が表示されない場合、間違ったクラスターを選択した可能性があります。_)
+
+[NOTE]
+====
+
+バックアップ・復元オペレーターを使用して復元を実行した後に発生するFleetの既知の問題があります：clientSecretNameおよびhelmSecretNameに使用されるシークレットは、Fleetのgitreposに含まれていません。回避策については、{xref-fleet-overview}#_troubleshooting[{fleet-product-name}トラブルシューティング]を参照してください。
+====
+
+
+[#_installing_rancher_backup_with_the_rancher_ui]
+=== Rancher UIを使用してrancher-backupをインストールする
+
+. 左上隅で、*☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、`local`クラスターに移動し、*探索*をクリックします。
+. 左のナビゲーションバーで、menu:Apps[Charts]を選択します。
+. *Rancher Backups*をクリックします。
+. ［*インストール］*をクリックします。
+. オプション:デフォルトストレージロケーションを設定します。ヘルプについては、{xref-rancher-backup-storage-config}[設定セクション]を参照してください。
+. ［*インストール］*をクリックします。
+
+*結果:*`rancher-backup`オペレーターがインストールされました。
+
+*クラスターダッシュボード*から、`rancher-backup`オペレーターが*デプロイメント*の下にリストされているのを見ることができます。
+
+Rancherでバックアップアプリを構成するには、左側のナビゲーションメニューに移動し、*Rancher Backups*をクリックします。
+
+[#_rbac]
+=== RBAC
+
+Rancherの管理者とローカルクラスタのクラスターオーナーのみが次のことを行うことができます：
+
+* チャートをインストールします
+* バックアップおよび復元CRDのナビゲーションリンクを表示します
+* それぞれバックアップCRと復元CRを作成することで、バックアップまたは復元を実行します
+* これまでに実行されたバックアップ/復元のリスト
+
+[#_backing_up_rancher]
+== Rancherのバックアップ
+
+バックアップは、バックアップカスタムリソースを作成することで実行されます。チュートリアルについては、{xref-backup-cluster}[このページ]を参照してください。
+
+[#_restoring_rancher]
+== Rancherの復元
+
+復元は、復元カスタムリソースを作成することで実行されます。チュートリアルについては、{xref-rancher-restore}[このページ]を参照してください。
+
+[#_migrating_rancher_to_a_new_cluster]
+== Rancherを新しいクラスターに移行する
+
+移行は、{xref-migrate-cluster}[これらの手順]に従うことで実行されます。
+
+[#_default_storage_location_configuration]
+== デフォルトストレージロケーションの構成
+
+バックアップ用のデフォルトストレージロケーションを構成します。個々のバックアップの場所としてS3互換のオブジェクトストアを指定したり、`backup-restore-operator` Helmチャートのインストール時に既存の`StorageClass`を選択したりするなど、さまざまな設定オプションがあります。各バックアップで構成されたストレージロケーションを上書きするオプションもありますが、S3互換またはMinioオブジェクトストアの使用に制限されます。
+
+これらのオプションの設定に関する情報は、{xref-rancher-backup-storage-config}[このページ]を参照してください。
+
+[#_example_yaml_file_rancher_backup_helm_chart]
+=== 例のYAMLファイル：Rancher Backup Helmチャート
+
+例の {xref-rancher-backup-storage-config}#_example_yaml_file_rancher_backup_helm_chart[values.yaml ファイル] は、Helm CLI を使用してインストールする際に `backup-restore-operator` を設定するために使用できます。

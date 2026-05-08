@@ -1,0 +1,424 @@
+= 既存のクラスターの登録
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2026-03-19
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc 
+:product-path: cluster-deployment/register-existing-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-kubeconfig-file: xref:cluster-admin/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-istio: xref:observability/istio/istio.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-logging: xref:observability/logging/logging.adoc
+:xref-ds-backup-restore: xref:cluster-admin/backups-and-restore/backups-and-restore.adoc
+:xref-production-checklist: xref:cluster-deployment/production-checklist/production-checklist.adoc
+:xref-about-rancher-agents: xref:cluster-deployment/about-rancher-agents.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-kubeconfig-file: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-istio: xref:integrations-in-rancher/istio/index.adoc
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-logging: xref:integrations-in-rancher/logging/index.adoc
+:xref-ds-backup-restore: xref:getting-started/installation-and-upgrade/upgrade-and-roll-back-kubernetes.adoc
+:xref-production-checklist: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/checklist-for-production-ready-clusters/index.adoc
+:xref-about-rancher-agents: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/about-rancher-agents.adoc
+endif::[]
+
+クラスター登録機能は、クラスターをインポートする機能に置き換えられました。
+
+Rancherが登録されたクラスターを管理するための制御は、クラスターの種類によって異なります。詳細については、<<_management_capabilities_for_registered_clusters,登録クラスターの管理機能をご覧ください。>>
+
+[#_prerequisites]
+== 前提条件
+
+[#_kubernetes_node_roles]
+=== Kubernetesノードロール
+
+登録されたRKE Kubernetesクラスターは、etcd、controlplane、workerの3つのノードロールをすべて持っている必要があります。controlplaneコンポーネントのみを持つクラスターは、Rancherに登録することはできません。
+
+RKEノードロールに関する詳細は、{xref-production-checklist}#_cluster_architecture[ベストプラクティス]をご覧ください。
+
+[#_permissions]
+=== 権限
+
+Rancherにクラスターを登録するには、そのクラスター内で`cluster-admin`の権限を持っている必要があります。持っていない場合は、次のコマンドを実行してユーザーにこれらの権限を付与してください：
+
+[,plain]
+----
+kubectl create clusterrolebinding cluster-admin-binding \
+  --clusterrole cluster-admin \
+  --user [USER_ACCOUNT]
+----
+
+ifeval::["{build-type}" != "srfa"]
+デフォルトでは、Google Kubernetes Engine (GKE)は`cluster-admin`ロールを付与しないため、これらのコマンドをGKEクラスターで実行する必要があります。GKEのロールベースのアクセス制御について詳しくは、 https://cloud.google.com/kubernetes-engine/docs/how-to/role-based-access-control[公式のGoogleドキュメントをご覧ください。]
+
+[#_elastic_kubernetes_service_eks_azure_kubernetes_service_aks_and_google_kubernetes_engine_gke]
+=== Elastic Kubernetes Service (EKS)、Azure Kubernetes Service (AKS)、およびGoogle Kubernetes Engine (GKE)
+
+RancherからEKS、AKS、GKEクラスターを正常にインポートまたはプロビジョニングするには、クラスターに少なくとも1つの管理ノードグループが必要です。
+
+AKSクラスターは、ローカルアカウントが有効になっている場合にのみインポートできます。クラスターが認証にMicrosoft Entra IDを使用するように構成されている場合、Rancherはそれをインポートできず、エラーを報告します。
+
+EKS Anywhereクラスターは、APIアドレスと資格情報を使用してRancherにインポート/登録できます。これは、他のダウンストリームクラスターと同様です。EKS Anywhereクラスターはインポートされたクラスターとして扱われ、Rancherからの完全なライフサイクルサポートはありません。
+
+GKE Autopilotクラスターはサポートされていません。GKEモードの違いについての詳細は、 https://cloud.google.com/kubernetes-engine/docs/resources/autopilot-standard-feature-comparison[GKE AutopilotとStandardの比較をご覧ください。]を参照してください。
+
+[#_registering_a_cluster]
+== クラスターの登録
+endif::[]
+
+ifeval::["{build-type}" == "srfa"]
+[#_elastic_kubernetes_service_eks]
+=== Elastic Kubernetes Service (EKS)
+
+RancherからEKSクラスターを正常にインポートまたはプロビジョニングするには、クラスターに少なくとも1つの管理ノードグループが必要です。
+
+EKS Anywhereクラスターは、APIアドレスと資格情報を使用してRancherにインポート/登録できます。これは、他のダウンストリームクラスターと同様です。EKS Anywhereクラスターはインポートされたクラスターとして扱われ、Rancherからの完全なライフサイクルサポートはありません。
+
+[#_registering_a_cluster_1]
+== クラスターの登録
+endif::[]
+
+. *☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、*既存クラスターのインポート*を選択します。
+. クラスターのタイプを選択します。
+. クラスターのユーザー認可を構成するには、*メンバー役割*を使用してください。*メンバーを追加*をクリックして、クラスターにアクセスできるユーザーを追加してください。各ユーザーの権限を設定するには、*役割*のドロップダウンを使用してください。
+. Rancherで一般的なKubernetesクラスターをインポートする場合は、次の手順を実行してセットアップします：
+.. **エージェント環境変数**を**クラスターオプション**の下でクリックして、{xref-about-rancher-agents}[rancherクラスタエージェント]の環境変数を設定します。環境変数はキーと値のペアを使用して設定できます。Rancherサーバーと通信するためにrancherエージェントがプロキシの使用を必要とする場合、`HTTP_PROXY`、`HTTPS_PROXY`および`NO_PROXY`の環境変数はエージェント環境変数を使用して設定できます。
+.. プロジェクトネットワークの分離を有効にして、クラスターがKubernetes `NetworkPolicy`リソースをサポートすることを確認します。ユーザーは、**高度なオプション**のドロップダウンの下にある**プロジェクトネットワークの分離**オプションを選択できます。
+.. <<_configuring_version_management_for_rke2_and_k3s_clusters,インポートされたRKE2およびK3sクラスターのバージョン管理機能を構成する>>。
+. ［*作成*］をクリックします。
+. `cluster-admin`権限の前提条件が表示されます（上記の*前提条件*を参照）、前提条件を満たすための例のコマンドが含まれています。
+. `kubectl`コマンドをクリップボードにコピーし、kubeconfigがインポートしたいクラスターを指すように設定されているノードで実行します。正しく設定されているか不明な場合は、Rancherに表示されているコマンドを実行する前に`kubectl get nodes`を実行して確認します。
+. 自己署名証明書を使用している場合、`certificate signed by unknown authority`というメッセージが表示されます。この検証を回避するには、Rancherに表示される`curl`で始まるコマンドをクリップボードにコピーします。次に、kubeconfigがインポートしたいクラスターを指すように設定されているノードでコマンドを実行します。
+. ノードでコマンドの実行が完了したら、*完了*をクリックします。
+
+[CAUTION]
+====
+`NO_PROXY`環境変数は標準化されておらず、値の受け入れられる形式はアプリケーションによって異なる場合があります。Rancherの`NO_PROXY`変数を構成する際、値はGolangが期待する形式に従う必要があります。
+
+具体的には、値はIPアドレス、CIDR表記、ドメイン名、または特別なDNSラベル（例：`*`）のみを含むカンマ区切りの文字列である必要があります。期待される値の形式の完全な説明については、 https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config[**上流のGolangドキュメント**]を参照してください。
+====
+
+*結果:*
+
+* クラスターは登録され、*保留中*の状態が割り当てられています。Rancherは、クラスターを管理するためのリソースをデプロイしています。
+* 状態が*アクティブ*に更新された後、クラスターにアクセスできます。
+* *アクティブ*なクラスターには、`Default`（ネームスペース`default`を含む）と`System`（ネームスペース`cattle-system`、`traefik`、`kube-public`、および`kube-system`を含む場合）という2つのプロジェクトが割り当てられています。
+
+[NOTE]
+====
+
+現在Rancherのセットアップでアクティブなクラスターを再登録することはできません。
+====
+
+
+ifeval::["{build-type}" != "srfa"]
+[#_configuring_an_imported_eks_aks_or_gke_cluster_with_terraform]
+=== Terraformを使用してインポートされたEKS、AKS、またはGKEクラスターを設定する
+
+Terraformを使用してEKS、AKS、またはGKEクラスターをインポートする際には、Rancherが要求する最小限のフィールドを*のみ*定義する必要があります。これは重要です。なぜなら、Rancherはユーザーが提供した設定でクラスター構成にあったものを上書きするからです。
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+[#_configuring_an_imported_eks_cluster_with_terraform]
+=== Terraformを使用してインポートされたEKSクラスターを設定する
+
+Terraformを使用してEKSクラスターをインポートする際には、Rancherが要求する最小限のフィールドを*のみ*定義する必要があります。これは重要です。なぜなら、Rancherはユーザーが提供した設定でクラスター構成にあったものを上書きするからです。
+endif::[]
+
+[CAUTION]
+====
+
+現在のクラスターとユーザーが提供した設定との間に小さな違いがあるだけでも、予期しない結果をもたらす可能性があります。
+====
+
+
+Terraformを使用してEKSクラスターをインポートするためにRancherが必要とする最小限の構成フィールドは`eks_config_v2`次のとおりです：
+
+* cloud_credential_id
+* name
+* 地域
+* インポートされた（このフィールドはインポートされたクラスターに対して常に`true`に設定する必要があります）
+
+インポートされたEKSクラスターの例YAML設定：
+
+----
+resource "rancher2_cluster" "my-eks-to-import" {
+  name        = "my-eks-to-import"
+  description = "Terraform EKS Cluster"
+  eks_config_v2 {
+    cloud_credential_id = rancher2_cloud_credential.aws.id
+    name                = var.aws_eks_name
+    region              = var.aws_region
+    imported            = true
+  }
+}
+----
+
+他のクラウドプロバイダーの追加の例は、 https://registry.terraform.io/providers/rancher/rancher2/latest/docs/resources/cluster[Rancher2 Terraform Providerドキュメント]で見つけることができます。
+
+[#_management_capabilities_for_registered_clusters]
+== 登録されたクラスターの管理機能
+
+Rancherが登録されたクラスターを管理する方法は、クラスターの種類によって異なります。
+
+* <<_features_for_all_registered_clusters,すべての登録されたクラスターの機能>>
+* <<_additional_features_for_registered_rke2_and_k3s_clusters,登録されたRKE2およびK3sクラスターの追加機能>>
+ifeval::["{build-type}" != "srfa"]
+* <<_additional_features_for_registered_eks_aks_and_gke_clusters,登録されたEKS、AKS、およびGKEクラスターの追加機能>>
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+* <<_additional_features_for_registered_eks_clusters,登録済みEKSクラスターの追加機能>>
+endif::[]
+
+[#_features_for_all_registered_clusters]
+=== すべての登録済みクラスターの機能
+
+クラスターを登録した後、クラスターの所有者は次のことができます：
+
+* {xref-cluster-project-roles}[ロールベースのアクセス制御]を通じてクラスターへのアクセスを管理する
+* {xref-monitoring-and-dashboards}[監視、アラート、通知機能]を有効にする
+* {xref-logging}[ログ記録]を有効にする
+* {xref-istio}[Istio]を有効にする
+* プロジェクトとワークロードを管理する
+
+[#_additional_features_for_registered_rke2_and_k3s_clusters]
+=== 登録済み{rke2-product-name}および{k3s-product-name}クラスターの追加機能
+
+https://documentation.suse.com/cloudnative/k3s/latest/en/introduction.html[K3s]は、エッジインストール用の軽量で完全に準拠したKubernetesディストリビューションです。
+
+https://documentation.suse.com/cloudnative/rke2/latest/en/introduction.html[RKE2]は、データセンターおよびクラウドインストール用のRancherの次世代Kubernetesディストリビューションです。
+
+RancherにRKE2またはK3sクラスターが登録されると、Rancherはそれを認識します。
+RancherのUIは、<<_features_for_all_registered_clusters,すべての登録済みクラスター>>に利用可能な機能を表示し、クラスターの編集およびアップグレードのための次のオプションを提供します：
+
+* <<_configuring_version_management_for_rke2_and_k3s_clusters,バージョン管理>>を有効または無効にする
+* {xref-ds-backup-restore}[Kubernetesのバージョンをアップグレードする]（バージョン管理が有効な場合）
+* バージョン管理が有効な場合、<<_configuring_rke2_and_k3s_cluster_upgrades,アップグレード戦略>>を設定する
+* クラスターの設定引数と各ノードを起動するために使用される環境変数の読み取り専用バージョンを表示する
+
+ifeval::["{build-type}" != "srfa"]
+[#_additional_features_for_registered_eks_aks_and_gke_clusters]
+=== 登録済みEKS、AKS、GKEクラスターの追加機能
+
+Rancherは、登録済みEKS、AKS、またはGKEクラスターをRancherで作成されたクラスターと同様に扱います。ただし、RancherはRancherのUIを通じて削除した場合、登録済みクラスターを破棄しません。
+
+EKS、AKS、またはGKEクラスターをRancherで作成し、その後削除すると、Rancherはクラスターを破棄します。Rancherを通じて登録されたクラスターを削除すると、Rancherサーバーはクラスターから_切断します_。クラスターは生き続けますが、Rancherにはもはや存在しません。登録解除されたクラスターには、登録する前と同じ方法でアクセスできます。
+
+endif::[]
+ifeval::["{build-type}" == "srfa"]
+[#_additional_features_for_registered_eks_clusters]
+=== 登録されたEKSクラスターの追加機能
+
+Rancherは、登録されたEKSクラスターをRancherで作成されたクラスターと同様に扱います。ただし、RancherはRancherのUIを通じて削除した場合、登録済みクラスターを破棄しません。
+
+RancherでEKSクラスターを作成し、その後削除すると、Rancherはクラスターを破棄します。Rancherを通じて登録されたクラスターを削除すると、Rancherサーバーはクラスターから_切断します_。クラスターは生き続けますが、Rancherにはもはや存在しません。登録解除されたクラスターには、登録する前と同じ方法でアクセスできます。
+endif::[]
+
+登録されたクラスターの管理に利用可能な機能についての詳細は、{xref-cluster-deployment}[クラスタータイプ別のクラスター管理機能]を参照してください。
+
+[#_configuring_version_management_for_rke2_and_k3s_clusters]
+== {rke2-product-name}および{k3s-product-name}クラスターのバージョン管理の設定
+
+[WARNING]
+====
+インポートされたクラスターに対してバージョン管理が有効になっている場合、Rancherの外でアップグレードすると予期しない結果を招く可能性があります。
+====
+
+インポートされたRKE2およびK3sクラスターのバージョン管理機能は、次のオプションのいずれかを使用して設定できます：
+
+* **グローバルデフォルト**（既定）：グローバル**インポートされたクラスターのバージョン管理**設定から動作を継承します。
+* **真**：バージョン管理を有効にし、ユーザーがRancherを通じてクラスターのKubernetesバージョンとアップグレード戦略を制御できるようにします。
+* **偽**：バージョン管理を無効にし、ユーザーがRancherの外でクラスターのKubernetesバージョンを独立して管理できるようにします。
+
+新しく作成されたクラスターや「グローバルデフォルト」に設定された既存のクラスターのデフォルト動作を、**imported-cluster-version-management**設定を変更することで定義できます。
+
+グローバル**imported-cluster-version-management**設定の変更は、クラスターの次の調整サイクル中に適用されます。
+
+[NOTE]
+====
+クラスターに対してバージョン管理が有効になっている場合、Rancherは`system-upgrade-controller`アプリと関連するプランおよびその他の必要なKubernetesリソースをクラスターにデプロイします。
+バージョン管理が無効になっている場合、Rancherはこれらのコンポーネントをクラスターから削除します。
+====
+
+[#_configuring_rke2_and_k3s_cluster_upgrades]
+== {rke2-product-name}および{k3s-product-name}クラスターのアップグレードの設定
+
+[TIP]
+====
+
+アップグレードの前にクラスターをバックアップすることはKubernetesのベストプラクティスです。外部データベースを使用した高可用性のK3sクラスターをアップグレードする際は、リレーショナルデータベースプロバイダーが推奨する方法でデータベースをバックアップしてください。
+====
+
+
+*同時実行数*は、アップグレード中に利用できないことが許可されている最大ノード数です。利用できないノードの数が*同時実行数*よりも大きい場合、アップグレードは失敗します。アップグレードが失敗した場合、アップグレードが成功する前に失敗したノードを修復または削除する必要があります。
+
+* *コントロールプレーンの同時実行数:*一度にアップグレードする最大サーバーノード数; また、最大の利用できないサーバーノード数
+* *ワーカーの同時実行数:*同時にアップグレードする最大ワーカーノード数; また、最大の利用できないワーカーノード数
+
+RKE2およびK3sのドキュメントでは、コントロールプレーンノードはサーバーノードと呼ばれています。これらのノードはKubernetesマスターを実行し、クラスターの望ましい状態を維持します。デフォルトでは、これらのコントロールプレーンノードには、デフォルトでワークロードをスケジュールする機能があります。
+
+RKE2およびK3sのドキュメントでも、ワーカー役割を持つノードはエージェントノードと呼ばれています。クラスターにデプロイされたワークロードやポッドは、デフォルトでこれらのノードにスケジュールされることができます。
+
+[#_debug_logging_and_troubleshooting_for_registered_rke2_product_name_and_k3s_product_name_clusters]
+== 登録された{rke2-product-name}および{k3s-product-name}クラスターのデバッグログとトラブルシューティング
+
+ノードは、ダウンストリームクラスターで実行されているシステムアップグレードコントローラーによってアップグレードされます。クラスターの構成に基づいて、Rancherはノードをアップグレードするために2つの https://github.com/rancher/system-upgrade-controller#example-upgrade-plan[プラン]をデプロイします: 1つはコントロールプレーンノード用、もう1つはワーカー用です。システムアップグレードコントローラーはプランに従ってノードをアップグレードします。
+
+システムアップグレードコントローラーのデプロイメントでデバッグログを有効にするには、 https://github.com/rancher/system-upgrade-controller/blob/50a4c8975543d75f1d76a8290001d87dc298bdb4/manifests/system-upgrade-controller.yaml#L32[configmap]を編集してデバッグ環境変数をtrueに設定します。次に、`system-upgrade-controller`ポッドを再起動します。
+
+`system-upgrade-controller`によって作成されたログは、このコマンドを実行することで表示できます：
+
+----
+kubectl logs -n cattle-system system-upgrade-controller
+----
+
+プランの現在のステータスは、このコマンドで表示できます：
+
+----
+kubectl get plans -A -o yaml
+----
+
+[TIP]
+====
+クラスターがアップグレード中にスタックした場合は、`system-upgrade-controller`を再起動してください。
+====
+
+アップグレード時の問題を防ぐために、 https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/[Kubernetesアップグレードのベストプラクティス]に従う必要があります。
+
+[#_authorized_cluster_endpoint_support_for_rke2_product_name_and_k3s_product_name_clusters]
+== {rke2-product-name}および{k3s-product-name}クラスターのための認可されたクラスターエンドポイントサポート
+
+Rancherは、登録されたRKE2およびK3sクラスターのための認可されたクラスターエンドポイント（ACE）をサポートしています。このサポートには、ACEを有効にするためにダウンストリームクラスターで実行する手動ステップが含まれます。認可されたクラスターエンドポイントに関する追加情報は、{xref-kubeconfig-file}[こちら]をクリックしてください。
+
+[NOTE]
+.メモ:
+====
+
+* これらのステップは、ダウンストリームクラスターのコントロールプレーンノードでのみ実行する必要があります。各コントロールプレーンノードを個別に構成する必要があります。
+* 以下のステップは、v2.6.xに登録されたRKE2およびK3sクラスター、および以前のRancherバージョンからアップグレードしてv2.6.xに登録（またはインポート）されたクラスターの両方で機能します。
+* これらのステップは、ダウンストリームのRKE2およびK3sクラスターの構成を変更し、`kube-api-authn-webhook`をデプロイします。将来のACEの実装が`kube-api-authn-webhook`の更新を必要とする場合、これも手動で行う必要があります。このWebhookに関する詳細情報は、{xref-kubeconfig-file}#_about_the_kube_api_auth_authentication_webhook[こちら]をクリックしてください。
+====
+
+
+[discrete]
+====== *各ダウンストリームクラスターのコントロールプレーンでACEを有効にするために取るべき手動ステップ：*
+
+. `/var/lib/rancher/{rke2,k3s}/kube-api-authn-webhook.yaml`に次の内容でファイルを作成します：
++
+[,yaml]
+----
+ apiVersion: v1
+ kind: Config
+ clusters:
+ ** name: Default
+cluster:
+  insecure-skip-tls-verify: true
+  server: http://127.0.0.1:6440/v1/authenticate
+ users:
+ ** name: Default
+user:
+  insecure-skip-tls-verify: true
+ current-context: webhook
+ contexts:
+ ** name: webhook
+context:
+  user: Default
+  cluster: Default
+----
+
+. 設定ファイルに次の内容を追加する（存在しない場合は作成する）；デフォルトの場所は`/etc/rancher/{rke2,k3s}/config.yaml`であることに注意してください：
++
+[,yaml]
+----
+ kube-apiserver-arg:
+     - authentication-token-webhook-config-file=/var/lib/rancher/{rke2,k3s}/kube-api-authn-webhook.yaml
+----
+
+. 次のコマンドを実行します。
+
+  sudo systemctl stop {rke2,k3s}-server
+  sudo systemctl start {rke2,k3s}-server
+
+. 最後に、*必ず*Rancher UIに戻り、そこでインポートされたクラスターを編集してACEの有効化を完了する必要があります。*⋮ > 設定を編集*をクリックし、次にクラスター構成の下にある*ネットワーキング*タブをクリックします。最後に、*認可されたエンドポイント*用の*有効*ボタンをクリックします。ACEが有効になると、完全修飾ドメイン名（FQDN）と証明書情報を入力するオプションがあります。
+
+[NOTE]
+====
+
+*FQDN*フィールドはオプションで、入力された場合はダウンストリームクラスターを指す必要があります。証明書情報は、信頼されていない証明書を使用しているダウンストリームクラスターの前にロードバランサーがある場合にのみ必要です。有効な証明書がある場合、*CA証明書*フィールドに追加する必要はありません。
+====
+
+
+[#_annotating_registered_clusters]
+== 登録されたクラスターの注釈
+
+RKE2およびK3s Kubernetesクラスターを除くすべてのタイプの登録されたKubernetesクラスターについて、Rancherはクラスターがどのようにプロビジョニングまたは構成されているかに関する情報を持っていません。
+
+したがって、Rancherがクラスターを登録する際、いくつかの機能がデフォルトで無効であると仮定します。Rancherは、登録されたクラスターで機能が有効でない場合でも、ユーザーにUIオプションを表示しないようにするためにこれを仮定しています。
+
+ただし、クラスターに特定の機能がある場合、そのクラスターのユーザーはRancher UIでクラスターの機能を選択したい場合があります。そのためには、ユーザーはRancherに対して特定の機能がクラスターに対して有効であることを手動で示す必要があります。
+
+登録されたクラスターに注釈を付けることで、Rancherに対してクラスターがRancherの外で追加の機能を与えられたことを示すことができます。
+
+次の注釈は、Ingress機能を示します。非プリミティブオブジェクトの値はJSONエンコードされ、引用符がエスケープされる必要があることに注意してください。
+
+[,json]
+----
+"capabilities.cattle.io/ingressCapabilities": "[
+  {
+    "customDefaultBackend":true,
+    "ingressProvider":"asdf"
+  }
+]"
+----
+
+これらの機能はクラスターに注釈を付けることができます：
+
+* `ingressCapabilities`
+* `loadBalancerCapabilities`
+* `nodePoolScalingSupported`
+* `nodePortRange`
+* `taintSupport`
+
+すべての機能とその型定義は、Rancher APIビューで`[Rancher Server URL]/v3/schemas/capabilities`に表示できます。
+
+登録されたクラスターに注釈を付けるには、
+
+. *☰ > クラスター管理*をクリックします。
+. *クラスター*ページで、注釈を付けたいカスタムクラスターに移動し、*⋮ > 設定を編集*をクリックします。
+. *ラベルと注釈*セクションを開きます。
+. *注釈を追加*をクリックします。
+. `capabilities/<capability>: <value>`の形式でクラスタに注釈を追加してください。ここで`value`は注釈によって上書きされるクラスタの機能です。このシナリオでは、Rancherは注釈を追加するまでクラスタの機能を認識していません。
+. ［*保存*］をクリックします。
+
+*結果:*注釈はクラスタに機能を与えるものではありませんが、Rancherに対してクラスタがその機能を持っていることを示します。
+
+ifeval::["{build-type}" != "srfa"]
+[#_troubleshooting]
+== トラブルシューティング
+
+このセクションでは、クラスタをインポートする際に発生する可能性のある一般的なエラーのいくつかをリストし、それらをトラブルシューティングする手順を提供します。
+
+[#_aks]
+=== AKS
+
+ローカルアカウントがクラスタで無効になっている場合、次のエラーが発生する可能性があります：
+
+[,shell]
+----
+Error: Getting static credential is not allowed because this cluster is set to disable local accounts. 
+----
+
+この問題を解決するには、再度xref:#_registering_a_cluster[クラスタをインポート]する前にローカルアカウントを有効にしてください：
+
+[,shell]
+----
+az aks update --resource-group <resource-group> --name <cluster-name> --enable-local-accounts
+----
+endif::[]

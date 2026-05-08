@@ -1,0 +1,140 @@
+= Google OAuthの設定
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-google-oauth.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-google-oauth.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-global-permissions: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/global-permissions.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-global-permissions: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/global-permissions.adoc 
+endif::[]
+
+組織がユーザー認証にG Suiteを使用している場合、Rancherを設定してユーザーがG Suiteの資格情報を使用してログインできるようにすることができます。
+
+G Suiteドメインの管理者のみがAdmin SDKにアクセスできます。したがって、G Suiteの管理者のみがRancherのためにGoogle OAuthを設定できます。
+
+Rancher内では、管理者または*認証の管理* {xref-global-permissions}[グローバルロール]を持つユーザーのみが認証を設定できます。
+
+[#_prerequisites]
+== 前提条件
+
+* https://admin.google.com[G Suite管理者アカウント]を設定している必要があります。
+* G Suiteでは、認可されたドメインとして https://github.com/google/guava/wiki/InternetDomainNameExplained#public-suffixes-and-private-domains[トッププライベートドメインFQDN]が必要です。FQDNを取得する方法の一つは、RancherサーバーのためにRoute53でAレコードを作成することです。そのレコードでRancherサーバーのURL設定を更新する必要はありません。なぜなら、そのURLを使用しているクラスターが存在する可能性があるからです。
+* G SuiteドメインのためにAdmin SDK APIを有効にする必要があります。 https://support.google.com/a/answer/60757?hl=en[このページの手順を使用して有効にできます。]
++
+Admin SDK APIが有効になると、G SuiteドメインのAPI画面は次のようになります：
++
+image::Google-Enable-APIs-Screen.png[管理APIを有効にする]
+
+[#_setting_up_g_suite_for_oauth_with_rancher]
+== RancherでOAuth用のG Suiteの設定
+
+RancherでGoogle OAuthを設定する前に、G Suiteアカウントにログインし、次のことを行う必要があります：
+
+. <<_1_adding_rancher_as_an_authorized_domain,G SuiteでRancherを認可されたドメインとして追加する>>
+. <<_2_creating_oauth2_credentials_for_the_rancher_server,RancherサーバーのためにOAuth2資格情報を生成する>>
+. <<_3_creating_service_account_credentials,Rancherサーバーのためにサービスアカウント資格情報を作成する>>
+. <<_4_register_the_service_account_key_as_an_oauth_client,サービスアカウントキーをOAuthクライアントとして登録する>>
+
+[#_1_adding_rancher_as_an_authorized_domain]
+=== 1.Rancherを認可されたドメインとして追加する
+
+. Googleドメインの資格情報ページに移動するには、 https://console.developers.google.com/apis/credentials[こちら]をクリックしてください。
+. プロジェクトを選択し、*OAuth同意画面*をクリックします。
++
+image::Google-OAuth-consent-screen-tab.png[OAuth同意画面]
+. *認可されたドメイン*に移動し、RancherサーバーURLのトッププライベートドメインをリストに入力します。トッププライベートドメインは、最も右側のスーパードメインです。例えば、www.foo.co.ukはfoo.co.ukのトッププライベートドメインです。トップレベルドメインに関する詳細は、 https://github.com/google/guava/wiki/InternetDomainNameExplained#public-suffixes-and-private-domains[この記事を参照してください。]
+. *Google APIのスコープ*に移動し、*email,* *プロファイル*および*openid*が有効になっていることを確認してください。
+
+*結果:*RancherはAdmin SDK APIの認可されたドメインとして追加されました。
+
+[#_2_creating_oauth2_credentials_for_the_rancher_server]
+=== 2.RancherサーバーのためのOAuth2資格情報を作成する
+
+. Google APIコンソールに移動し、プロジェクトを選択して、 https://console.developers.google.com/apis/credentials[資格情報ページに移動します。]
++
+image::Google-Credentials-tab.png[資格情報]
+. *資格情報を作成*のドロップダウンで、*OAuthクライアントID*を選択します。
+. *Webアプリケーション*をクリックします。
+. 名前を入力してください。
+. *認可されたJavaScriptオリジン*と*認可されたリダイレクトURI*を記入してください。注意:Google OAuthを設定するためのRancher UIページ（menu:セキュリティ[認証> Google]のグローバルビューから利用可能）は、このステップで入力する正確なリンクを提供します。
+ ** *認可されたJavaScriptオリジン、*にRancherサーバーURLを入力します。
+ ** *認可されたリダイレクトURI、*にRancherサーバーURLにパス`verify-auth`を追加して入力します。たとえば、URIが`https://rancherServer`の場合、`https://rancherServer/verify-auth`を入力します。
+. *Create*をクリックします。
+. 資格情報が作成されると、資格情報のリストが表示される画面が見えます。作成した資格情報を選択し、その行の最右側で*Download JSON*をクリックします。ファイルを保存して、これらの資格情報をRancherに提供できるようにします。
+
+*結果:*OAuth資格情報が正常に作成されました。
+
+[#_3_creating_service_account_credentials]
+=== 3.サービスアカウント資格情報の作成
+
+Google Admin SDKは管理者のみが利用できるため、一般ユーザーは他のユーザーやグループのプロファイルを取得することはできません。一般ユーザーは自分のグループさえ取得できません。
+
+Rancherはグループベースのメンバーシップアクセスを提供するため、ユーザーが自分のグループを取得し、必要に応じて他のユーザーやグループを検索できることを要求します。
+
+この機能を取得するための回避策として、G Suiteはサービスアカウントを作成し、そのサービスアカウントにG Suiteドメインの権限を委任することを推奨しています。
+
+この節では、次の操作手順について説明します。
+
+* サービスアカウントを作成します。
+* サービスアカウントのキーを作成し、資格情報をJSON形式でダウンロードします。
+
+.. https://console.developers.google.com/iam-admin/serviceaccounts[こちら]をクリックし、OAuth資格情報を生成したプロジェクトを選択します。
+.. *Create Service Account*をクリックします。
+.. 名前を入力し、*Create*をクリックします。
++
+image::Google-svc-acc-step1.png[サービスアカウント作成 ステップ1]
+.. *サービスアカウントの権限*ページで役割を提供せず、*続行*をクリックします。
++
+image::Google-svc-acc-step2.png[サービスアカウント作成 ステップ2]
+.. *Create Key*をクリックし、JSONオプションを選択します。JSONファイルをダウンロードして保存し、それをRancherにサービスアカウントの認証情報として提供できるようにします。
++
+image::Google-svc-acc-step3-key-creation.png[サービスアカウント作成 ステップ3]
+
+*結果:*サービスアカウントが作成されました。
+
+[#_4_register_the_service_account_key_as_an_oauth_client]
+=== 4.サービスアカウントキーをOAuthクライアントとして登録します。
+
+前のステップで作成したサービスアカウントにいくつかの権限を付与する必要があります。Rancherでは、ユーザーとグループに対して読み取り専用の権限のみを付与する必要があります。
+
+サービスアカウントキーのユニークIDを使用して、次の手順でOAuthクライアントとして登録します：
+
+. 作成したキーのユニークIDを取得します。作成したキーのすぐ隣に表示されていない場合は、それを有効にする必要があります。有効にするには、*ユニークID*をクリックし、*OK*をクリックします。これにより、サービスアカウントキーのリストに*ユニークID*列が追加されます。作成したサービスアカウントにリストされているものを保存します。NOTE:これは数値キーであり、英数字フィールド*キーID*と混同しないでください。
++
+image::Google-Select-UniqueID-column.png[サービスアカウント ユニークID]
+
+. https://admin.google.com/ac/owl/domainwidedelegation[*ドメイン全体の委任*ページに移動します。]
+. 前のステップで取得したユニークIDを*クライアント名*フィールドに追加します。
+. *1つ以上のAPIスコープ*フィールドに、次のスコープを追加します：
++
+----
+ openid,profile,email,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.readonly
+----
+
+. *承認*をクリックします。
+
+*結果:*サービスアカウントは、あなたのG SuiteアカウントにOAuthクライアントとして登録されました。
+
+[#_configuring_google_oauth_in_rancher]
+== RancherでのGoogle OAuthの設定
+
+. {xref-global-permissions}[管理者]ロールが割り当てられたローカルユーザーを使用してRancherにサインインします。このユーザーはローカルプリンシパルとも呼ばれます。
+. 左上隅で、*☰ > ユーザーと認証*をクリックします。
+. 左側のナビゲーションメニューで、*認証プロバイダー*をクリックします。
+. *Google*をクリックします。UIの指示には、Google OAuthでの認証設定手順が含まれています。
+ .. 管理者のメールアドレス：G Suiteのセットアップから管理者アカウントのメールアドレスを提供してください。ユーザーおよびグループの検索を行うために、Google APIはサービスアカウントキーと共に管理者のメールアドレスを必要とします。
+ .. ドメイン:G Suiteを設定したドメインを提供してください。エイリアスは使用せず、正確なドメインを提供してください。
+ .. ネストされたグループメンバーシップ：このボックスにチェックを入れて、ネストされたグループメンバーシップを有効にします。Rancherの管理者は、認証設定後にいつでもこれを無効にできます。
+  *** *ステップ1*は、Rancherを承認されたドメインとして追加することに関するもので、これは<<_1_adding_rancher_as_an_authorized_domain,このセクションで既に説明しました。>>
+  *** *ステップ2、*では、<<_2_creating_oauth2_credentials_for_the_rancher_server,このセクションを完了した後にダウンロードしたOAuth資格情報のJSONを提供してください。>>ファイルをアップロードするか、*OAuth資格情報*フィールドに内容を貼り付けることができます。
+  *** *ステップ3、*では、<<_3_creating_service_account_credentials,このセクションの最後にダウンロードしたサービスアカウント資格情報のJSONを提供してください。>>資格情報は、G SuiteアカウントでOAuthクライアントとしてサービスアカウントキーを正常に<<_4_register_the_service_account_key_as_an_oauth_client,登録した場合>>にのみ機能します。
+. *Googleで認証する*をクリックします。
+. ［*有効］*をクリックします。
+
+*結果:*Google認証が正常に設定されました。
