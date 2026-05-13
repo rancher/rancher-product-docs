@@ -1,45 +1,74 @@
 = SUSE Customer Center Registration
+ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
-:revdate: 2026-01-26
+endif::[]
+:revdate: 2026-05-05
 :page-revdate: {revdate}
 
 Since Rancher v2.12.1, SUSE Rancher Prime customers can now register Rancher Manager with https://scc.suse.com/home[SUSE Customer Center (SCC)]. This registration helps you track the use of your organization's subscriptions and deployed Rancher Manager instances.
 
+[#_prerequisites]
 == Prerequisites
 
 * Registering your Rancher Manager instance with SCC requires a SUSE account. If you don't have a SUSE account yet, https://www.suse.com/account/create/[create one].
 * You must have access to your organization. Ask your organization's administrator to add you to the account. See the https://scc.suse.com/docs/userguide#UG-Requesting-Access-to-an-Organizations-Account[SCC documentation] and https://scc.suse.com/docs/help#how-to-add-user[SCC FAQ] for details. If you know your organization's registration code, enter it when prompted.
 
+[#_register_with_suse_customer_center]
 == Register with SUSE Customer Center
 
 From the Rancher UI, go to *Global Settings* > *Registration*. You can also check the Notification Center (bell icon) in the upper-right corner for a "Rancher Prime Registration" notification and click *Register Now*. This redirects you to the *Registration* page under *Global Settings*.
 
 You have the option to register your Rancher Manager instance with SCC <<Online Registration,online>> or <<Offline Registration,offline>>.
 
+[#_online_registration]
 === Online Registration
 
 You can register online through the Rancher UI or with Helm.
 
-Before proceeding, you must have the registration code for your Rancher Manager subscription on SCC. To get the registration code:
+[#_obtain_registration_code]
+==== Obtain Registration Code
+
+Before proceeding, you must obtain the registration code for your Rancher Manager subscription on SCC. To get the registration code:
 
 . Log in to SCC.
 . Navigate to **My Organizations** and click on the organization with your Rancher Manager subscription.
 . Find your Registration code under *Organization* > *Subscriptions* > *Subscription Information*.
 
+[#_rancher_ui]
 ==== Rancher UI
 
 . From the Rancher UI, copy the registration code into the *Registration code* field and click *Register*. If successful, the *Status* becomes *Active*, and the *Product Name*, *Expiration date* and *Registration mode* are displayed.
 +
 image::online-scc-registration.png[Register with SCC using online method]
 
+[#_helm]
 ==== Helm
 
-include::shared:ROOT:partial$zh/rancher-chart-rename.adoc[]
+After you have obtained your registration code from SCC, you can register your Rancher Manager instance through Helm.
 
-After you have your registration code, you can register your Rancher Manager instance through Helm by passing the argument `--set registration.enabled=true --set registration.regCode=<REGISTRATION-CODE-FROM_SCC>` in the Helm install command `helm install rancher rancher-prime/rancher`.
+[#_entrypoint_secret]
+===== Entrypoint Secret
 
-You can also update `values.yaml`, enabling registration and adding your registration code.
+To follow security best practices in production or GitOps environments, avoid storing registration codes in plain text. Instead, manually create an entrypoint secret before installation to allow the SCC Operator to detect and consume the registration data automatically.
 
+. Create the SCC system namespace. The SCC Operator expects registration data to reside in the `cattle-scc-system` namespace.
++
+[,shell]
+----
+kubectl create namespace cattle-scc-system
+----
+
+. Create a secret named `scc-registration` containing your registration code. This secret can be managed through external secret managers to keep it encrypted in Git.
++
+[,shell]
+----
+kubectl create secret generic scc-registration \
+  --namespace cattle-scc-system \
+  --from-literal=regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+. Enable registration in your `values.yaml` but leave the `regCode` field empty. When `registration.enabled` is `true` and no code is provided in the values, the operator looks for an existing `scc-registration` secret in the `cattle-scc-system` namespace.
++
 [,yaml]
 ----
 registration:
@@ -47,10 +76,54 @@ registration:
   regCode: ""
 ----
 
+. Deploy Rancher using your updated `values.yaml`:
++
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --values values.yaml
+----
+
+. To verify that the registration was successful using the manually created secret, check the logs of the SCC-Operator or the status of the registration in the Rancher UI under *Global Setting* > *Registration*.
+
+[#_helm_parameters]
+===== Helm Parameters 
+
+For testing or non-production environments, you can pass the registration code directly during the Helm install command:
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set registration.enabled=true \
+  --set registration.regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+Alternatively, you can update `values.yaml` to enable registration and add your registration code.
+
+[,yaml]
+----
+registration:
+  enabled: true
+  regCode: "<REGISTRATION-CODE>"
+----
+
+Then, deploy Rancher using the updated values file:
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher 
+  --namespace cattle-system 
+  --values values.yaml
+----
+
+[#_offline_registration]
 === Offline Registration
 
 If you are using Rancher in an air-gapped environment, you can register offline through the Rancher UI or with Helm.
 
+[#_rancher_ui_1]
 ==== Rancher UI
 
 [IMPORTANT]
@@ -67,9 +140,8 @@ An SCC Organization Admin must get your registration certificate, as regular use
 +
 image::offline-scc-registration.png[Register with SCC using offline method]
 
+[#_helm_1]
 ==== Helm
-
-include::shared:ROOT:partial$zh/rancher-chart-rename.adoc[]
 
 . In `values.yaml`, enable registration, comment out `regCode` and set the `mode` to `offline`.
 +
@@ -81,7 +153,7 @@ registration:
   mode: offline
 ----
 
-. Run the Helm install command `helm install rancher rancher-prime/rancher` and verify installation is successful.
+. Run the Helm install command `helm install rancher rancher-prime/rancher` and verify installation is successful. 
 . Before proceeding, use the following Bash command to check that the SCC-Operator has successfully created a secret in the `cattle-scc-system` namespace. After the secret is created, it outputs  `Secret created!`.
 +
 [,bash]
@@ -121,6 +193,7 @@ Add your registration certificate using the `certificate` value field, and then 
 certificate: {}
 ----
 
+[#_deregister_from_suse_customer_center]
 == Deregister from SUSE Customer Center
 
 If you need to remove or update your registration, you can deregister your Rancher Manager instance from SCC. 

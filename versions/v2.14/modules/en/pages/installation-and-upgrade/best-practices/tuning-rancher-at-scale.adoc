@@ -23,20 +23,24 @@ endif::[]
 
 This guide describes the best practices and tuning approaches to scale Rancher setups and the associated challenges with doing so. As systems grow, performance will naturally reduce, but there are steps that can minimize the load put on Rancher and optimize Rancher's ability to manage larger infrastructures.
 
+[#_optimizing_rancher_performance]
 == Optimizing Rancher Performance
 
 * Keep Rancher up to date with patch releases. We are continuously improving Rancher with performance enhancements and bug fixes. The latest Rancher release contains all accumulated improvements to performance and stability, plus updates based on developer experience and user feedback.
 * Always scale up gradually, and monitor and observe any changes in behavior while doing do. It is usually easier to resolve performance problems as soon as they surface, before other problems obscure the root cause.
 * Reduce network latency between the upstream Rancher cluster and downstream clusters to the extent possible. Note that latency is, among other factors, a function of geographic distance - if you require clusters or nodes spread across the world, consider multiple Rancher installations.
 
+[#_minimizing_load_on_the_upstream_cluster]
 == Minimizing Load on the Upstream Cluster
 
 When scaling up Rancher, one typical bottleneck is resource growth in the upstream (local) Kubernetes cluster. The upstream cluster contains information for all downstream clusters. Many operations that apply to downstream clusters create new objects in the upstream cluster and require computation from handlers running in the upstream cluster.
 
+[#_minimizing_third_party_software_on_the_upstream_cluster]
 === Minimizing Third-Party Software on the Upstream Cluster
 
 Recommendations outlined in the {xref-tips-for-running-rancher}#_minimize_third-party_software_on_the_upstream_cluster[general Rancher recommendations] are particularly important in a high scale context.
 
+[#_managing_your_object_counts]
 === Managing Your Object Counts
 
 Etcd is the backing database for Kubernetes and for Rancher. The database may eventually encounter limitations to the number of a single Kubernetes resource type it can store. Exact limits vary and depend on a number of factors. However, experience indicates that performance issues frequently arise once a single resource type's object count exceeds 60,000. Often that type is `RoleBinding`.
@@ -54,12 +58,14 @@ You can reduce the number of `RoleBindings` in the upstream cluster in the follo
 * Kubernetes permissions are always "additive" (allow-list) rather than "subtractive" (deny-list). Try to minimize configurations that gives access to all but one aspect of a cluster, project, or namespace, as that will result in the creation of a high number of `RoleBinding` objects.
 * Experiment to see if creating new projects or clusters manifests in fewer `RoleBindings` for your specific use case.
 
+[#_using_external_authentication]
 === Using External Authentication
 
 If you have fifty or more users, you should configure an {xref-authn-authz}[external authentication provider]. This is necessary for better performance.
 
 After you configure external authentication, make sure to assign permissions to groups instead of to individual users. This helps reduce the `RoleBinding` object count.
 
+[#_rolebinding_count_estimation]
 === RoleBinding Count Estimation
 
 Predicting how many `RoleBinding` objects a given configuration will create is complicated. However, the following considerations can offer a rough estimate:
@@ -72,16 +78,19 @@ Predicting how many `RoleBinding` objects a given configuration will create is c
  ** `Pa` is the average number of users with a membership on a project.
 * The number of `RoleBindings` increases linearly with the number of clusters, projects, and users.
 
+[#_using_new_apps_over_legacy_apps]
 === Using New Apps Over Legacy Apps
 
 Rancher uses two Kubernetes app resources: `apps.projects.cattle.io` and `apps.cattle.cattle.io`. Legacy apps, represented by `apps.projects.cattle.io`, were introduced with the former Cluster Manager UI and are now outdated. Current apps, represented by `apps.catalog.cattle.io`, are found in the Cluster Explorer UI for their respective cluster. `Apps.cattle.cattle.io` apps are preferable because their data resides in downstream clusters, which frees up resources in the upstream cluster.
 
 You should remove any remaining legacy apps that appear in the Cluster Manager UI, and replace them with apps in the Cluster Explorer UI. Create any new apps only in the Cluster Explorer UI.
 
+[#_using_the_authorized_cluster_endpoint_ace]
 === Using the Authorized Cluster Endpoint (ACE)
 
 An {xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[Authorized Cluster Endpoint] (ACE) provides access to the Kubernetes API of Rancher-provisioned RKE2 and K3s clusters. When enabled, the ACE adds a context to kubeconfig files generated for the cluster. The context uses a direct endpoint to the cluster, thereby bypassing Rancher. This reduces load on Rancher for cases where unmediated API access is acceptable or preferable. See {xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[Authorized Cluster Endpoint] for more information and configuration instructions.
 
+[#_reducing_event_handler_executions]
 === Reducing Event Handler Executions
 
 The bulk of Rancher's logic occurs on event handlers. These event handlers run on an object whenever the object is updated, and when Rancher is started. Additionally, they run every 10 hours when Rancher syncs caches. In scaled setups these scheduled runs come with huge performance costs because every handler is being run on every applicable object. However, the scheduled handler execution can be disabled with the `CATTLE_SYNC_ONLY_CHANGED_OBJECTS` environment variable. If resource allocation spikes are seen every 10 hours, this setting can help.
@@ -94,10 +103,12 @@ The value for `CATTLE_SYNC_ONLY_CHANGED_OBJECTS` can be a comma separated list o
 
 In short, if you notice CPU usage peaks every 10 hours, add the `CATTLE_SYNC_ONLY_CHANGED_OBJECTS` environment variable to your Rancher deployment (in the `spec.containers.env` list) with the value `mgmt,user`
 
+[#_optimizations_outside_of_rancher]
 == Optimizations Outside of Rancher
 
 Important influencing factors are the underlying cluster's own performance and configuration. The upstream cluster, if misconfigured, can introduce a bottleneck Rancher software has no chance to resolve.
 
+[#_manage_upstream_cluster_nodes_directly_with_rke2_product_name]
 === Manage Upstream Cluster Nodes Directly with {rke2-product-name}
 
 As Rancher can be very demanding on the upstream cluster, especially at scale, you should have full administrative control of the cluster's configuration and nodes. To identify the root cause of excess resource consumption, use standard Linux troubleshooting techniques and tools. This can aid in distinguishing between whether Rancher, Kubernetes, or operating system components are causing issues.
@@ -106,6 +117,7 @@ Although managed Kubernetes services make it easier to deploy and run Kubernetes
 
 Use RKE2 for large scale use cases.
 
+[#_keep_all_upstream_cluster_nodes_co_located]
 === Keep all Upstream Cluster Nodes co-located
 
 To provide high availability, Kubernetes is designed to run nodes and control components in different zones. However, if nodes and control plane components are located in different zones, network traffic may be slower.
@@ -114,10 +126,12 @@ Traffic between Rancher components and the Kubernetes API is especially sensitiv
 
 To improve performance, run all upstream node clusters in the same location. In particular, make sure that latency between etcd nodes and Rancher is as low as possible.
 
+[#_keeping_kubernetes_versions_up_to_date]
 === Keeping Kubernetes Versions Up to Date
 
 You should keep the local Kubernetes cluster up to date. This will ensure that your cluster has all available performance enhancements and bug fixes.
 
+[#_optimizing_etcd]
 === Optimizing etcd
 
 Etcd is the backend database for Kubernetes and for Rancher. It plays a very important role in Rancher performance.
@@ -128,6 +142,7 @@ It's best to run etcd on exactly three nodes, as adding more nodes will reduce o
 
 Etcd performance will also be negatively affected by network latency between nodes as that will slow down network communication. Etcd nodes should be located together with Rancher nodes.
 
+[#_browser_requirements]
 === Browser Requirements
 
 At high scale, Rancher transfers more data from the upstream cluster to UI components running in the browser, and those components also need to perform more processing.

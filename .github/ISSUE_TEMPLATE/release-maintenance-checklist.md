@@ -12,6 +12,7 @@ This issue is to track tasks that need to be done every release regardless of wh
 > Apply updates be to the version and language appropriate files as needed.
 
 - [ ] Create a new branch for the release, such as `v2.12.1`. Release-specific updates should use this branch as its base.
+- [ ] Update the `current-patch-version` attribute in the antora.yml file.
 - [ ] Update the release notes page tables:
   - [Published page](https://documentation.suse.com/cloudnative/rancher-manager/latest/en/release-notes.html)
   - [Source](./blob/main/versions/latest/modules/en/pages/release-notes.adoc)
