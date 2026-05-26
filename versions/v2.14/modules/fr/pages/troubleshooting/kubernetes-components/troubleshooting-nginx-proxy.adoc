@@ -1,0 +1,84 @@
+= Dépannage de nginx-proxy
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc 
+:product-path: troubleshooting/kubernetes-components/troubleshooting-nginx-proxy.adoc
+
+[CAUTION]
+====
+Le conteneur `nginx-proxy` est un composant spécifique à RKE1. Si vous utilisez RKE2 ou K3s, ce conteneur n'est pas déployé, car l'équilibrage de la charge vers les serveurs API est géré en interne par un équilibreur de charge côté client au sein du processus de l'agent lui-même.
+
+De plus, veuillez noter que RKE1 a atteint sa https://support.scc.suse.com/s/kb/RKE-EOL-what-when-why?[fin du service (EOL)]. Par conséquent, les informations sur cette page sont considérées comme n'étant plus prises en charge.
+====
+
+Le conteneur `nginx-proxy` est déployé sur chaque nœud qui n'a pas le rôle `controlplane`. Il fournit un accès à tous les nœuds ayant le rôle `controlplane` en générant dynamiquement la configuration NGINX en fonction des nœuds disponibles avec le rôle `controlplane`.
+
+[#_check_if_the_container_is_running]
+== Vérifiez si le conteneur est en cours d'exécution
+
+Le conteneur s'appelle `nginx-proxy` et devrait avoir le statut `Up`. La durée affichée après `Up` est le temps pendant lequel le conteneur a été en cours d'exécution.
+
+----
+docker ps -a -f=name=nginx-proxy
+----
+
+Exemple de sortie :
+
+----
+docker ps -a -f=name=nginx-proxy
+CONTAINER ID        IMAGE                       COMMAND                  CREATED             STATUS              PORTS               NAMES
+c3e933687c0e        rancher/rke-tools:v0.1.15   "nginx-proxy CP_HO..."   3 hours ago         Up 3 hours                              nginx-proxy
+----
+
+[#_check_generated_nginx_configuration]
+== Vérifiez la configuration NGINX générée
+
+La configuration générée doit inclure les adresses IP des nœuds ayant le rôle `controlplane`. La configuration peut être vérifiée en utilisant la commande suivante{nbsp}:
+
+----
+docker exec nginx-proxy cat /etc/nginx/nginx.conf
+----
+
+Exemple de sortie :
+
+----
+error_log stderr notice;
+
+worker_processes auto;
+events {
+  multi_accept on;
+  use epoll;
+  worker_connections 1024;
+}
+
+stream {
+        upstream kube_apiserver {
+
+            server ip_of_controlplane_node1:6443;
+
+            server ip_of_controlplane_node2:6443;
+
+        }
+
+        server {
+            listen        6443;
+            proxy_pass    kube_apiserver;
+            proxy_timeout 30;
+            proxy_connect_timeout 2s;
+
+        }
+
+}
+----
+
+[#_nginx_proxy_container_logging]
+== Journalisation du conteneur nginx-proxy
+
+La journalisation des conteneurs peut contenir des informations sur ce que pourrait être le problème.
+
+----
+docker logs nginx-proxy
+----
