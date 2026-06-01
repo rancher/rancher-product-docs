@@ -116,7 +116,6 @@ elif [ -s "$DATA_JSON" ]; then
 * $v"
                 fi
                 COUNT=$((COUNT+1))
-                if [ $COUNT -eq 3 ]; then break; fi
             fi
         done
     fi
