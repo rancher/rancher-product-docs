@@ -116,7 +116,6 @@ elif [ -s "$DATA_JSON" ]; then
 * $v"
                 fi
                 COUNT=$((COUNT+1))
-                if [ $COUNT -eq 3 ]; then break; fi
             fi
         done
     fi
@@ -155,21 +154,50 @@ BEGIN {
     sec_list[9] = "== Continuous Delivery (Fleet)";
     sec_list[10] = "== SUSE Virtualization (Harvester)";
 }
+function gen_id(name,   id) {
+    id = tolower(name);
+    sub(/^==+[ \t]+/, "", id);
+    gsub(/[^a-z0-9]+/, "_", id);
+    sub(/_$/, "", id);
+    return "[#_" id "]";
+}
 function insert_missing_sections() {
     if (missing_sections_done) return;
     for (i = 1; i <= 10; i++) {
         if (!seen_sec[sec_list[i]]) {
+            print gen_id(sec_list[i]);
             print sec_list[i];
             print "";
+            print "[#_features_and_enhancements]";
             print "=== Features and Enhancements";
             print "";
+            print "[#_major_bug_fixes]";
             print "=== Major Bug Fixes";
             print "";
+            print "[#_known_issues]";
             print "=== Known Issues";
             print "";
         }
     }
     missing_sections_done = 1;
+}
+function flush_id() {
+    if (buffered_id != "") {
+        print buffered_id;
+        buffered_id = "";
+    }
+}
+/^\[#.*\]$/ {
+    buffered_id = $0;
+    next;
+}
+skip_k8s {
+    if (/^==+ /) {
+        skip_k8s = 0;
+    } else {
+        buffered_id = "";
+        next;
+    }
 }
 /^\/\/== / || /^== / {
     sec_name = $0;
@@ -178,16 +206,19 @@ function insert_missing_sections() {
     seen_sec[sec_name] = 1;
 }
 /^:revdate:/ && !revdate_done { 
+    flush_id();
     print ":revdate: " date; 
     revdate_done=1; 
     next 
 }
 /^:release-version:/ && !release_done { 
+    flush_id();
     print ":release-version: " new_ver; 
     release_done=1; 
     next 
 }
 /^:rn-component-version:/ && !component_done { 
+    flush_id();
     print ":rn-component-version: " minor_ver; 
     if (add_prev == 1) {
         print ":previous-release-version: " prev_ver;
@@ -196,28 +227,33 @@ function insert_missing_sections() {
     next 
 }
 /^:previous-release-version:/ && !prev_done { 
+    flush_id();
     print ":previous-release-version: " prev_ver; 
     prev_done=1; 
     next 
 }
 /^== Changes Since / {
     insert_missing_sections();
+    flush_id();
     print;
     next;
 }
 /^== Install\/Upgrade Notes/ && !changes_done {
     insert_missing_sections();
     if (add_changes == 1) {
+        print "[#_changes_since_previous_release_version]";
         print "== Changes Since {previous-release-version}";
         print "";
         print "See the full list of https://github.com/rancher/rancher/compare/{previous-release-version}%E2%80%A6{release-version}[changes].";
         print "";
     }
     changes_done=1;
+    flush_id();
     print;
     next
 }
 /^=== Kubernetes Versions for RKE2\/K3s/ {
+    flush_id();
     print
     if (k8s_list != "") {
         print ""
@@ -227,10 +263,10 @@ function insert_missing_sections() {
     }
     next
 }
-skip_k8s && /^=== / { skip_k8s = 0 }
-skip_k8s && /^== / { skip_k8s = 0 }
-skip_k8s { next }
-{ print }
+{ 
+    flush_id();
+    print 
+}
 ' "$NEW_FILE" > "${NEW_FILE}.tmp" && mv "${NEW_FILE}.tmp" "$NEW_FILE"
 
 echo "Successfully generated initial release notes draft: $NEW_FILE"
@@ -253,27 +289,26 @@ else
     echo "Warning: Navigation file $NAV_FILE not found. Skipping nav update."
 fi
 
-ZH_RN_DIR="$VERSIONS_DIR/modules/zh/pages/release-notes"
-if [ -d "$VERSIONS_DIR/modules/zh" ]; then
-    echo "Copying release notes draft to zh locale..."
-    mkdir -p "$ZH_RN_DIR"
-    cp "$NEW_FILE" "$ZH_RN_DIR/$NEW_VERSION.adoc"
+for LOCALE_DIR in "$VERSIONS_DIR/modules/"*; do
+    if [ ! -d "$LOCALE_DIR" ]; then continue; fi
+    LOCALE=$(basename "$LOCALE_DIR")
+    if [ "$LOCALE" == "en" ]; then continue; fi
 
-    ZH_NAV_FILE="$VERSIONS_DIR/modules/zh/nav.adoc"
-    if [ -f "$ZH_NAV_FILE" ]; then
-        if grep -Fq "** xref:release-notes/${NEW_VERSION}.adoc[]" "$ZH_NAV_FILE"; then
-            echo "Navigation entry already exists in $ZH_NAV_FILE. Skipping."
+    LOCALE_NAV_FILE="$LOCALE_DIR/nav.adoc"
+    if [ -f "$LOCALE_NAV_FILE" ]; then
+        if grep -Fq "** xref:release-notes/${NEW_VERSION}.adoc[]" "$LOCALE_NAV_FILE"; then
+            echo "Navigation entry already exists in $LOCALE_NAV_FILE. Skipping."
         else
-            echo "Updating navigation file $ZH_NAV_FILE..."
+            echo "Updating navigation file $LOCALE_NAV_FILE..."
             awk -v new_entry="** xref:release-notes/${NEW_VERSION}.adoc[]" '
             !inserted && /^\*\* xref:release-notes\/v.*\.adoc\[\]/ {
                 print new_entry
                 inserted = 1
             }
             { print }
-            ' "$ZH_NAV_FILE" > "${ZH_NAV_FILE}.tmp" && mv "${ZH_NAV_FILE}.tmp" "$ZH_NAV_FILE"
+            ' "$LOCALE_NAV_FILE" > "${LOCALE_NAV_FILE}.tmp" && mv "${LOCALE_NAV_FILE}.tmp" "$LOCALE_NAV_FILE"
         fi
     else
-        echo "Warning: Navigation file $ZH_NAV_FILE not found. Skipping nav update."
+        echo "Warning: Navigation file $LOCALE_NAV_FILE not found. Skipping nav update for locale $LOCALE."
     fi
-fi
+done
