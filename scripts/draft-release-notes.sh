@@ -289,27 +289,26 @@ else
     echo "Warning: Navigation file $NAV_FILE not found. Skipping nav update."
 fi
 
-ZH_RN_DIR="$VERSIONS_DIR/modules/zh/pages/release-notes"
-if [ -d "$VERSIONS_DIR/modules/zh" ]; then
-    echo "Copying release notes draft to zh locale..."
-    mkdir -p "$ZH_RN_DIR"
-    cp "$NEW_FILE" "$ZH_RN_DIR/$NEW_VERSION.adoc"
+for LOCALE_DIR in "$VERSIONS_DIR/modules/"*; do
+    if [ ! -d "$LOCALE_DIR" ]; then continue; fi
+    LOCALE=$(basename "$LOCALE_DIR")
+    if [ "$LOCALE" == "en" ]; then continue; fi
 
-    ZH_NAV_FILE="$VERSIONS_DIR/modules/zh/nav.adoc"
-    if [ -f "$ZH_NAV_FILE" ]; then
-        if grep -Fq "** xref:release-notes/${NEW_VERSION}.adoc[]" "$ZH_NAV_FILE"; then
-            echo "Navigation entry already exists in $ZH_NAV_FILE. Skipping."
+    LOCALE_NAV_FILE="$LOCALE_DIR/nav.adoc"
+    if [ -f "$LOCALE_NAV_FILE" ]; then
+        if grep -Fq "** xref:release-notes/${NEW_VERSION}.adoc[]" "$LOCALE_NAV_FILE"; then
+            echo "Navigation entry already exists in $LOCALE_NAV_FILE. Skipping."
         else
-            echo "Updating navigation file $ZH_NAV_FILE..."
+            echo "Updating navigation file $LOCALE_NAV_FILE..."
             awk -v new_entry="** xref:release-notes/${NEW_VERSION}.adoc[]" '
             !inserted && /^\*\* xref:release-notes\/v.*\.adoc\[\]/ {
                 print new_entry
                 inserted = 1
             }
             { print }
-            ' "$ZH_NAV_FILE" > "${ZH_NAV_FILE}.tmp" && mv "${ZH_NAV_FILE}.tmp" "$ZH_NAV_FILE"
+            ' "$LOCALE_NAV_FILE" > "${LOCALE_NAV_FILE}.tmp" && mv "${LOCALE_NAV_FILE}.tmp" "$LOCALE_NAV_FILE"
         fi
     else
-        echo "Warning: Navigation file $ZH_NAV_FILE not found. Skipping nav update."
+        echo "Warning: Navigation file $LOCALE_NAV_FILE not found. Skipping nav update for locale $LOCALE."
     fi
-fi
+done
