@@ -2,6 +2,7 @@
 
 set -e
 
+# Displays script usage information
 show_usage() {
     echo "Usage: $0 <new-release-version>"
     echo "Example: $0 v2.13.5"
@@ -143,6 +144,7 @@ awk -v date="$CURRENT_DATE" \
     -v add_changes="$ADD_CHANGES_SEC" \
     -v k8s_list="$LATEST_K8S" '
 BEGIN {
+    # Initialize the list of top-level sections that must exist in the release notes
     sec_list[1] = "== Rancher General";
     sec_list[2] = "== Rancher App (Global UI)";
     sec_list[3] = "== Authentication";
@@ -154,6 +156,8 @@ BEGIN {
     sec_list[9] = "== Continuous Delivery (Fleet)";
     sec_list[10] = "== SUSE Virtualization (Harvester)";
 }
+
+# Converts a section name into a lowercased, underscore-separated slug
 function get_slug(name,   slug) {
     slug = tolower(name);
     sub(/^==+[ \t]+/, "", slug);
@@ -161,13 +165,16 @@ function get_slug(name,   slug) {
     sub(/_$/, "", slug);
     return slug;
 }
+# Generates an AsciiDoc anchor ID based on the given section name
 function gen_id(name) {
     return "[#_" get_slug(name) "]";
 }
+# Appends the parent section slug to a subsection ID to ensure uniqueness
 function postprocess_id(id, parent_sec) {
     sub(/\]$/, "_" get_slug(parent_sec) "]", id);
     return id;
 }
+# Checks the list of required sections and inserts any that were not found in the template
 function insert_missing_sections() {
     if (missing_sections_done) return;
     for (i = 1; i <= 10; i++) {
@@ -188,16 +195,20 @@ function insert_missing_sections() {
     }
     missing_sections_done = 1;
 }
+# Prints any buffered AsciiDoc anchor ID and clears the buffer
 function flush_id() {
     if (buffered_id != "") {
         print buffered_id;
         buffered_id = "";
     }
 }
+
+# Buffer AsciiDoc anchor IDs to associate them with the correct section later
 /^\[#.*\]$/ {
     buffered_id = $0;
     next;
 }
+# Skip lines within the Kubernetes versions block until a new section starts
 skip_k8s {
     if (/^==+ /) {
         skip_k8s = 0;
@@ -206,24 +217,28 @@ skip_k8s {
         next;
     }
 }
+# Track top-level sections (both commented and uncommented) to know what is already present
 /^\/\/== / || /^== / {
     sec_name = $0;
     sub(/^\/\//, "", sec_name);
     sub(/[ \t]+$/, "", sec_name);
     seen_sec[sec_name] = 1;
 }
+# Update the revision date attribute
 /^:revdate:/ && !revdate_done { 
     flush_id();
     print ":revdate: " date; 
     revdate_done=1; 
     next 
 }
+# Update the release version attribute
 /^:release-version:/ && !release_done { 
     flush_id();
     print ":release-version: " new_ver; 
     release_done=1; 
     next 
 }
+# Update the component version and optionally insert the previous release version attribute
 /^:rn-component-version:/ && !component_done { 
     flush_id();
     print ":rn-component-version: " minor_ver; 
@@ -233,18 +248,21 @@ skip_k8s {
     component_done=1; 
     next 
 }
+# Update the previous release version attribute if it already exists
 /^:previous-release-version:/ && !prev_done { 
     flush_id();
     print ":previous-release-version: " prev_ver; 
     prev_done=1; 
     next 
 }
+# Insert missing sections before the "Changes Since" section
 /^== Changes Since / {
     insert_missing_sections();
     flush_id();
     print;
     next;
 }
+# Insert missing sections before the "Install/Upgrade Notes" section, and optionally add the "Changes Since" section
 /^== Install\/Upgrade Notes/ && !changes_done {
     insert_missing_sections();
     if (add_changes == 1) {
@@ -259,6 +277,7 @@ skip_k8s {
     print;
     next
 }
+# Replace the contents of the Kubernetes versions block with the freshly fetched list
 /^=== Kubernetes Versions for RKE2\/K3s/ {
     flush_id();
     print
@@ -270,6 +289,7 @@ skip_k8s {
     }
     next
 }
+# Pass through all other lines
 { 
     flush_id();
     print 
@@ -278,6 +298,7 @@ skip_k8s {
 
 echo "Successfully generated initial release notes draft: $NEW_FILE"
 
+# Update the English navigation file if needed
 NAV_FILE="$VERSIONS_DIR/modules/en/nav.adoc"
 if [ -f "$NAV_FILE" ]; then
     if grep -Fq "** xref:release-notes/${NEW_VERSION}.adoc[]" "$NAV_FILE"; then
@@ -296,6 +317,7 @@ else
     echo "Warning: Navigation file $NAV_FILE not found. Skipping nav update."
 fi
 
+# Iterate over other locales and update their navigation files as well
 for LOCALE_DIR in "$VERSIONS_DIR/modules/"*; do
     if [ ! -d "$LOCALE_DIR" ]; then continue; fi
     LOCALE=$(basename "$LOCALE_DIR")
