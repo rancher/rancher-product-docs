@@ -46,14 +46,14 @@ Modes of Operation:
 
   Non-interactive:
     Provide a git tag to derive the version and fetch component versions automatically.
-    $ ./$(basename "$0") -t v2.13.2-alpha3 -d "Dec 09, 2025"
+    $ ./$(basename "$0") -t v2.13.2-alpha3 -d "2026-05-27"
 
     Or, provide the version and component versions manually:
-    $ ./$(basename "$0") -v v2.13.2 -d "Dec 09, 2025" -a v107.0.1+up8.0.0 -w v0.9.2 -T 108.0.4+up0.25.4-rc.1 -F 108.0.2+up0.14.2
+    $ ./$(basename "$0") -v v2.13.2 -d "2026-05-27" -a v107.0.1+up8.0.0 -w v0.9.2 -T 108.0.4+up0.25.4-rc.1 -F 108.0.2+up0.14.2
 
 Options:
   -v <version>          The new Rancher version (e.g., v2.13.2). (Required if -t is not used)
-  -d <date>             The release date (e.g., "Dec 09, 2025"). (Required)
+  -d <date>             The release date (e.g., "2026-05-27"). (Required)
   -t <tag>              A git tag from rancher/rancher repository (e.g., v2.13.1-alpha4).
                         If used, the version is derived from the tag, and -a and -w are fetched from GitHub.
   -a <adapter_version>  The corresponding CSP adapter version. (Required if -t is not used)
@@ -72,7 +72,7 @@ EOF
 get_inputs_interactive() {
   echo "Running in interactive mode. Please provide the release details."
   read -rp "Enter a git tag (e.g., v2.13.1-alpha4), or leave blank to enter version manually: " TAG_VERSION
-  read -rp "Enter the release date (e.g., Dec 09, 2025): " RELEASE_DATE
+  read -rp "Enter the release date (e.g., 2026-05-27): " RELEASE_DATE
 
   if [[ -n "$TAG_VERSION" ]]; then
     VERSION=${TAG_VERSION%%-*}
@@ -459,15 +459,10 @@ main() {
   update_matrix "$webhook_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$webhook_row"
 
   # Update deprecated-features.adoc
-  local deprecated_row_en
-  deprecated_row_en="| https://github.com/rancher/rancher/releases/tag/${VERSION}[${version_no_v}]"$'\n'"| ${RELEASE_DATE}"$'\n'
-  update_matrix "$deprecated_file_en" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row_en"
-
-  # Chinese version has a different date format
-  local release_date_zh
-  release_date_zh=$(date -d "$RELEASE_DATE" "+%Y 年 %-m 月 %-d 日")
-  local deprecated_row_zh="| https://github.com/rancher/rancher/releases/tag/${VERSION}[${version_no_v}]"$'\n'"| ${release_date_zh}"$'\n'
-  update_matrix "$deprecated_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row_zh"
+  local deprecated_row
+  deprecated_row="| https://github.com/rancher/rancher/releases/tag/${VERSION}[${version_no_v}]"$'\n'"| ${iso_date}"$'\n'
+  update_matrix "$deprecated_file_en" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row"
+  update_matrix "$deprecated_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row"
 
   echo "✅ All tasks completed."
 }
