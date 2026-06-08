@@ -154,12 +154,19 @@ BEGIN {
     sec_list[9] = "== Continuous Delivery (Fleet)";
     sec_list[10] = "== SUSE Virtualization (Harvester)";
 }
-function gen_id(name,   id) {
-    id = tolower(name);
-    sub(/^==+[ \t]+/, "", id);
-    gsub(/[^a-z0-9]+/, "_", id);
-    sub(/_$/, "", id);
-    return "[#_" id "]";
+function get_slug(name,   slug) {
+    slug = tolower(name);
+    sub(/^==+[ \t]+/, "", slug);
+    gsub(/[^a-z0-9]+/, "_", slug);
+    sub(/_$/, "", slug);
+    return slug;
+}
+function gen_id(name) {
+    return "[#_" get_slug(name) "]";
+}
+function postprocess_id(id, parent_sec) {
+    sub(/\]$/, "_" get_slug(parent_sec) "]", id);
+    return id;
 }
 function insert_missing_sections() {
     if (missing_sections_done) return;
@@ -168,13 +175,13 @@ function insert_missing_sections() {
             print gen_id(sec_list[i]);
             print sec_list[i];
             print "";
-            print "[#_features_and_enhancements]";
+            print postprocess_id("[#_features_and_enhancements]", sec_list[i]);
             print "=== Features and Enhancements";
             print "";
-            print "[#_major_bug_fixes]";
+            print postprocess_id("[#_major_bug_fixes]", sec_list[i]);
             print "=== Major Bug Fixes";
             print "";
-            print "[#_known_issues]";
+            print postprocess_id("[#_known_issues]", sec_list[i]);
             print "=== Known Issues";
             print "";
         }
