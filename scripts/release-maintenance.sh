@@ -441,10 +441,16 @@ main() {
     if [[ -f "$antora_file_versions" ]]; then
       update_antora_attr "$antora_file_versions" "current-patch-version" "$current_patch_version"
     fi
+    if [[ -f "$antora_file_srfa" ]]; then
+      update_antora_attr "$antora_file_srfa" "current-patch-version" "$current_patch_version"
+    fi
   else
     if [[ -f "$antora_file_versions" && -f "$antora_file_community" ]]; then
       update_antora_attr "$antora_file_versions" "current-patch-version" "$current_patch_version"
       update_antora_attr "$antora_file_community" "current-patch-version" "$current_patch_version"
+    fi
+    if [[ -f "$antora_file_srfa" ]]; then
+      update_antora_attr "$antora_file_srfa" "current-patch-version" "$current_patch_version"
     fi
   fi
 
