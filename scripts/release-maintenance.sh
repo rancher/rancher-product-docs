@@ -42,18 +42,18 @@ This script automates the process of release maintenance for Rancher docs.
 Modes of Operation:
   Interactive (default):
     Run the script without any arguments to be prompted for all required values.
-    $ ./$(basename "$0")
+    $ ./scripts/$(basename "$0")
 
   Non-interactive:
     Provide a git tag to derive the version and fetch component versions automatically.
-    $ ./$(basename "$0") -t v2.13.2-alpha3 -d "Dec 09, 2025"
+    $ ./scripts/$(basename "$0") -t v2.13.2-alpha3 -d "2026-05-27"
 
     Or, provide the version and component versions manually:
-    $ ./$(basename "$0") -v v2.13.2 -d "Dec 09, 2025" -a v107.0.1+up8.0.0 -w v0.9.2 -T 108.0.4+up0.25.4-rc.1 -F 108.0.2+up0.14.2
+    $ ./scripts/$(basename "$0") -v v2.13.2 -d "2026-05-27" -a v107.0.1+up8.0.0 -w v0.9.2 -T 108.0.4+up0.25.4-rc.1 -F 108.0.2+up0.14.2
 
 Options:
   -v <version>          The new Rancher version (e.g., v2.13.2). (Required if -t is not used)
-  -d <date>             The release date (e.g., "Dec 09, 2025"). (Required)
+  -d <date>             The release date (e.g., "2026-05-27"). (Required)
   -t <tag>              A git tag from rancher/rancher repository (e.g., v2.13.1-alpha4).
                         If used, the version is derived from the tag, and -a and -w are fetched from GitHub.
   -a <adapter_version>  The corresponding CSP adapter version. (Required if -t is not used)
@@ -72,7 +72,7 @@ EOF
 get_inputs_interactive() {
   echo "Running in interactive mode. Please provide the release details."
   read -rp "Enter a git tag (e.g., v2.13.1-alpha4), or leave blank to enter version manually: " TAG_VERSION
-  read -rp "Enter the release date (e.g., Dec 09, 2025): " RELEASE_DATE
+  read -rp "Enter the release date (e.g., 2026-05-27): " RELEASE_DATE
 
   if [[ -n "$TAG_VERSION" ]]; then
     VERSION=${TAG_VERSION%%-*}
@@ -364,26 +364,35 @@ main() {
   [[ "${NEW_CURRENT_COMMUNITY_AVAIL,,}" == "y" ]] && new_current_community_mark="&#10003;" || new_current_community_mark="N/A"
 
   # Define file paths
-  local base_path_en="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/modules/en/pages"
-  local release_notes_file_en="${base_path_en}/release-notes.adoc"
   local antora_file_versions="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/antora.yml"
   local antora_file_community="${DOCS_REPO_PATH}/community-docs/${minor_version_with_v}/antora.yml"
   local antora_file_srfa="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/antora-yml/antora-srfa.yml"
 
-  local adapter_file_en="${base_path_en}/installation-and-upgrade/hosted-kubernetes/cloud-marketplace/aws/install-adapter.adoc"
-  local webhook_file_en="${base_path_en}/security/rancher-webhook/rancher-webhook.adoc"
-  local deprecated_file_en="${base_path_en}/faq/deprecated-features.adoc"
+  # Define path to the modules directory where locales are stored
+  local modules_path="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/modules"
+  # Initialize arrays to keep track of target files and available locales
+  local all_files=()
+  local locales=()
 
-  # Define file paths for Chinese by replacing the language code in the path
-  local release_notes_file_zh="${release_notes_file_en/en\/pages/zh\/pages}"
-  local adapter_file_zh="${adapter_file_en/en\/pages/zh\/pages}"
-  local webhook_file_zh="${webhook_file_en/en\/pages/zh\/pages}"
-  local deprecated_file_zh="${deprecated_file_en/en\/pages/zh\/pages}"
-  
-  local all_files=(
-    "$release_notes_file_en" "$adapter_file_en" "$webhook_file_en" "$deprecated_file_en"
-    "$release_notes_file_zh" "$adapter_file_zh" "$webhook_file_zh" "$deprecated_file_zh"
-  )
+  # Iterate through all subdirectories in the modules folder to dynamically detect locales
+  for locale_dir in "$modules_path"/*; do
+    # Skip any item that is not a directory
+    if [[ ! -d "$locale_dir" ]]; then continue; fi
+    local locale
+    # Extract the locale name (e.g., 'en', 'zh') and add it to the locales array
+    locale=$(basename "$locale_dir")
+    locales+=("$locale")
+
+    # Append the file paths for the current locale to the all_files array for existence validation and revdate updates
+    local base_path="${locale_dir}/pages"
+    all_files+=(
+      "${base_path}/release-notes.adoc"
+      "${base_path}/installation-and-upgrade/hosted-kubernetes/cloud-marketplace/aws/install-adapter.adoc"
+      "${base_path}/security/rancher-webhook/rancher-webhook.adoc"
+      "${base_path}/faq/deprecated-features.adoc"
+    )
+  done
+
   for file in "${all_files[@]}"; do
     if [[ ! -f "$file" ]]; then
       echo "Error: File not found at '$file'. Please check DOCS_REPO_PATH and version number." >&2
@@ -432,42 +441,41 @@ main() {
     if [[ -f "$antora_file_versions" ]]; then
       update_antora_attr "$antora_file_versions" "current-patch-version" "$current_patch_version"
     fi
+    if [[ -f "$antora_file_srfa" ]]; then
+      update_antora_attr "$antora_file_srfa" "current-patch-version" "$current_patch_version"
+    fi
   else
     if [[ -f "$antora_file_versions" && -f "$antora_file_community" ]]; then
       update_antora_attr "$antora_file_versions" "current-patch-version" "$current_patch_version"
       update_antora_attr "$antora_file_community" "current-patch-version" "$current_patch_version"
     fi
+    if [[ -f "$antora_file_srfa" ]]; then
+      update_antora_attr "$antora_file_srfa" "current-patch-version" "$current_patch_version"
+    fi
   fi
 
-  # Update release-notes.adoc
-  update_release_notes "$release_notes_file_en" "$VERSION" "$new_current_prime_mark" "$new_current_community_mark"
-  update_release_notes "$release_notes_file_zh" "$VERSION" "$new_current_prime_mark" "$new_current_community_mark"
-
-  # Update install-adapter.adoc
   local adapter_row
   adapter_row="| ${VERSION}"$'\n'"| v${ADAPTER_VERSION#v}"$'\n'
-  update_matrix "$adapter_file_en" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$adapter_row"
-  update_matrix "$adapter_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$adapter_row"
 
-  # Update rancher-webhook.adoc
   local webhook_version_clean="${WEBHOOK_VERSION##*up}"
   webhook_version_clean="${webhook_version_clean%%-rc*}"
   local webhook_row
   webhook_row="| ${VERSION}"$'\n'"| v${webhook_version_clean}"$'\n'"| ${webhook_prime_mark}"$'\n'"| ${webhook_community_mark}"$'\n'
-  # The marker is different here, it's a comment
-  update_matrix "$webhook_file_en" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$webhook_row"
-  update_matrix "$webhook_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$webhook_row"
 
-  # Update deprecated-features.adoc
-  local deprecated_row_en
-  deprecated_row_en="| https://github.com/rancher/rancher/releases/tag/${VERSION}[${version_no_v}]"$'\n'"| ${RELEASE_DATE}"$'\n'
-  update_matrix "$deprecated_file_en" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row_en"
+  local deprecated_row
+  deprecated_row="| https://github.com/rancher/rancher/releases/tag/${VERSION}[${version_no_v}]"$'\n'"| ${iso_date}"$'\n'
 
-  # Chinese version has a different date format
-  local release_date_zh
-  release_date_zh=$(date -d "$RELEASE_DATE" "+%Y 年 %-m 月 %-d 日")
-  local deprecated_row_zh="| https://github.com/rancher/rancher/releases/tag/${VERSION}[${version_no_v}]"$'\n'"| ${release_date_zh}"$'\n'
-  update_matrix "$deprecated_file_zh" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row_zh"
+  # Iterate through each detected locale to apply content updates
+  for locale in "${locales[@]}"; do
+    # Set the base pages path for the current locale
+    local base_path="${modules_path}/${locale}/pages"
+
+    # Update the specific AsciiDoc files for the current locale with the new version rows and notes
+    update_release_notes "${base_path}/release-notes.adoc" "$VERSION" "$new_current_prime_mark" "$new_current_community_mark"
+    update_matrix "${base_path}/installation-and-upgrade/hosted-kubernetes/cloud-marketplace/aws/install-adapter.adoc" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$adapter_row"
+    update_matrix "${base_path}/security/rancher-webhook/rancher-webhook.adoc" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$webhook_row"
+    update_matrix "${base_path}/faq/deprecated-features.adoc" "\/\/ DO NOT EDIT THIS LINE, REQUIRED BY RELEASE SCRIPT\." "$deprecated_row"
+  done
 
   echo "✅ All tasks completed."
 }
