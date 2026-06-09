@@ -54,3 +54,6 @@ preview-community-local:
 
 preview-product-local:
 	npx http-server build/site-product-local -c-1 -p 8081
+
+preview-srfa-local:
+	npx http-server build/site-srfa-local -c-1 -p 8081
