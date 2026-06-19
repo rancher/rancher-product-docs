@@ -2,7 +2,7 @@
 ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
 endif::[]
-:revdate: 2026-04-22
+:revdate: 2026-06-10
 :page-revdate: {revdate}
 :community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/install-rancher-ha.adoc 
 :product-path: installation-and-upgrade/other-installation-methods/air-gapped/install-rancher-ha.adoc
@@ -168,6 +168,75 @@ Based on the choice your made in <<_2_choose_your_ssl_configuration,2. Choose yo
 
 ==== Option A: Default Self-Signed Certificate
 
+ifeval::["{build-type}" != "community"]
+===== Fetch from SUSE Application Collection
+
+Use this option to pull the security-hardened cert-manager chart listed in the https://apps.rancher.io/applications/cert-manager[SUSE Application Collection] (AppCo) available to Prime users.
+
+. Log in to AppCo registry on an internet-connected machine:
++
+Use your https://docs.apps.rancher.io/get-started/authentication[enterprise credentials] to log in to the secure SUSE Application Collection registry:
++
+[source,shell]
+----
+helm registry login dp.apps.rancher.io -u <username-or-service-account-username> -p <access-token-or-service-account-token>
+----
+
+. Export and download the OCI chart archive:
++
+Use `helm pull` to download the chart directly from the OCI registry as a local tarball:
++
+[source,shell]
+----
+helm pull oci://dp.apps.rancher.io/charts/cert-manager --version <cert-manager-version>
+----
++
+This saves `cert-manager-<cert-manager-version>.tgz` to your current working directory.
+
+. Populate the Private Registry with AppCo Images.
++
+Before installing cert-manager inside the air-gapped cluster, you must pull the secure container images from SUSE on your internet-connected machine, save them, transfer them via secure media (like a USB drive), and push them to your local registry.
++
+The below command pulls the secure container images from SUSE:
++
+[source,shell]
+----
+docker pull dp.apps.rancher.io/cert-manager-controller:<cert-manager-version>
+docker pull dp.apps.rancher.io/cert-manager-cainjector:<cert-manager-version>
+docker pull dp.apps.rancher.io/cert-manager-webhook:<cert-manager-version>
+----
++
+The below command saves, transfers, and retags the images for your internal air-gapped registry:
++
+[source,shell]
+----
+# Save to tarball
+docker save -o cert-manager-appco.tar \
+   dp.apps.rancher.io/cert-manager-controller:<cert-manager-version> \
+   dp.apps.rancher.io/cert-manager-cainjector:<cert-manager-version> \
+   dp.apps.rancher.io/cert-manager-webhook:<cert-manager-version>
+
+# Transfer the tar file and chart .tgz file into the air-gapped network
+
+# Load on air-gapped machine
+docker load -i cert-manager-appco.tar
+
+# Retag for your internal registry (e.g., registry.internal.corp)
+docker tag dp.apps.rancher.io/cert-manager-controller:<cert-manager-version> <registry.internal.corp>/cert-manager-controller:<cert-manager-version>
+docker tag dp.apps.rancher.io/cert-manager-cainjector:<cert-manager-version> <registry.internal.corp>/cert-manager-cainjector:<cert-manager-version>
+docker tag dp.apps.rancher.io/cert-manager-webhook:<cert-manager-version> <registry.internal.corp>/cert-manager-webhook:<cert-manager-version>
+
+# Push to internal registry
+docker push <registry.internal.corp>/cert-manager-controller:<cert-manager-version>
+docker push <registry.internal.corp>/cert-manager-cainjector:<cert-manager-version>
+docker push <registry.internal.corp>/cert-manager-webhook:<cert-manager-version>
+----
+endif::[]
+
+===== Fetch from Upstream Helm Jetstack Repository
+
+Use this option to pull the community open-source chart.
+
 By default, Rancher generates a CA and uses cert-manager to issue the certificate for access to the Rancher server interface.
 
 [NOTE]
@@ -177,29 +246,29 @@ Recent changes to cert-manager require an upgrade. If you are upgrading Rancher 
 ====
 
 
-===== 1. Add the cert-manager Repo
-
+. Add the cert-manager Repo.
++
 From a system connected to the internet, add the cert-manager repo to Helm:
-
++
 [,plain]
 ----
 helm repo add jetstack https://charts.jetstack.io
 helm repo update
 ----
 
-===== 2. Fetch the cert-manager Chart
-
+. Fetch the cert-manager Chart.
++
 Fetch the latest cert-manager chart available from the https://artifacthub.io/packages/helm/cert-manager/cert-manager[Helm chart repository].
-
++
 [,plain]
 ----
 helm fetch jetstack/cert-manager --version v1.11.0
 ----
 
-===== 3. Retrieve the cert-manager CRDs
-
+. Retrieve the cert-manager CRDs.
++
 Download the required CRD file for cert-manager:
-
++
 [,plain]
 ----
    curl -L -o cert-manager-crd.yaml https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.crds.yaml
@@ -219,8 +288,32 @@ Install cert-manager with the same options you would use to install the chart. R
 To see options on how to customize the cert-manager install (including for cases where your cluster uses PodSecurityPolicies), see the https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[cert-manager docs].
 ====
 
+ifeval::["{build-type}" != "community"]
+.Click to expand - SUSE Application Collection cert-manager Installation Instructions
+[%collapsible]
+======
+. Create the namespace.
++
+[source,shell]
+----
+kubectl create namespace cert-manager
+----
 
-.Click to expand
+. Install using the local chart tarball file.
++
+[source,shell]
+----
+helm install cert-manager ./<cert-manager-version>.tgz \
+  --namespace cert-manager \
+  --set installCRDs=true \
+  --set image.repository=<registry.internal.corp>/cert-manager-controller \
+  --set webhook.image.repository=<registry.internal.corp>/cert-manager-webhook \
+  --set cainjector.image.repository=<registry.internal.corp>/cert-manager-cainjector
+----
+======
+endif::[]
+
+.Click to expand - Helm Jetstack cert-manager Installation Instructions
 [%collapsible]
 ======
 If you are using self-signed certificates, install cert-manager:
