@@ -1,0 +1,75 @@
+= 启用用户保留
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-user-retention.adoc 
+:product-path: rancher-admin/users/authn-and-authz/enable-user-retention.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-webhook: xref:security/rancher-webhook/rancher-webhook.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-webhook: xref:reference-guides/rancher-webhook.adoc
+endif::[]
+
+在Rancher v2.8.5及更高版本中，您可以启用用户保留，以在可配置的时间段后自动禁用或删除不活跃的用户帐户。
+
+用户保留功能默认是关闭的。
+
+[#_enabling_user_retention_with_kubectl]
+== 使用kubectl启用用户保留
+
+要启用用户保留，您必须设置`user-retention-cron`。您还必须设置`disable-inactive-user-after`或`delete-inactive-user-after`中的至少一个。您可以使用`kubectl edit setting <name-of-setting>`打开您选择的编辑器并设置这些值。
+
+[#_configuring_rancher_to_delete_users_disable_users_or_combine_operations]
+== 配置Rancher以删除用户、禁用用户或组合操作
+
+Rancher使用两个全局用户保留设置来确定在一定时间不活跃后用户是否以及何时被禁用或删除。禁用的帐户必须在用户再次登录之前重新启用。如果帐户在未被禁用的情况下被删除，用户可能能够通过外部身份验证登录，已删除的帐户将被重新创建。
+
+全局设置`disable-inactive-user-after`和`delete-inactive-user-after`不会相互阻止运行。
+
+例如，您可以设置两个操作同时运行。如果您给`disable-inactive-user-after`的持续时间比`delete-inactive-user-after`短，用户保留过程将在删除之前禁用不活跃的帐户。
+
+您还可以在特定用户的`UserAttribute`上编辑一些用户保留设置。设置这些值将覆盖全局设置。有关更多详细信息，请参见<<_user_specific_user_retention_overrides,特定用户的用户保留覆盖>>。
+
+[#_required_user_retention_settings]
+=== 所需的用户保留设置
+
+以下是全局设置：
+
+* `user-retention-cron`：描述用户保留过程运行的频率。该值是一个 cron 表达式（例如，`0 * * * *` 表示每小时一次）。
+* `disable-inactive-user-after`：用户帐户在不活跃一段时间后将被禁用。禁用帐户会迫使用户在登录前请求管理员重新启用该帐户。值以 https://pkg.go.dev/time#ParseDuration[时间.Duration 单位] 表示（例如，`720h` 表示 720 小时或 30 天）。该值必须大于 `auth-user-session-ttl-minutes`，默认值为 `16h`。如果该值未设置、为空字符串或等于 0，系统将不会禁用任何不活跃的帐户。
+* `delete-inactive-user-after`：用户帐户在不活跃一段时间后将被删除。值以时间.Duration 单位表示（例如，`720h` 表示 720 小时或 30 天）。该值必须大于 `auth-user-session-ttl-minutes`，默认值为 `16h`。该值应大于 `336h`（14 天），否则将被 Rancher webhook 拒绝。如果您需要该值低于 14 天，可以 {xref-rancher-webhook}#_bypassing_the_webhook[绕过 webhook]。如果该值未设置、为空字符串或等于 0，系统将不会删除任何不活跃的帐户。
+
+[#_optional_user_retention_settings]
+=== 可选的用户保留设置
+
+以下是全局设置：
+
+* `user-retention-dry-run`：如果设置为 `true`，用户保留过程将运行，而不会实际删除或禁用任何用户账户。这可以帮助在允许该过程在生产环境中禁用或删除用户帐户之前测试用户保留行为。
+* `user-last-login-default`：如果用户在其帐户上未设置 `UserAttribute.LastLogin`，则使用此设置。该值表示为 https://datatracker.ietf.org/doc/html/rfc3339#section-5.6[RFC 3339 日期时间]，截断到最后一秒；例如，`2023-03-01T00:00:00Z`。如果该值设置为空字符串或等于 0，则不使用此设置。
+
+[#_user_specific_user_retention_overrides]
+==== 用户特定的用户保留覆盖
+
+以下是针对特殊情况的用户特定覆盖全局设置。这些设置通过编辑与给定帐户关联的`UserAttribute`来应用：
+
+----
+kubectl edit userattribute <user-name>
+----
+
+* `disableAfter`：用户特定的`disable-inactive-user-after`覆盖。该值以 https://pkg.go.dev/time#ParseDuration[时间.Duration单位]表示，并截断到秒。如果该值设置为`0s`，则该帐户将不会被禁用。
+* `deleteAfter`：用户特定的`delete-inactive-user-after`覆盖。该值以 https://pkg.go.dev/time#ParseDuration[时间.Duration单位]表示，并截断到秒。如果该值设置为`0s`，则该帐户将不会被删除。
+
+[#_viewing_user_retention_settings_in_the_rancher_ui]
+== 在 Rancher UI 中查看用户保留设置
+
+您可以查看哪些用户保留设置应用于哪些用户。
+
+. 在左上角，点击*☰ > 用户与身份验证*。
+. 在左侧导航菜单中，选择*用户*。
+
+每个用户帐户的*禁用后*和*删除后*列指示该帐户在不活跃一定时间后将被禁用或从 Rancher 中删除。还有一个*最后登录*列大致显示该帐户上次活动的时间。
+
+如果您在*用户*表中点击用户的名字并选择*详细信息*选项卡，也可以获得相同的信息。

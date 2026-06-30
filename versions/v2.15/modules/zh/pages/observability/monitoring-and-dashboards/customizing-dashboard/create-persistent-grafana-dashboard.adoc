@@ -1,0 +1,110 @@
+= 持久化 Grafana 仪表板
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/monitoring-alerting-guides/create-persistent-grafana-dashboard.adoc 
+:product-path: observability/monitoring-and-dashboards/customizing-dashboard/create-persistent-grafana-dashboard.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rancher-monitoring-rbac: xref:observability/monitoring-and-dashboards/rbac-for-monitoring.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rancher-monitoring-rbac: xref:integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc
+endif::[]
+
+为了使 Grafana 仪表板在 Grafana 实例重启后仍然存在，请将仪表板配置 JSON 添加到 ConfigMap 中。ConfigMaps 还允许以 GitOps 或基于 CD 的方式部署仪表板。这使得仪表板可以进行版本控制。
+
+[#_creating_a_persistent_grafana_dashboard]
+== 创建持久化 Grafana 仪表板
+
+[NOTE]
+.先决条件：
+====
+
+* 需要安装监控应用程序。
+* 要创建持久化仪表板，您必须在包含 Grafana 仪表板的项目或名称空间中被分配至少 *管理配置映射* Rancher RBAC 权限。这与监控图表所暴露的 `monitoring-dashboard-edit` 或 `monitoring-dashboard-admin` Kubernetes 原生 RBAC 角色相关。
+* 要查看外部监控用户界面的链接，包括 Grafana 仪表板，您至少需要 {xref-rancher-monitoring-rbac}#_users_with_rancher_based_permissions[项目成员角色。]
+====
+
+
+[#_1_get_the_json_model_of_the_dashboard_that_you_want_to_persist]
+=== 1.获取您想要持久化的仪表板的 JSON 模型
+
+要创建持久化仪表板，您需要获取您想要持久化的仪表板的 JSON 模型。您可以使用预制的仪表板或自己构建一个。
+
+要使用预制的仪表板，请转到 https://grafana.com/grafana/dashboards, 打开其详细页面，然后单击 *下载 JSON* 按钮以获取下一步所需的 JSON 模型。
+
+要使用您自己的仪表板：
+
+. 单击链接以打开 Grafana。在集群详细页面上，单击 *监控*。
+. 登录 Grafana。注意：Grafana 实例的默认管理员用户名和密码是 `admin/prom-operator`。在部署或升级图表时，也可以提供其他凭据。
++
+
+[NOTE]
+====
+无论谁拥有密码，要访问Grafana实例，您仍然需要在Rancher Monitoring部署的项目中至少拥有*管理服务*或*查看监控*权限。在部署或升级图表时，也可以提供其他凭据。
+====
+
+
+. 使用 Grafana UI 创建一个仪表板。完成后，通过点击顶部导航菜单中的齿轮图标进入仪表板的设置。在左侧导航菜单中，点击*JSON 模型*。
+. 复制出现的 JSON 数据结构。
+
+[#_2_create_a_configmap_using_the_grafana_json_model]
+=== 2.使用 Grafana JSON 模型创建一个 ConfigMap。
+
+在包含您的Grafana仪表板的名称空间中创建一个ConfigMap（例如，默认情况下为`cattle-dashboards`）。
+
+ConfigMap 应如下所示：
+
+[,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    grafana_dashboard: "1"
+  name: <dashboard-name>
+  namespace: cattle-dashboards # Change if using a non-default namespace
+data:
+  <dashboard-name>.json: |-
+    <copied-json>
+----
+
+默认情况下，Grafana 配置为监视 `cattle-dashboards` 名称空间内带有 `grafana_dashboard` 标签的所有 ConfigMap。
+
+要指定希望 Grafana 监视所有名称空间中的 ConfigMap，请参阅<<_configuring_namespaces_for_the_grafana_dashboard_configmap,本节>>。
+
+通过 Rancher UI 创建 ConfigMap 之前，请确保您当前已登录 Grafana UI，以确保仪表板导入时不会遇到权限问题。然后，返回 Rancher UI 并执行以下步骤：
+
+. 在左上角，单击*☰ > 集群管理*。
+. 在*集群*页面上，转到您想查看可视化的集群，然后单击*探索*。
+. 点击menu:更多资源[内核> ConfigMaps]。
+. 单击*创建*。
+. 在*数据*选项卡上，设置与上面的示例类似的键值对。在输入 `<dashboard-name>.json` 的值时，点击*从文件读取* 以将 JSON 数据模型作为值上传。
+. 在*标签和注释*选项卡上，点击*添加标签*，并将`grafana_dashboard`作为键，`1`作为值。
+. 单击*创建*。
+
+*结果：*创建 ConfigMap 后，它应显示在 Grafana UI 上，即使 Grafana pod 重启也会保持不变。
+
+[NOTE]
+====
+
+如果您修改了 Helm 图表以监视不同的仪表板标签和值，则实际的键值对可能会有所不同。
+====
+
+
+使用 ConfigMap 持久化的仪表板无法从 Grafana UI 中删除或编辑。
+
+如果您尝试在 Grafana UI 中删除仪表板，将会看到错误消息 "仪表板无法删除，因为它是预配置的。"要删除仪表板，您需要删除 ConfigMap。
+
+[#_configuring_namespaces_for_the_grafana_dashboard_configmap]
+=== 为 Grafana 仪表板 ConfigMap 配置命名空间
+
+要指定您希望 Grafana 监视所有命名空间中的 ConfigMaps，请在 `rancher-monitoring` Helm 图表中设置此值：
+
+----
+grafana.sidecar.dashboards.searchNamespace=ALL
+----
+
+请注意，监控图表暴露的 RBAC 角色用于添加 Grafana 仪表板仍然限制用户在 `grafana.dashboards.namespace` 中定义的命名空间内添加仪表板的权限，默认值为 `cattle-dashboards`。

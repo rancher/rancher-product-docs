@@ -1,0 +1,232 @@
+= 在下游集群中启用 API 审计日志
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2026-04-22
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-api-audit-log-in-downstream-clusters.adoc 
+:product-path: observability/logging/enable-api-audit-log-in-downstream-clusters.adoc
+ifeval::["{build-type}" != "community"]
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-configmaps: xref:cluster-admin/kubernetes-resources/configmaps.adoc
+:xref-k3s-config: xref:cluster-deployment/configuration/k3s.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-rke2-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/rke2-cluster-configuration.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-configmaps: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/configmaps.adoc
+:xref-k3s-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/k3s-cluster-configuration.adoc
+endif::[]
+
+Kubernetes 审计提供了关于集群的与安全相关的时间顺序记录集。Kube-apiserver 执行审计。请求在执行的每个阶段生成一个事件，然后根据某种策略进行预处理并写入后端。该策略决定记录什么，后端则持久化这些记录。
+
+您可能希望将审计日志配置作为遵循互联网安全中心 (CIS) Kubernetes 基准控制的一部分。
+
+有关配置详细信息，请参阅 https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/[官方 Kubernetes 文档]。
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+[pass]
+<h2><a id="_method_1_recommended_set_audit_policy_file_in_machineglobalconfig_or_machineselectorconfig"></a>方法 1（推荐）：在 `machineGlobalConfig` 或 `machineSelectorConfig` 中设置 `audit-policy-file`</h2>
+
+您可以在配置文件中使用 `audit-policy-file` 或 `machineGlobalConfig` 来设置 `machineSelectorConfig`。
+
+使用 `machineGlobalConfig` 时，Rancher 将文件传送到 *所有节点* 的路径 `/var/lib/rancher/rke2/etc/config-files/audit-policy-file`（包括控制平面和工作节点），并在 RKE2 服务器中设置适当的选项。这可能会导致在修改审计策略时出现不必要的工作节点协调。
+
+为了避免工作节点协调，请使用 `machineSelectorConfig` 并搭配标签选择器，仅针对控制平面节点。这确保审计策略文件仅传送到控制平面节点。
+
+使用 `machineGlobalConfig` 的示例：
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      audit-policy-file: |
+        apiVersion: audit.k8s.io/v1
+        kind: Policy
+        rules:
+          - level: RequestResponse
+            resources:
+              - group: ""
+                resources:
+                  - pods
+----
+
+使用 `machineSelectorConfig` 的示例（推荐以避免工作节点协调）：
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          audit-policy-file: |
+            apiVersion: audit.k8s.io/v1
+            kind: Policy
+            rules:
+              - level: RequestResponse
+                resources:
+                  - group: ""
+                    resources:
+                      - pods
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+[pass]
+<h2><a id="_method_2_use_the_directives_machineselectorfiles_and_machineglobalconfig"></a>方法 2：使用指令 `machineSelectorFiles` 和 `machineGlobalConfig`</h2>
+
+[NOTE]
+====
+
+此功能在 Rancher v2.7.2 及更高版本中可用。
+====
+
+
+您可以使用 `machineSelectorFiles` 将审计策略文件传送到控制平面节点，并使用 `machineGlobalConfig` 在 kube-apiserver 上设置选项。
+
+作为前提，您必须创建一个 {xref-secrets}[secret] 或 {xref-configmaps}[configmap] 作为审计策略的来源。
+
+秘密或配置映射必须满足以下要求：
+
+. 它必须位于 `fleet-default` 名称空间中，其中存在 Cluster 对象。
+. 它必须具有注释 `rke.cattle.io/object-authorized-for-clusters: <cluster-name1>,<cluster-name2>`，允许目标集群使用它。
+
+[TIP]
+====
+
+Rancher Dashboard 提供了一个易于使用的表单，用于创建 Secret 或 ConfigMap。
+====
+
+
+示例：
+
+[,yaml]
+----
+apiVersion: v1
+data:
+  audit-policy: >-
+    IyBMb2cgYWxsIHJlcXVlc3RzIGF0IHRoZSBNZXRhZGF0YSBsZXZlbC4KYXBpVmVyc2lvbjogYXVkaXQuazhzLmlvL3YxCmtpbmQ6IFBvbGljeQpydWxlczoKLSBsZXZlbDogTWV0YWRhdGE=
+kind: Secret
+metadata:
+  annotations:
+    rke.cattle.io/object-authorized-for-clusters: cluster1
+  name: <name1>
+  namespace: fleet-default
+----
+
+通过编辑 YAML 中的集群并利用 `machineSelectorFiles` 和 `machineGlobalConfig` 指令来启用和配置审计日志。
+
+示例：
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - audit-policy-file=<customized-path>/dev-audit-policy.yaml
+        - audit-log-path=<customized-path>/dev-audit.logs
+    machineSelectorFiles:
+      - fileSources:
+          - configMap:
+              name: ''
+            secret:
+              items:
+                - key: audit-policy
+                  path: <customized-path>/dev-audit-policy.yaml
+              name: dev-audit-policy
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+有关集群配置的更多信息，请参阅 {xref-rke2-config}[RKE2 集群配置参考] 页面。
+--
+
+K3s::
++
+--
+
+[NOTE]
+====
+
+此功能在 Rancher v2.7.2 及更高版本中可用。
+====
+
+
+您可以使用 `machineSelectorFiles` 将审计策略文件传送到控制平面节点，并使用 `machineGlobalConfig` 在 kube-apiserver 上设置选项。
+
+作为前提，您必须创建一个 {xref-secrets}[secret] 或 {xref-configmaps}[configmap] 作为审计策略的来源。
+
+秘密或配置映射必须满足以下要求：
+
+. 它必须位于 `fleet-default` 名称空间中，其中存在 Cluster 对象。
+. 它必须具有注释 `rke.cattle.io/object-authorized-for-clusters: <cluster-name1>,<cluster-name2>`，允许目标集群使用它。
+
+[TIP]
+====
+
+Rancher Dashboard 提供了一个易于使用的表单，用于创建 {xref-secrets}[secret] 或 {xref-configmaps}[configmap]。
+====
+
+
+示例：
+
+[,yaml]
+----
+apiVersion: v1
+data:
+  audit-policy: >-
+    IyBMb2cgYWxsIHJlcXVlc3RzIGF0IHRoZSBNZXRhZGF0YSBsZXZlbC4KYXBpVmVyc2lvbjogYXVkaXQuazhzLmlvL3YxCmtpbmQ6IFBvbGljeQpydWxlczoKLSBsZXZlbDogTWV0YWRhdGE=
+kind: Secret
+metadata:
+  annotations:
+    rke.cattle.io/object-authorized-for-clusters: cluster1
+  name: <name1>
+  namespace: fleet-default
+----
+
+通过编辑 YAML 中的集群并利用 `machineSelectorFiles` 和 `machineGlobalConfig` 指令来启用和配置审计日志。
+
+示例：
+
+[,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      kube-apiserver-arg:
+        - audit-policy-file=<customized-path>/dev-audit-policy.yaml
+        - audit-log-path=<customized-path>/dev-audit.logs
+    machineSelectorFiles:
+      - fileSources:
+          - configMap:
+              name: ''
+            secret:
+              items:
+                - key: audit-policy
+                  path: <customized-path>/dev-audit-policy.yaml
+              name: dev-audit-policy
+        machineLabelSelector:
+          matchLabels:
+            rke.cattle.io/control-plane-role: 'true'
+----
+
+有关集群配置的更多信息，请参阅 {xref-k3s-config}[K3s 集群配置参考] 页面。
+--
+======

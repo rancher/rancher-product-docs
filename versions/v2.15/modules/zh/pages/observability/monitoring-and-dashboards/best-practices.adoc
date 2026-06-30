@@ -1,0 +1,141 @@
+= 监控最佳实践
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-08-18
+:page-revdate: {revdate}
+:community-path: reference-guides/best-practices/rancher-managed-clusters/monitoring-best-practices.adoc 
+:product-path: observability/monitoring-and-dashboards/best-practices.adoc
+ifeval::["{build-type}" != "community"]
+:xref-istio: xref:observability/istio/istio.adoc
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-compliance-scans-howto: xref:security/compliance-scans/how-to.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-istio: xref:integrations-in-rancher/istio/index.adoc
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-compliance-scans-howto: xref:how-to-guides/advanced-user-guides/compliance-scan-guides/index.adoc
+endif::[]
+
+配置合理的监控和警报规则对于安全可靠地运行任何生产工作负载至关重要。在使用Kubernetes和Rancher时也是如此。幸运的是，集成的监控和警报功能使整个过程变得更加简单。
+
+{xref-monitoring-and-dashboards}[Rancher监控文档]描述了如何设置完整的Prometheus和Grafana堆栈。开箱即用，它将从集群中的所有系统和Kubernetes组件抓取监控数据，并为它们提供合理的仪表板和警报以便开始使用。但为了可靠的设置，您还需要监控自己的工作负载，并根据自己的特定用例和集群规模调整Prometheus和Grafana。本文件旨在为您提供最佳实践。
+
+[#_what_to_monitor]
+== 监控内容
+
+Kubernetes本身以及在其内部运行的应用程序形成了一个分布式系统，其中不同组件相互交互。对于整个系统和每个单独的组件，您必须确保性能、可用性、可靠性和可伸缩性。一个包含更多细节和信息的好资源是谷歌的免费 https://sre.google/sre-book/table-of-contents/[网站可靠性工程书]，特别是关于 https://sre.google/sre-book/monitoring-distributed-systems/[监控分布式系统]的章节。
+
+[#_configuring_prometheus_resource_usage]
+== 配置Prometheus资源使用情况
+
+在安装集成监控堆栈时，Rancher允许配置几个设置，这些设置取决于您的集群规模和运行的工作负载。本章将更详细地介绍这些内容。
+
+[#_storage_and_data_retention]
+=== 存储和数据保留
+
+Prometheus所需的存储量与您存储的时间序列和标签的数量以及您配置的数据保留直接相关。重要的是要注意，Prometheus并不打算用作长期指标存储。数据保留时间通常只有几天，而不是几周或几个月。原因在于Prometheus不会对其存储的指标进行任何聚合。这很好，因为聚合可能会稀释数据，但这也意味着所需的存储随着时间的推移线性增长，而没有保留。
+
+计算所需存储的一种方法是查看 Prometheus 中存储块的平均大小，使用以下查询。
+
+----
+rate(prometheus_tsdb_compaction_chunk_size_bytes_sum[1h]) / rate(prometheus_tsdb_compaction_chunk_samples_sum[1h])
+----
+
+接下来，找出每秒的数据摄取速率：
+
+----
+rate(prometheus_tsdb_head_samples_appended_total[1h])
+----
+
+然后将其乘以保留时间，并增加几个百分点作为缓冲：
+
+----
+average chunk size in bytes * ingestion rate per second * retention time in seconds * 1.1 = necessary storage in bytes
+----
+
+您可以在这篇 https://www.robustperception.io/how-much-disk-space-do-prometheus-blocks-use[博客文章] 中找到有关如何计算所需存储的更多信息。
+
+您可以在 https://prometheus.io/docs/prometheus/latest/storage[Prometheus 文档] 中阅读有关 Prometheus 存储概念的更多信息。
+
+[#_cpu_and_memory_requests_and_limits]
+=== CPU 和内存请求与限制
+
+在较大的 Kubernetes 集群中，Prometheus 可能会消耗相当多的内存。Prometheus 需要的内存量与它存储的时间序列数量和标签数量以及填充这些数据的抓取间隔直接相关。
+
+您可以在这篇 https://www.robustperception.io/how-much-ram-does-prometheus-2-x-need-for-cardinality-and-ingestion[博客文章] 中找到有关如何计算所需内存的更多信息。
+
+所需的 CPU 数量与您执行的查询数量相关。
+
+[#_federation_and_long_term_storage]
+=== 联邦和长期存储
+
+Prometheus 并不打算长期存储指标，而应仅用于短期存储。
+
+为了长期存储一些或所有指标，您可以利用 Prometheus 的 https://prometheus.io/docs/prometheus/latest/storage/#remote-storage-integrations[远程读/写] 功能，将其连接到如 https://thanos.io/[Thanos]、 https://www.influxdata.com/[InfluxDB]、 https://www.m3db.io/[M3DB] 等存储系统。您可以在这篇 https://rancher.com/blog/2020/prometheus-metric-federation[博客文章] 中找到示例设置。
+
+[#_scraping_custom_workloads]
+== 抓取自定义工作负载
+
+虽然集成的 Rancher 监控已经从集群的节点和系统组件中抓取系统指标，但您在 Kubernetes 上部署的自定义工作负载也应该被抓取以获取数据。为此，您可以配置 Prometheus 在一定间隔内对您的应用程序的端点进行 HTTP 请求。这些端点应该返回其以 Prometheus 格式的指标。
+
+一般来说，您希望从集群中运行的所有工作负载抓取数据，以便可以将其用于警报或调试问题。通常，您只有在事件发生时才会意识到需要一些数据。如果数据已经被抓取并存储，那就很好。由于 Prometheus 仅用于短期指标存储，因此抓取和保留大量数据通常并不昂贵。如果您使用的是与 Prometheus 结合的长期存储解决方案，您仍然可以决定实际持久化和保留哪些数据。
+
+[#_about_prometheus_exporters]
+=== 关于 Prometheus 导出器
+
+许多第三方工作负载，如数据库、队列和 Web 服务器，已经支持以 Prometheus 格式公开指标，或提供在工具的指标与 Prometheus 理解的格式之间转换的导出器。您通常可以将这些导出器作为额外的侧车容器添加到工作负载的 Pods 中。许多 Helm 图表已经包含部署正确导出器的选项。您可以在 https://exporterhub.io/[ExporterHub] 上找到一个策划的导出列表。
+
+[#_prometheus_support_in_programming_languages_and_frameworks]
+=== 编程语言和框架中的 Prometheus 支持
+
+要将您自己的自定义应用程序指标导入 Prometheus，您必须直接从应用程序代码中收集和公开这些指标。幸运的是，对于大多数流行的编程语言和框架，已经有可用的库和集成来帮助实现这一点。一个例子是 https://docs.spring.io/spring-metrics/docs/current/public/prometheus[Spring Framework] 中的 Prometheus 支持。
+
+[#_servicemonitors_and_podmonitors]
+=== ServiceMonitors 和 PodMonitors
+
+一旦您的所有工作负载以 Prometheus 格式公开指标，您必须配置 Prometheus 进行抓取。在底层，Rancher 使用 https://github.com/prometheus-operator/prometheus-operator[prometheus-operator]。这使得通过 ServiceMonitors 和 PodMonitors 添加抓取目标变得简单。许多 Helm 图表已经包含直接创建这些监视器的选项。您还可以在 Rancher 文档中找到更多信息。
+
+[#_prometheus_push_gateway]
+=== Prometheus 推送网关
+
+有一些工作负载在传统上很难被 Prometheus 抓取。这些的例子是短期工作负载，如作业和定时作业，或不允许在单独处理的传入请求之间共享数据的应用程序，如 PHP 应用程序。
+
+要获取这些用例的指标，您可以设置 https://github.com/prometheus/pushgateway[prometheus-pushgateways]。CronJob 或 PHP 应用程序会将指标更新推送到推送网关。推送网关聚合并通过 HTTP 端点公开这些指标，然后可以被 Prometheus 抓取。
+
+[#_prometheus_blackbox_monitor]
+=== Prometheus 黑盒监控
+
+有时，从外部监控工作负载是有用的。为此，您可以使用 https://github.com/prometheus/blackbox_exporter[Prometheus blackbox-exporter]，它允许通过 HTTP、HTTPS、DNS、TCP 和 ICMP 探测任何类型的端点。
+
+[#_monitoring_in_a_micro_service_architecture]
+== 在（微）服务架构中的监控
+
+如果您有一个（微）服务架构，其中集群内的多个独立工作负载相互通信，那么了解这些工作负载如何相互通信以及可能出现问题或瓶颈的地方是非常重要的。
+
+当然，您可以监控所有这些内部流量，并将这些指标公开给 Prometheus。但这可能很快变得相当耗时。像 Istio 这样的服务网格，可以通过 {xref-istio}[一键] 在 Rancher 中安装，可以自动完成此操作，并提供关于所有服务之间流量的丰富遥测。
+
+[#_real_user_monitoring]
+== 真实用户监控
+
+监控所有内部工作负载的可用性和性能对于运行稳定、可靠和快速的应用程序至关重要。但这些指标只显示了部分情况。要获得完整的视图，还需要了解最终用户的实际感知。为此，您可以查看各种 https://en.wikipedia.org/wiki/Real_user_monitoring[真实用户监控解决方案]。
+
+[#_security_monitoring]
+== 安全性监视
+
+除了监控工作负载以检测性能、可用性或可伸缩性问题外，还应监控集群及其运行的工作负载，以发现潜在的安全问题。一个好的起点是经常运行并警报 {xref-compliance-scans-howto}[合规性扫描]，以检查集群是否按照安全最佳实践进行配置。
+
+对于工作负载，您可以查看 Kubernetes 和容器安全解决方案，如 https://www.suse.com/products/neuvector/[NeuVector]、 https://falco.org/[Falco]、 https://www.aquasec.com/solutions/kubernetes-container-security/[Aqua Kubernetes Security]、 https://sysdig.com/[SysDig]。
+
+[#_setting_up_alerts]
+== 设置警报
+
+将所有指标导入监控系统并在仪表板中可视化是很好的，但如果出现问题，您还希望能够主动收到警报。
+
+集成的Rancher监控已经配置了一组合理的警报，这些警报在任何Kubernetes集群中都是有意义的。您应该扩展这些警报，以覆盖您的特定工作负载和用例。
+
+在设置警报时，应为所有对应用程序可用性至关重要的工作负载配置警报。但也要确保它们不会太吵。理想情况下，您收到的每个警报都应该是因为需要您关注并需要修复的问题。如果您有警报一直在触发，但并不是那么关键，那么您可能会开始完全忽视这些警报，从而错过真正重要的警报。在这里，少即是多。首先关注真正重要的指标，例如，如果您的应用程序离线，则发出警报。修复所有开始出现的问题，然后开始创建更详细的警报。
+
+如果警报开始触发，但此时您无能为力，您也可以暂时将警报静音，以便稍后查看。
+
+您可以在{xref-monitoring-and-dashboards}[Rancher 文档]中找到有关如何设置警报和通知渠道的更多信息。

@@ -1,0 +1,114 @@
+= 从备份恢复集群
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-10-01
+:page-revdate: {revdate}
+:community-path: how-to-guides/新用户指南/备份、恢复和灾难恢复/从备份恢复 Rancher 启动的 Kubernetes 集群.adoc 
+:product-path: cluster-admin/backups-and-restore/restore.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-clean-cluster-nodes: xref:cluster-admin/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:cluster-admin/backups-and-restore/backups.adoc
+:xref-ds-backup-restore: xref:cluster-admin/backups-and-restore/backups-and-restore.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-clean-cluster-nodes: xref:how-to-guides/new-user-guides/manage-clusters/clean-cluster-nodes.adoc
+:xref-ds-backup: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher-launched-kubernetes-clusters.adoc
+:xref-ds-backup-restore: xref:getting-started/installation-and-upgrade/upgrade-and-roll-back-kubernetes.adoc
+endif::[]
+
+可以轻松执行 {xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 的 etcd 备份和恢复。etcd 数据库的快照被创建并保存到 etcd 节点本地或兼容 S3 的目标。配置 S3 的优点在于，如果所有 etcd 节点丢失，您的快照将被远程保存，并可用于恢复集群。
+
+Rancher 建议启用 {xref-ds-backup}#_configuring_recurring_snapshots[设置 etcd 的定期快照的能力]，但 {xref-ds-backup}#_one_time_snapshots[一次性快照] 也可以轻松创建。Rancher 允许从 <<_restoring_a_cluster_from_a_snapshot,保存的快照>> 中恢复。
+
+集群也可以恢复到先前的 Kubernetes 版本和集群配置。
+
+[#_viewing_available_snapshots]
+== 查看可用快照
+
+集群所有可用快照的列表可以查看。
+
+. 在左上角，单击*☰ > 集群管理*。
+. 在 *集群* 页面中，转到您想查看快照的集群并单击其名称。
+. 单击 *快照* 选项卡。列出的快照包含创建时的时间戳。
+
+[#_restoring_a_cluster_from_a_snapshot]
+== 从快照恢复集群
+
+如果您的 Kubernetes 集群出现故障，可以从快照恢复集群。
+
+快照由 etcd 中的集群数据、Kubernetes 版本以及 `cluster.yml.` 中的集群配置组成。这些组件允许您在从快照恢复集群时选择以下选项：
+
+* *仅恢复 etcd 内容：*此恢复类似于在 Rancher v2.4.0 之前恢复快照。
+* *恢复 etcd 和 Kubernetes 版本：*如果 Kubernetes 升级是导致您的集群故障的原因，并且您没有进行任何集群配置更改，则应使用此选项。
+* *恢复 etcd、Kubernetes 版本和集群配置：*如果您在升级时同时更改了 Kubernetes 版本和集群配置，则应使用此选项。
+
+当回滚到先前的 Kubernetes 版本时，{xref-ds-backup-restore}#_configuring_the_upgrade_strategy[升级策略选项] 将被忽略。在恢复到旧的 Kubernetes 版本之前，工作节点不会被隔离或排空，以便更快地将不健康的集群恢复到健康状态。
+
+[NOTE]
+.前提条件：
+====
+要从 S3 恢复快照，集群需要配置为 {xref-ds-backup}#_configuring_recurring_snapshots[在 S3 上进行定期快照。]
+====
+
+
+. 在左上角，单击*☰ > 集群管理*。
+. 在 *集群* 页面中，转到您想查看快照的集群并单击其名称。
+. 点击 *快照* 标签以查看保存的快照列表。
+. 转到您想要恢复的快照并单击 *⋮ > 恢复*。
+. 选择一个 *恢复类型*。
+. 单击*恢复*。
+
+*结果：*集群将进入`updating`状态，恢复`etcd`节点的快照过程将开始。当集群返回到 `active` 状态时，集群恢复完成。
+
+[#_restoring_a_cluster_from_a_snapshot_when_the_controlplane_etcd_are_completely_unavailable]
+== 在控制平面/etcd完全不可用时从快照恢复集群
+
+在灾难恢复场景中，Rancher 在下游集群中管理的控制平面和 etcd 节点可能不再可用或正常工作。可以通过重新添加控制平面和etcd节点，然后从可用快照恢复来重建集群。
+
+如果您遇到完整的集群故障，必须在添加“新”的 etcd 节点进行恢复之前，从集群中去除所有 etcd 节点/机器。
+
+[NOTE]
+====
+如果您使用的是 {xref-ds-backup}#_local_backup_target[本地快照]，请确保备份要从中恢复的相应快照，该快照位于您将要去除的 etcd 节点的 `/var/lib/rancher/<k3s/rke2>/server/db/snapshots/` 文件夹中。您可以将快照复制到新节点的`/var/lib/rancher/<k3s/rke2>/server/db/snapshots/`文件夹中。此外，如果使用本地快照并恢复到新节点，目前无法通过 UI 进行恢复。
+====
+
+. 从集群中去除所有 etcd 节点。
+ .. 在左上角，单击*☰ > 集群管理*。
+ .. 在*集群*页面中，转到您要去除节点的集群。
+ .. 在*机器*选项卡中，单击每个要去除的节点上的*⋮ > 删除*。最初，您会看到节点处于 `deleting` 状态，但当所有 etcd 节点开始删除时，它们将一起被去除。这是因为 Rancher 看到所有 etcd 节点正在删除，并继续“短路” etcd 安全删除逻辑。
+. 在所有 etcd 节点被去除后，添加您计划从中恢复的新 etcd 节点。将新节点分配为`all`角色（etcd、控制平面和工作节点）。
+ ** 如果该节点之前在集群中，请先{xref-clean-cluster-nodes}#_cleaning_up_nodes[清理节点]。
+ ** 对于自定义集群，转到*注册*选项卡并勾选`etcd, controlplane, and worker`。然后在您的节点上复制并运行注册命令。
+ ** 对于节点驱动的集群，将会自动预置一个新节点。
++
+此时，Rancher 将指示需要从 etcd 快照恢复。
++
+. 从etcd快照恢复。
++
+[NOTE]
+====
+由于etcd节点是一个干净的节点，您可能需要手动创建`/var/lib/rancher/<k3s/rke2>/server/db/snapshots/`路径。
+====
++
+ ** 对于 S3 快照，请使用 UI 进行恢复。
+  ... 点击 *快照* 标签以查看保存的快照列表。
+  ... 转到您想要恢复的快照并单击 *⋮ > 恢复*。
+  ... 选择一个 *恢复类型*。
+  ... 单击 *恢复*。
+ ** 对于本地快照，使用 UI 进行恢复是 *不可用*的。
+  ... 在右上角，点击*⋮ > 编辑YAML*。
+  ... 下面的示例YAML可以添加到您的`rkeConfig`下，以配置etcd恢复：
++
+[,yaml]
+----
+  ...
+  rkeConfig:
+    etcdSnapshotRestore:
+      name: <string> # This field is required. Refers to the filename of the associated etcdsnapshot object.
+  ...
+----
++
+. 恢复成功后，您可以将 etcd 节点扩容至所需的冗余水平。

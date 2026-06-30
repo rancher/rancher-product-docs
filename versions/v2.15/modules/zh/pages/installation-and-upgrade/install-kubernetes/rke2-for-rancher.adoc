@@ -1,0 +1,190 @@
+= 为{rke2-product-name}设置高可用性Kubernetes集群，适用于{rancher-product-name}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2026-03-30
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-cluster-setup/rke2-for-rancher.adoc 
+:product-path: installation-and-upgrade/install-kubernetes/rke2-for-rancher.adoc
+ifeval::["{build-type}" != "community"]
+:url-rke2-cluster-access: https://documentation.suse.com/cloudnative/rke2/latest/en/cluster_access.html
+:xref-arch-rec: xref:about-rancher/architecture/recommendations.adoc
+:xref-ha-rke2: xref:installation-and-upgrade/infrastructure-setup/ha-rke2-kubernetes-cluster.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-rke2-cluster-access: https://docs.rke2.io/cluster_access
+:xref-arch-rec: xref:reference-guides/rancher-manager-architecture/architecture-recommendations.adoc
+:xref-ha-rke2: xref:how-to-guides/new-user-guides/infrastructure-setup/ha-rke2-kubernetes-cluster.adoc
+endif::[]
+
+本节描述如何按照{xref-arch-rec}#_environment_for_kubernetes_installations[Rancher服务器环境的最佳实践]安装Kubernetes集群。
+
+[#_prerequisites]
+== 先决条件
+
+这些说明假设您已设置三个节点、一个负载均衡器和一个DNS记录，如{xref-ha-rke2}[本节所述。]
+
+请注意，为了使RKE2与负载均衡器正常工作，您需要设置两个侦听器：一个用于9345端口的管理程序，另一个用于6443端口的Kubernetes API。
+
+Rancher 需要安装在受支持的 Kubernetes 版本上。要查找与您的Rancher版本兼容的Kubernetes版本，请参考 https://rancher.com/support-maintenance-terms/[支持维护条款。]要指定RKE2版本，请在运行RKE2安装脚本时使用INSTALL_RKE2_VERSION环境变量。
+
+[#_installing_kubernetes]
+== 安装Kubernetes
+
+[#_1_install_kubernetes_and_set_up_the_rke2_product_name_server]
+=== 1.安装Kubernetes并设置{rke2-product-name}服务器
+
+RKE2服务器运行时内嵌etcd，因此您无需设置外部数据存储以在HA模式下运行。
+
+在第一个节点上，您应该使用自己的预共享密钥作为词元设置配置文件。词元参数可以在启动时设置。
+
+如果您未指定预共享密钥，RKE2将生成一个并将其放置在/var/lib/rancher/rke2/server/node-token。
+
+为了避免使用固定注册地址时出现证书错误，您应该启动服务器并设置tls-san参数。此选项会将额外的主机名或 IP 作为服务器的 TLS 证书中的主题备用名称添加，如果您希望通过 IP 和主机名进行访问，可以将其指定为列表。
+
+首先，您必须创建将放置RKE2配置文件的目录：
+
+----
+mkdir -p /etc/rancher/rke2/
+----
+
+接下来，在`/etc/rancher/rke2/config.yaml`处创建RKE2配置文件，使用以下示例：
+
+----
+token: my-shared-secret
+tls-san:
+  - my-kubernetes-domain.com
+  - another-kubernetes-domain.com
+----
+
+之后，您需要运行安装命令并启用并启动rke2：
+
+----
+curl -sfL https://get.rke2.io | sh -
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+----
+
+. 要加入其余节点，您需要使用相同的共享词元或自动生成的词元配置每个附加节点。以下是配置文件的示例：
++
+....
+ token: my-shared-secret
+ server: https://<DNS-DOMAIN>:9345
+ tls-san:
+   - my-kubernetes-domain.com
+   - another-kubernetes-domain.com After that, you need to run the installer and enable, then start, rke2:
+
+ curl -sfL https://get.rke2.io | sh -
+ systemctl enable rke2-server.service
+ systemctl start rke2-server.service
+....
+
+. 在您的第三个RKE2服务器节点上重复相同的命令。
+
+[#_2_confirm_that_rke2_product_name_is_running]
+=== 2.确认{rke2-product-name}正在运行
+
+一旦您在所有服务器节点上启动了rke2服务器进程，请确保集群已正确启动，使用
+
+----
+/var/lib/rancher/rke2/bin/kubectl \
+        --kubeconfig /etc/rancher/rke2/rke2.yaml get nodes
+You should see your server nodes in the Ready state.
+----
+
+然后测试集群 Pod 的健康状况：
+
+----
+/var/lib/rancher/rke2/bin/kubectl \
+        --kubeconfig /etc/rancher/rke2/rke2.yaml get pods --all-namespaces
+----
+
+*结果：*您已成功设置RKE2 Kubernetes集群。
+
+[#_3_save_and_start_using_the_kubeconfig_file]
+=== 3.保存并开始使用 kubeconfig 文件
+
+当您在每个Rancher服务器节点上安装RKE2时，节点上会创建一个`kubeconfig`文件，路径为`/etc/rancher/rke2/rke2.yaml`。该文件包含对集群的完全访问权限的凭据，您应该将此文件保存在安全的位置。
+
+要使用此 `kubeconfig` 文件，
+
+. 安装 https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl[kubectl,]，这是一个 Kubernetes 命令行工具。
+. 复制`/etc/rancher/rke2/rke2.yaml`处的文件，并将其保存到您本地计算机的`~/.kube/config`目录中。
+. 在 kubeconfig 文件中，`server` 指令被定义为 localhost。将服务器配置为控制平面负载均衡器的 DNS，端口为 6443。（RKE2 Kubernetes API 服务器使用端口 6443，而 Rancher 服务器将通过 Traefik Ingress 在端口 80 和 443 上提供服务。有关更多详细信息，请参考 https://support.scc.suse.com/s/kb/Migrating-from-Ingress-NGINX-to-Traefik-in-a-Rancher-provisioned-RKE2-Cluster?language=en_US[从 Ingress NGINX 迁移到 Rancher 提供的 RKE2 集群中的 Traefik]。）示例如下 `rke2.yaml`：
+
+[,yml]
+----
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: [CERTIFICATE-DATA]
+    server: [LOAD-BALANCER-DNS]:6443 # Edit this line
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    password: [PASSWORD]
+    username: admin
+----
+
+*结果：*您现在可以使用 `kubectl` 来管理您的 RKE2 集群。如果您有多个 kubeconfig 文件，可以通过在使用 `kubectl` 时传入文件路径来指定要使用的文件：
+
+----
+kubectl --kubeconfig ~/.kube/config/rke2.yaml get pods --all-namespaces
+----
+
+有关 `kubeconfig` 文件的更多信息，请参考 {url-rke2-cluster-access}[RKE2 文档] 或 https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/[官方 Kubernetes 文档]，了解如何使用 `kubeconfig` 文件组织集群访问。
+
+[#_4_check_the_health_of_your_cluster_pods]
+=== 4.检查集群 Pod 的健康状态
+
+现在您已经设置了 `kubeconfig` 文件，您可以使用 `kubectl` 从本地计算机访问集群。
+
+检查所有必需的 Pod 和容器是否健康且已准备好继续：
+
+----
+/var/lib/rancher/rke2/bin/kubectl --kubeconfig /etc/rancher/rke2/rke2.yaml get pods -A
+NAMESPACE     NAME                                                    READY   STATUS      RESTARTS   AGE
+kube-system   cloud-controller-manager-rke2-server-1                  1/1     Running     0          2m28s
+kube-system   cloud-controller-manager-rke2-server-2                  1/1     Running     0          61s
+kube-system   cloud-controller-manager-rke2-server-3                  1/1     Running     0          49s
+kube-system   etcd-rke2-server-1                                      1/1     Running     0          2m13s
+kube-system   etcd-rke2-server-2                                      1/1     Running     0          87s
+kube-system   etcd-rke2-server-3                                      1/1     Running     0          56s
+kube-system   helm-install-rke2-canal-hs6sx                           0/1     Completed   0          2m17s
+kube-system   helm-install-rke2-coredns-xmzm8                         0/1     Completed   0          2m17s
+kube-system   helm-install-traefik-crd-z8vsz                          0/1     Completed   0          2m17s
+kube-system   helm-install-traefik-flwnl                              0/1     Completed   0          2m17s
+kube-system   helm-install-rke2-metrics-server-7sggn                  0/1     Completed   0          2m17s
+kube-system   kube-apiserver-rke2-server-1                            1/1     Running     0          116s
+kube-system   kube-apiserver-rke2-server-2                            1/1     Running     0          66s
+kube-system   kube-apiserver-rke2-server-3                            1/1     Running     0          48s
+kube-system   kube-controller-manager-rke2-server-1                   1/1     Running     0          2m30s
+kube-system   kube-controller-manager-rke2-server-2                   1/1     Running     0          57s
+kube-system   kube-controller-manager-rke2-server-3                   1/1     Running     0          42s
+kube-system   kube-proxy-rke2-server-1                                1/1     Running     0          2m25s
+kube-system   kube-proxy-rke2-server-2                                1/1     Running     0          59s
+kube-system   kube-proxy-rke2-server-3                                1/1     Running     0          85s
+kube-system   kube-scheduler-rke2-server-1                            1/1     Running     0          2m30s
+kube-system   kube-scheduler-rke2-server-2                            1/1     Running     0          57s
+kube-system   kube-scheduler-rke2-server-3                            1/1     Running     0          42s
+kube-system   rke2-canal-b9lvm                                        2/2     Running     0          91s
+kube-system   rke2-canal-khwp2                                        2/2     Running     0          2m5s
+kube-system   rke2-canal-swfmq                                        2/2     Running     0          105s
+kube-system   rke2-coredns-rke2-coredns-547d5499cb-6tvwb              1/1     Running     0          92s
+kube-system   rke2-coredns-rke2-coredns-547d5499cb-rdttj              1/1     Running     0          2m8s
+kube-system   rke2-coredns-rke2-coredns-autoscaler-65c9bb465d-85sq5   1/1     Running     0          2m8s
+kube-system   traefik-7c844b766f-m9p2w                                1/1     Running     0          52s
+kube-system   traefik-7c844b766f-s4l9k                                1/1     Running     0          52s
+kube-system   rke2-metrics-server-6564db4569-vdfkn                    1/1     Running     0          66s
+----
+
+*结果：*您已确认可以使用 `kubectl` 访问集群，并且 RKE2 集群已成功运行。现在可以在集群上安装 Rancher 管理服务器。

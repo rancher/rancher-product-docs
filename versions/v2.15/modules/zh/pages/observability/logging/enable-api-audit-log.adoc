@@ -1,0 +1,775 @@
+= 启用 API 审计日志以记录系统事件
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-08-27
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/enable-api-audit-log.adoc 
+:product-path: observability/logging/enable-api-audit-log.adoc
+ifeval::["{build-type}" != "community"]
+:xref-helm-chart-options: xref:installation-and-upgrade/references/helm-chart-options.adoc
+:xref-logging: xref:observability/logging/logging.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
+:xref-logging: xref:integrations-in-rancher/logging/index.adoc
+endif::[]
+
+您可以启用 API 审计日志以记录由单个用户发起的系统事件序列。您可以知道发生了什么，何时发生，谁发起了它，以及它影响了哪个集群。启用此功能后，所有对 Rancher API 的请求及其所有响应都将写入日志。
+
+您可以在 Rancher 安装或升级期间启用 API 审计。
+
+[#_enabling_api_audit_log]
+== 启用 API 审计日志
+
+通过将环境变量传递给 Rancher 服务器容器来启用和配置审计日志。请参见以下内容以在您的安装中启用。
+
+* {xref-helm-chart-options}#_api_audit_log[Kubernetes Install]
+
+[#_api_audit_log_options]
+== API 审计日志选项
+
+以下用法定义了审计日志应记录的内容和应包含的数据规则：
+
+|===
+| 参数 | 说明
+
+| `AUDIT_LOG_ENABLED`
+| `false` - 禁用审计日志（默认设置）。 +
+ +
+`true` - 启用审计日志。
+
+| `AUDIT_LEVEL`
+| `0` - 记录请求和响应元数据（默认设置）。 +
+`1` - 记录请求和响应头。 +
+`2` - 记录请求体 +
+`3` - 记录响应体。每个日志级别是累积的，每个后续级别记录前一个级别的数据。每个请求/响应对的日志事务使用相同的 `auditID` 值。 +
+ +
+请参见 <<_audit_log_levels,审计级别日志>> 以获取显示每个设置记录内容的表格。
+
+| `AUDIT_LOG_PATH`
+| Rancher 服务器 API 的日志路径。默认路径为 `/var/log/auditlog/rancher-api-audit.log`。您可以将日志目录挂载到主机。 +
+ +
+使用示例： `AUDIT_LOG_PATH=/my/custom/path/`
+
+
+
+| `AUDIT_LOG_MAXAGE`
+| 定义保留旧审计日志文件的最大天数。默认值为 10 天。
+
+| `AUDIT_LOG_MAXBACKUP`
+| 定义保留的审计日志文件的最大数量。默认值为 10。
+
+| `AUDIT_LOG_MAXSIZE`
+| 定义审计日志文件在旋转之前的最大大小（以兆字节为单位）。默认大小为 100M。
+|===
+
+{blank}
+
+[#_audit_log_levels]
+=== 审计日志级别
+
+下表显示了每个 <<_api_audit_log_options,`AUDIT_LEVEL`>> 设置记录的 API 事务部分。
+
+|===
+| `AUDIT_LEVEL` 设置 | 元数据 | 请求头 | 响应头 | 请求体 | 响应体
+
+| `0`
+| ✓
+|
+|
+|
+|
+
+| `1`
+| ✓
+| ✓
+| ✓
+|
+|
+
+| `2`
+| ✓
+| ✓
+| ✓
+| ✓
+|
+
+
+| `3`
+| ✓
+| ✓
+| ✓
+| ✓
+| ✓
+
+|===
+
+[#_audit_log_policies]
+== 审计日志策略
+
+审计日志策略允许最终用户使用 `AuditPolicy` 集群范围的 CR 进行配置，除了 <<#_default_redactions_filters,默认的屏蔽和过滤器>>。
+
+所有配置的审计日志策略都是累加的。
+
+头部的屏蔽策略使用正则表达式（regex）引擎来屏蔽头部，而 JSONPath 引擎用于屏蔽请求/响应头。
+
+JSONPath 引擎不支持脚本或过滤表达式。要开始使用 JSONPath 表达式，可以参考 https://goessner.net/articles/JsonPath/[Stafan Goessner 关于 JSONPath 的文章]。
+
+审计策略 CR 的结构如下：
+
+[,yaml]
+----
+apiVersion: auditlog.cattle.io/v1
+kind: AuditPolicy
+spec:
+  enabled : true # true/false
+  # list of API request filters
+  filters:
+    - action: allow # allow/deny
+        # would allow logs sent to "/foo/some/endpoint" but not "/foo" or "/foobar".
+      requestURI: "/foo/.*"
+  # additionalRedactions allows configuration of redactions on headers using `jsonpath` expressions
+  additionalRedactions:
+    # redacts headers based on regex expressions
+    - headers:
+      - "Cache.*"
+      # paths redacts information from request and response bodies based on json path expressions
+      paths: 
+      - "$.gitCommit"
+  verbosity:
+    level : 0 # matches the levels in the above audit log table
+    # request allows fine-grained control over which request data 
+    # gets included. This overrides the behaviour of the generic verbosity.level
+    request:
+      headers : true # true/false
+      body : true # true/false
+    # response allows fine-grained control over which response data 
+    # gets included. This overrides the behaviour of the generic verbosity.level
+    response:
+      headers : true # true/false
+      body: true # true/false
+----
+
+[#_examples]
+=== 示例
+
+以下示例显示了仅将请求路径中包含 `login` 的请求记录到审计日志路径：
+
+[,yaml]
+----
+apiVersion: auditlog.cattle.io/v1
+kind: AuditPolicy
+metadata:
+  name: filters
+spec:
+  filters:
+    - action: deny
+      requestUri: ".*"
+    - action: allow
+      requestUri: ".*login.*"
+----
+
+以下示例展示了如何在请求/响应体中屏蔽包含 `gitCommint` 的特定字段：
+
+[,yaml]
+----
+apiVersion: auditlog.cattle.io/v1
+kind: AuditPolicy
+metadata:
+  name: redactions
+spec:
+  additionalRedactions:
+    - paths:
+      - "$.gitCommit"
+----
+
+[#_default_redactions_filters]
+=== 默认屏蔽和过滤
+
+审计日志控制器内置了针对常见敏感信息的默认屏蔽功能。
+
+[#_redacted_headers]
+==== 已屏蔽的头部
+
+通用头部：
+
+* `Cookie`
+* `Set-Cookie`
+* `X-Api-Set-Cookie-Header`
+* `Authorization`
+* `X-Api-Tunnel-Params`
+* `X-Api-Tunnel-Token`
+* `X-Api-Auth-Header`
+* `X-Amz-Security-Token`
+
+[#_redacted_body_fields]
+==== 已屏蔽的主体字段
+
+通用主体字段：
+
+* `credentials`
+* `applicationSecret`
+* `oauthCredential`
+* `serviceAccountCredential`
+* `spKey`
+* `spCert`
+* `certificate`
+* `privateKey`
+* `secretsEncryptionConfig`
+* `manifestUrl`
+* `insecureWindowsNodeCommand`
+* `insecureNodeCommand`
+* `insecureCommand`
+* `command`
+* `nodeCommand`
+* `windowsNodeCommand`
+* `clientRandom`
+
+通用主体正则表达式屏蔽器：
+
+- `".*([pP]assword|[Kk]ube[Cc]onfig|[Tt]oken).*"`
+
+[#_cluster_driver]
+==== 集群驱动程序
+
+默认情况下，任何与集群驱动程序相关的 API 请求将由审计日志控制器屏蔽任何非 `public*` 或 `optional*` 字段。
+
+[#_redacted_uris]
+==== 已屏蔽的 URI
+
+任何包含 `secrets` 或 `configmaps` 的端点将从请求和响应体中屏蔽相关字段。此外，任何包含 `/v3/imports/*` 的端点将屏蔽其 URI。
+
+[#_viewing_api_audit_logs]
+== 查看 API 审计日志
+
+[#_docker_install]
+=== Docker 安装
+
+与主机系统共享 `AUDIT_LOG_PATH` 目录（默认：`/var/log/auditlog`）。日志可以通过标准 CLI 工具解析，或转发到日志收集工具，如 Fluentd、Filebeat、Logstash 等。
+
+[#_kubernetes_install]
+=== Kubernetes 安装
+
+使用 Helm 图表安装启用 API 审计日志将会在 Rancher pod 中创建一个 `rancher-audit-log` 边车容器。该容器将日志流式传输到标准输出（stdout）。您可以像查看任何容器日志一样查看该日志。
+
+`rancher-audit-log` 容器是 `rancher` pod 在 `cattle-system` 名称空间中的一部分。
+
+[#_cli]
+==== CLI
+
+[,bash]
+----
+kubectl -n cattle-system logs -f rancher-84d886bdbb-s4s69 rancher-audit-log
+----
+
+[#_shipping_the_audit_log]
+==== 传输审计日志
+
+您可以启用 Rancher 内置日志收集和传输功能，将审计和其他服务日志传输到支持的收集端点。有关详细信息，请参见 {xref-logging}[Rancher 工具 - 日志]。
+
+[#_audit_log_samples]
+== 审计日志示例
+
+启用审计后，Rancher 会以 JSON 形式记录每个 API 请求或响应。以下每个代码示例提供了如何识别每个 API 事务的示例。
+
+[#_metadata_level]
+=== 元数据级别
+
+如果您将 `AUDIT_LEVEL` 设置为 `0`，Rancher 会记录每个 API 请求的元数据头，但不记录请求和响应的主体或头。元数据提供有关 API 事务的基本信息，例如事务 ID、事务发起者、发生时间等。
+
+[,json]
+----
+{
+  "auditID": "40bd4e40-875b-4020-933e-4c4f4c4db366",
+  "requestURI": "/v3/schemas",
+  "user": {
+      "name": "user-6j5s6",
+      "group": [
+          "system:authenticated",
+          "system:cattle:authenticated"
+      ],
+      "extra": {
+          "principalid": [
+              "local://user-6j5s6"
+          ],
+          "requesthost": [
+              "localhost:8443"
+          ],
+          "requesttokenid": [
+              "token-zs42h"
+          ],
+          "username": [
+              "admin"
+          ]
+      }
+  },
+  "method": "GET",
+  "remoteAddr": "127.0.0.1:58652",
+  "responseCode": 200,
+  "requestTimestamp": "2025-06-30T11:13:25-04:00",
+  "responseTimestamp": "2025-06-30T11:13:25-04:00"
+}
+----
+
+[#_metadata_and_headers_level]
+=== 元数据和头部级别
+
+如果您将 `AUDIT_LEVEL` 设置为 `1`，Rancher 会记录每个 API 请求的元数据以及请求和响应头。
+
+[,json]
+----
+{
+    "auditID": "f8c83dc6-a080-4e2e-ab43-552bddf01716",
+    "requestURI": "/v1/apps.deployments?page=1&pagesize=100&sort=metadata.name&filter=metadata.namespace!=p-npsl5&filter=metadata.namespace!=p-nzp6c&filter=metadata.namespace!=cattle-fleet-clusters-system&filter=metadata.namespace!=cattle-fleet-system&filter=metadata.namespace!=cattle-global-data&filter=metadata.namespace!=cattle-impersonation-system&filter=metadata.namespace!=cattle-provisioning-capi-system&filter=metadata.namespace!=cattle-system&filter=metadata.namespace!=cattle-ui-plugin-system&filter=metadata.namespace!=cluster-fleet-local-local-1a3d67d0a899&filter=metadata.namespace!=fleet-default&filter=metadata.namespace!=fleet-local&filter=metadata.namespace!=kube-node-lease&filter=metadata.namespace!=kube-public&filter=metadata.namespace!=kube-system&exclude=metadata.managedFields",
+    "user": {
+        "name": "user-6j5s6",
+        "group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "extra": {
+            "principalid": [
+                "local://user-6j5s6"
+            ],
+            "requesthost": [
+                "localhost:8443"
+            ],
+            "requesttokenid": [
+                "token-zs42h"
+            ],
+            "username": [
+                "admin"
+            ]
+        }
+    },
+    "method": "GET",
+    "remoteAddr": "127.0.0.1:58833",
+    "responseCode": 200,
+    "requestTimestamp": "2025-06-30T11:17:04-04:00",
+    "responseTimestamp": "2025-06-30T11:17:04-04:00",
+    "requestHeader": {
+        "Accept": [
+            "application/json"
+        ],
+        "Accept-Encoding": [
+            "gzip, deflate, br, zstd"
+        ],
+        "Accept-Language": [
+            "en-US,en;q=0.5"
+        ],
+        "Connection": [
+            "keep-alive"
+        ],
+        "Cookie": [
+            "[redacted]"
+        ],
+        "Referer": [
+            "https://localhost:8443/dashboard/c/local/explorer/apps.deployment"
+        ],
+        "Sec-Fetch-Dest": [
+            "empty"
+        ],
+        "Sec-Fetch-Mode": [
+            "cors"
+        ],
+        "Sec-Fetch-Site": [
+            "same-origin"
+        ],
+        "User-Agent": [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        ],
+        "X-Api-Csrf": [
+            "fccc690cab7b0c169b3fc6527edadef3"
+        ]
+    },
+    "responseHeader": {
+        "Cache-Control": [
+            "no-cache, no-store, must-revalidate"
+        ],
+        "Content-Encoding": [
+            "gzip"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Expires": [
+            "Wed 24 Feb 1982 18:42:00 GMT"
+        ],
+        "X-Api-Cattle-Auth": [
+            "true"
+        ],
+        "X-Api-Schemas": [
+            "https://localhost:8443/v1/schemas"
+        ],
+        "X-Content-Type-Options": [
+            "nosniff"
+        ]
+    }
+}
+----
+
+[#_metadata_headers_and_request_body_level]
+=== 元数据、头部和请求主体级别
+
+如果您将 `AUDIT_LEVEL` 设置为 `2`，Rancher 会记录每个 API 请求的元数据、请求和响应头以及请求主体。
+
+下面的代码示例描绘了一个 API 请求，包括其元数据、头部和请求主体。
+
+[#_request]
+==== 请求
+
+下面的代码示例描绘了一个 API 请求，包括其元数据头和主体。
+
+[,json]
+----
+{
+    "auditID": "d1088a09-2a13-4450-970e-0d44bd2c49ee",
+    "requestURI": "/v3/projects",
+    "user": {
+        "name": "user-6j5s6",
+        "group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "extra": {
+            "principalid": [
+                "local://user-6j5s6"
+            ],
+            "requesthost": [
+                "localhost:8443"
+            ],
+            "requesttokenid": [
+                "token-zs42h"
+            ],
+            "username": [
+                "admin"
+            ]
+        }
+    },
+    "method": "POST",
+    "remoteAddr": "127.0.0.1:49966",
+    "responseCode": 201,
+    "requestTimestamp": "2025-06-30T12:32:13-04:00",
+    "responseTimestamp": "2025-06-30T12:32:13-04:00",
+    "requestHeader": {
+        "Accept": [
+            "application/json"
+        ],
+        "Accept-Encoding": [
+            "gzip, deflate, br, zstd"
+        ],
+        "Accept-Language": [
+            "en-US,en;q=0.5"
+        ],
+        "Connection": [
+            "keep-alive"
+        ],
+        "Content-Length": [
+            "214"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Cookie": [
+            "[redacted]"
+        ],
+        "Impersonate-Extra-Principalid": [
+            "local://user-6j5s6"
+        ],
+        "Impersonate-Extra-Requesthost": [
+            "localhost:8443"
+        ],
+        "Impersonate-Extra-Requesttokenid": [
+            "token-zs42h"
+        ],
+        "Impersonate-Extra-Username": [
+            "admin"
+        ],
+        "Impersonate-Group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "Impersonate-User": [
+            "user-6j5s6"
+        ],
+        "Origin": [
+            "https://localhost:8443"
+        ],
+        "Priority": [
+            "u=0"
+        ],
+        "Referer": [
+            "https://localhost:8443/dashboard/c/local/explorer/management.cattle.io.project/create"
+        ],
+        "Sec-Fetch-Dest": [
+            "empty"
+        ],
+        "Sec-Fetch-Mode": [
+            "cors"
+        ],
+        "Sec-Fetch-Site": [
+            "same-origin"
+        ],
+        "User-Agent": [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        ],
+        "X-Api-Csrf": [
+            "fccc690cab7b0c169b3fc6527edadef3"
+        ]
+    },
+    "responseHeader": {
+        "Cache-Control": [
+            "no-cache, no-store, must-revalidate"
+        ],
+        "Content-Encoding": [
+            "gzip"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Expires": [
+            "Wed 24 Feb 1982 18:42:00 GMT"
+        ],
+        "X-Api-Cattle-Auth": [
+            "true"
+        ],
+        "X-Api-Schemas": [
+            "https://localhost:8443/v3/project/schemas"
+        ],
+        "X-Content-Type-Options": [
+            "nosniff"
+        ]
+    },
+    "requestBody": {
+        "annotations": {},
+        "clusterId": "local",
+        "containerDefaultResourceLimit": {},
+        "creatorId": "local://user-6j5s6",
+        "labels": {},
+        "name": "example-project",
+        "namespaceDefaultResourceQuota": {},
+        "resourceQuota": {},
+        "type": "project"
+    }
+}
+----
+
+[#_metadata_headers_request_body_and_response_body_level]
+==== 元数据、头部、请求主体和响应主体级别
+
+如果您将您的 `AUDIT_LEVEL` 设置为 `3`，Rancher 将记录元数据、请求和响应头以及请求体和响应。
+
+下面的代码示例展示了一个记录了该信息的 API 请求的例子。
+
+[,json]
+----
+{
+    "auditID": "a9549a5b-4351-4bd5-adcd-12f7ec667a6b",
+    "requestURI": "/v3/projects",
+    "user": {
+        "name": "user-6j5s6",
+        "group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "extra": {
+            "principalid": [
+                "local://user-6j5s6"
+            ],
+            "requesthost": [
+                "localhost:8443"
+            ],
+            "requesttokenid": [
+                "token-zs42h"
+            ],
+            "username": [
+                "admin"
+            ]
+        }
+    },
+    "method": "POST",
+    "remoteAddr": "127.0.0.1:50454",
+    "responseCode": 201,
+    "requestTimestamp": "2025-06-30T12:42:24-04:00",
+    "responseTimestamp": "2025-06-30T12:42:24-04:00",
+    "requestHeader": {
+        "Accept": [
+            "application/json"
+        ],
+        "Accept-Encoding": [
+            "gzip, deflate, br, zstd"
+        ],
+        "Accept-Language": [
+            "en-US,en;q=0.5"
+        ],
+        "Connection": [
+            "keep-alive"
+        ],
+        "Content-Length": [
+            "214"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Cookie": [
+            "[redacted]"
+        ],
+        "Impersonate-Extra-Principalid": [
+            "local://user-6j5s6"
+        ],
+        "Impersonate-Extra-Requesthost": [
+            "localhost:8443"
+        ],
+        "Impersonate-Extra-Requesttokenid": [
+            "token-zs42h"
+        ],
+        "Impersonate-Extra-Username": [
+            "admin"
+        ],
+        "Impersonate-Group": [
+            "system:authenticated",
+            "system:cattle:authenticated"
+        ],
+        "Impersonate-User": [
+            "user-6j5s6"
+        ],
+        "Origin": [
+            "https://localhost:8443"
+        ],
+        "Priority": [
+            "u=0"
+        ],
+        "Referer": [
+            "https://localhost:8443/dashboard/c/local/explorer/management.cattle.io.project/create"
+        ],
+        "Sec-Fetch-Dest": [
+            "empty"
+        ],
+        "Sec-Fetch-Mode": [
+            "cors"
+        ],
+        "Sec-Fetch-Site": [
+            "same-origin"
+        ],
+        "User-Agent": [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
+        ],
+        "X-Api-Csrf": [
+            "fccc690cab7b0c169b3fc6527edadef3"
+        ]
+    },
+    "responseHeader": {
+        "Cache-Control": [
+            "no-cache, no-store, must-revalidate"
+        ],
+        "Content-Encoding": [
+            "gzip"
+        ],
+        "Content-Type": [
+            "application/json"
+        ],
+        "Expires": [
+            "Wed 24 Feb 1982 18:42:00 GMT"
+        ],
+        "X-Api-Cattle-Auth": [
+            "true"
+        ],
+        "X-Api-Schemas": [
+            "https://localhost:8443/v3/project/schemas"
+        ],
+        "X-Content-Type-Options": [
+            "nosniff"
+        ]
+    },
+    "requestBody": {
+        "annotations": {},
+        "clusterId": "local",
+        "containerDefaultResourceLimit": {},
+        "creatorId": "local://user-6j5s6",
+        "labels": {},
+        "name": "example-project",
+        "namespaceDefaultResourceQuota": {},
+        "resourceQuota": {},
+        "type": "project"
+    },
+    "responseBody": {
+        "actions": {
+            "exportYaml": "https://localhost:8443/v3/projects/local:p-qt6tq?action=exportYaml"
+        },
+        "annotations": {
+            "authz.management.cattle.io/creator-role-bindings": "{\"required\":[\"project-owner\"]}"
+        },
+        "backingNamespace": "local-p-qt6tq",
+        "baseType": "project",
+        "clusterId": "local",
+        "containerDefaultResourceLimit": {
+            "type": "/v3/schemas/containerResourceLimit"
+        },
+        "created": "2025-06-30T16:42:24Z",
+        "createdTS": 1751301744000,
+        "creatorId": "user-6j5s6",
+        "id": "local:p-qt6tq",
+        "labels": {
+            "cattle.io/creator": "norman"
+        },
+        "links": {
+            "basicAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/basicauths",
+            "certificates": "https://localhost:8443/v3/projects/local:p-qt6tq/certificates",
+            "configMaps": "https://localhost:8443/v3/projects/local:p-qt6tq/configmaps",
+            "cronJobs": "https://localhost:8443/v3/projects/local:p-qt6tq/cronjobs",
+            "daemonSets": "https://localhost:8443/v3/projects/local:p-qt6tq/daemonsets",
+            "deployments": "https://localhost:8443/v3/projects/local:p-qt6tq/deployments",
+            "dnsRecords": "https://localhost:8443/v3/projects/local:p-qt6tq/dnsrecords",
+            "dockerCredentials": "https://localhost:8443/v3/projects/local:p-qt6tq/dockercredentials",
+            "horizontalPodAutoscalers": "https://localhost:8443/v3/projects/local:p-qt6tq/horizontalpodautoscalers",
+            "ingresses": "https://localhost:8443/v3/projects/local:p-qt6tq/ingresses",
+            "jobs": "https://localhost:8443/v3/projects/local:p-qt6tq/jobs",
+            "namespacedBasicAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedbasicauths",
+            "namespacedCertificates": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedcertificates",
+            "namespacedDockerCredentials": "https://localhost:8443/v3/projects/local:p-qt6tq/namespaceddockercredentials",
+            "namespacedSecrets": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedsecrets",
+            "namespacedServiceAccountTokens": "[redacted]",
+            "namespacedSshAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/namespacedsshauths",
+            "persistentVolumeClaims": "https://localhost:8443/v3/projects/local:p-qt6tq/persistentvolumeclaims",
+            "pods": "https://localhost:8443/v3/projects/local:p-qt6tq/pods",
+            "projectNetworkPolicies": "https://localhost:8443/v3/projects/local:p-qt6tq/projectnetworkpolicies",
+            "projectRoleTemplateBindings": "https://localhost:8443/v3/projects/local:p-qt6tq/projectroletemplatebindings",
+            "remove": "https://localhost:8443/v3/projects/local:p-qt6tq",
+            "replicaSets": "https://localhost:8443/v3/projects/local:p-qt6tq/replicasets",
+            "replicationControllers": "https://localhost:8443/v3/projects/local:p-qt6tq/replicationcontrollers",
+            "secrets": "https://localhost:8443/v3/projects/local:p-qt6tq/secrets",
+            "self": "https://localhost:8443/v3/projects/local:p-qt6tq",
+            "serviceAccountTokens": "[redacted]",
+            "services": "https://localhost:8443/v3/projects/local:p-qt6tq/services",
+            "sshAuths": "https://localhost:8443/v3/projects/local:p-qt6tq/sshauths",
+            "statefulSets": "https://localhost:8443/v3/projects/local:p-qt6tq/statefulsets",
+            "subscribe": "https://localhost:8443/v3/projects/local:p-qt6tq/subscribe",
+            "update": "https://localhost:8443/v3/projects/local:p-qt6tq",
+            "workloads": "https://localhost:8443/v3/projects/local:p-qt6tq/workloads"
+        },
+        "name": "example-project",
+        "namespaceDefaultResourceQuota": {
+            "limit": {
+                "type": "/v3/schemas/resourceQuotaLimit"
+            },
+            "type": "/v3/schemas/namespaceResourceQuota"
+        },
+        "namespaceId": null,
+        "resourceQuota": {
+            "limit": {
+                "type": "/v3/schemas/resourceQuotaLimit"
+            },
+            "type": "/v3/schemas/projectResourceQuota",
+            "usedLimit": {
+                "type": "/v3/schemas/resourceQuotaLimit"
+            }
+        },
+        "state": "active",
+        "transitioning": "no",
+        "transitioningMessage": "",
+        "type": "project",
+        "uuid": "b582603b-7826-4302-8393-792df2611265"
+    }
+}
+----

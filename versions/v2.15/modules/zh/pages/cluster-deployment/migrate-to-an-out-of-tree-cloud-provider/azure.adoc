@@ -1,0 +1,238 @@
+= 将 Azure 内置云提供商迁移到外部插件提供商
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/migrate-to-an-out-of-tree-cloud-provider/migrate-to-out-of-tree-azure.adoc 
+:product-path: cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/azure.adoc
+ifeval::["{build-type}" != "community"]
+:xref-azure-cloud-provider: xref:cluster-deployment/set-up-cloud-providers/azure.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-azure-cloud-provider: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/azure.adoc
+endif::[]
+
+Kubernetes 正在逐步停止维护树内的云提供商。
+
+从 Kubernetes 1.29 开始，内部云提供商已被禁用。您必须禁用 `DisableCloudProviders` 和 `DisableKubeletCloudCredentialProvider` 才能使用内置 Azure 云提供商或从内置云提供商迁移到外部插件提供商。您可以通过在高级集群配置中，将 `feature-gates=DisableCloudProviders=false` 作为集群的 Kubelet、Controller Manager 和 API Server 的附加参数来禁用所需的功能门控。此外，在 Kubelet 的参数中设置 `DisableKubeletCloudCredentialProvider=false` 以启用内置功能，以便对 Azure 容器注册表进行身份验证以获取镜像拉取凭据。有关更多详细信息，请参见 https://github.com/kubernetes/kubernetes/pull/117503[上游文档]。
+
+在 Kubernetes v1.30 及更高版本中，内置云提供商已被移除。Rancher 允许您在从内置提供商迁移到外部插件提供商时升级到 Kubernetes v1.30。
+
+要从内置云提供商迁移到外部 Azure 云插件提供商，您必须停止现有集群的 kube 控制器管理器并安装 Azure 云控制器管理器。
+
+如果在迁移期间可以接受一些停机时间，请按照说明 {xref-azure-cloud-provider}#_使用外部 Azure 云插件提供商[设置外部插件提供商]。这些说明概述了如何为新配置的集群配置外部插件提供商。在设置过程中，会有一些停机时间，因为旧云提供商停止运行和新云提供商开始运行之间存在时间差。
+
+如果您的设置无法容忍任何控制平面停机时间，则必须启用领导者迁移。这有助于从 kube 控制器管理器中的控制器平稳过渡到云控制器管理器中的对应控制器。
+
+[NOTE]
+.重要说明：
+====
+Kubernetes https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#before-you-begin[云控制器迁移文档] 表示可以在相同的 Kubernetes 版本下进行迁移，但假设迁移是 Kubernetes 升级的一部分。请参考 Kubernetes 文档 https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/[迁移以使用云控制器管理器]，查看在迁移之前是否需要自定义您的设置。确认您的 https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#default-configuration[迁移配置值]。如果您的云提供商提供 Node IPAM 控制器的实现，您还需要 https://kubernetes.io/docs/tasks/administer-cluster/controller-manager-leader-migration/#node-ipam-controller-migration[迁移 IPAM 控制器]。
+
+从 Kubernetes v1.26 开始，内置持久卷类型 `kubernetes.io/azure-disk` 和 `kubernetes.io/azure-file` 已被弃用，不再受支持。在这些驱动程序被弃用后，没有计划将其去除，但您应该迁移到相应的 CSI 驱动程序 `disk.csi.azure.com` 和 `file.csi.azure.com`。要查看存储类的迁移选项并将集群升级到使用 Azure 磁盘和 Azure 文件 CSI 驱动程序，请参见 https://learn.microsoft.com/en-us/azure/aks/csi-migrate-in-tree-volumes[从内置迁移到 CSI 驱动程序]。
+====
+
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. 更新集群配置以启用领导者迁移：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+请注意，在此步骤中云提供商仍然是 `azure`：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: azure
+----
+
+. 对控制平面节点进行封锁，以便 Azure 云控制器 Pod 仅在升级到外部插件提供商后在节点上运行：
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/control-plane=true"
+----
+
+. 要部署 Azure 云控制器管理器，请使用任何可用选项：
+ ** UI：按照 {xref-azure-cloud-provider}#_helm_chart_installation_from_ui[通过 UI 安装 Helm 图表] 的步骤 1-10 安装云控制器管理器图表。
+ ** CLI:按照 {xref-azure-cloud-provider}#_helm_chart_installation_from_cli[通过 CLI 安装 Helm 图表] 的步骤 1-4。
+ ** 更新集群的附加清单：按照步骤 2-3 {xref-azure-cloud-provider}#_using_the_out_of_tree_azure_cloud_provider[安装云控制器管理器图表]。
+
++
+确认图表已安装，但由于控制平面节点被隔离，新 Pod 尚未运行。
+
+. 要启用领导者迁移，请将 `--enable-leader-migration` 添加到 `cloud-controller-manager` 的容器参数中：
++
+[,shell]
+----
+kubectl -n kube-system patch deployment cloud-controller-manager \
+--type=json \
+-p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-leader-migration"}]'
+----
+
+. 更新配置集群以更改云提供商，并从 kube 控制器管理器中移除领导者迁移参数。
+如果升级 Kubernetes 版本，请在集群 YAML 文件的 `spec.kubernetesVersion` 部分中设置 Kubernetes 版本。
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: external
+----
++
+从 kube 控制器管理器中移除 `enable-leader-migration`：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kube-controller-manager-arg:
+            - enable-leader-migration
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
+
+. 解封控制平面节点，以便 Azure 云控制器 Pod 现在在节点上运行：
++
+[,shell]
+----
+kubectl uncordon -l "node-role.kubernetes.io/control-plane=true"
+----
+
+. 更新集群。`cloud-controller-manager` Pod 现在应该正在运行。
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. 云提供商负责设置节点的 ProviderID。检查所有节点是否已用 ProviderID 初始化：
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+. （可选）您还可以在升级后禁用领导者迁移，因为在只有一个云控制器管理器的情况下不需要领导者迁移。
+ 更新 `cloud-controller-manager` 部署以从容器参数中移除领导者迁移：
++
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+--
+
+RKE::
++
+--
+. 更新集群配置以启用 `cluster.yml` 中的领导者迁移：
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
++
+请注意，在此步骤中云提供商仍然是 `azure`：
++
+[,yaml]
+----
+cloud_provider:
+  name: azure
+----
+
+. 对控制平面节点进行封锁，以便 Azure 云控制器 Pod 仅在升级到外部插件提供商后在节点上运行：
++
+[,shell]
+----
+kubectl cordon -l "node-role.kubernetes.io/controlplane=true"
+----
+
+. 要安装 Azure 云控制器管理器，请按照在新集群上安装 Azure 云提供商时的相同步骤进行：
+ ** UI：按照 {xref-azure-cloud-provider}#_helm_chart_installation_from_ui[通过 UI 安装 Helm 图表] 的步骤 1-10 安装云控制器管理器图表。
+ ** CLI:按照 {xref-azure-cloud-provider}#_helm_chart_installation_from_cli[通过 CLI 安装 Helm 图表] 的步骤 1-4 安装云控制器管理器图表。
+. 确认图表已安装，但由于控制平面节点被隔离，新 Pod 尚未运行。在下一步更新集群后，RKE 将升级并解封每个节点，并调度 `cloud-controller-manager` Pod。
+. 要启用领导者迁移，请将 `--enable-leader-migration` 添加到 `cloud-controller-manager` 的容器参数中：
++
+[,shell]
+----
+kubectl -n kube-system patch deployment cloud-controller-manager \
+--type=json \
+-p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-leader-migration"}]'
+----
+
+. 更新 `cluster.yml` 以将云提供商更改为 `external` 并从 kube-controller 中移除领导者迁移参数。
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external
+----
++
+如果您不希望在集群中启用 `enable-leader-migration`，请将其移除：
++
+[,yaml]
+----
+services:
+  kube-controller:
+    extra_args:
+      enable-leader-migration: "true"
+----
+
+. 如果您正在升级集群的 Kubernetes 版本，请同时设置 Kubernetes 版本。
+. 更新集群。`cloud-controller-manager` pod 现在应该正在运行。
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system cloud-controller-manager
+kubectl rollout status daemonset -n kube-system cloud-node-manager
+----
+
+. 云提供商负责设置节点的 ProviderID。验证所有节点是否已用 ProviderID 初始化：
++
+[,shell]
+----
+kubectl describe nodes | grep "ProviderID"
+----
+
+. （可选）您还可以在升级后禁用领导者迁移，因为在只有一个云控制器管理器的情况下不需要领导者迁移。
+更新 `cloud-controller-manager` 部署以从容器参数中移除领导者迁移：
++
+[,yaml]
+----
+- --enable-leader-migration=true
+----
+--
+======

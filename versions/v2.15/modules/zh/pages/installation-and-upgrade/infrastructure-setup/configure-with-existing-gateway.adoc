@@ -1,0 +1,326 @@
+= 使用外部网关与Rancher
+:revdate: 2026-04-23
+:page-revdate: {revdate}
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:community-path: how-to-guides/advanced-user-guides/rancher-deployment-guides/configure-with-existing-gateway.adoc
+:product-path: installation-and-upgrade/infrastructure-setup/configure-with-existing-gateway.adoc
+
+当使用网关API网络暴露类型时，Rancher可以创建和管理自己的网关资源。但是，如果您有一个独立管理的现有网关（例如，多个应用程序共享的网关），您需要创建自己的HTTPRoute资源以将流量路由到Rancher。
+
+本节介绍如何在使用外部管理的网关时手动创建所需的HTTPRoute资源。
+
+[#_prerequisites]
+== 先决条件
+
+* 在您的集群中配置并正常运行的现有网关资源
+* 了解您的网关的：
+** 名称和名称空间
+** HTTP和/或HTTPS流量的监听器名称（sectionName）
+* Rancher安装时`networkExposure.type`设置为除`gateway`以外的其他值（例如，`none`或`ingress`）
+
+[#_cross_namespace_gateway_requirements]
+== 跨命名空间网关要求
+
+如果您的网关位于与Rancher不同的命名空间（例如，网关在`gateway-system`，Rancher在`cattle-system`），则必须配置网关以接受来自Rancher命名空间的HTTPRoutes。默认情况下，网关API仅允许来自与网关相同命名空间的路由。
+
+网关所有者必须在相关监听器上配置`allowedRoutes`。有两个选项：
+
+*选项 1：允许来自所有命名空间的路由*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shared-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: example
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+----
+
+*选项 2：允许来自特定命名空间的路由（更严格）*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shared-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: example
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              shared-gateway-access: "true"
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              shared-gateway-access: "true"
+----
+
+使用选择器方法时，请确保Rancher命名空间具有所需的标签：
+
+[source,bash]
+----
+kubectl label namespace cattle-system shared-gateway-access=true
+----
+
+[NOTE]
+====
+如果网关和 Rancher 在同一个命名空间中，则无需额外配置——默认的 `allowedRoutes` 设置 (`from: Same`) 将允许 HTTPRoute 附加。
+====
+
+[#_determining_your_rancher_service_values]
+== 确定您的 Rancher 服务值
+
+在创建 HTTPRoute 资源之前，请从您的 Rancher 安装中识别以下值：
+
+|===
+| 值 | 如何确定 | 示例
+
+| *发布名称*
+| 在 `helm install <release-name>` 中使用的名称
+| `rancher` 
+
+| *名称空间*
+| Rancher 安装所在的名称空间 
+| `cattle-system` 
+
+| *主机名*
+| 来自您的 Helm 值的 `hostname` 值 
+| `rancher.example.com` 
+
+| *TLS 模式*
+| 来自您的 Helm 值的 `tls` 值 
+| `ingress`、`external` 或 `secret`
+
+| *服务 HTTP 禁用*
+| `service.disableHTTP` 值 
+| `true` 或 `false`
+|===
+
+Rancher 服务名称遵循模式：`<release-name>-rancher`（如果发布名称已经包含 "rancher"，则仅为 `<release-name>`）。
+
+[#_httproute_configuration]
+== HTTPRoute 配置
+
+[#_primary_httproute]
+=== 主要 HTTPRoute
+
+创建一个 HTTPRoute，将流量从您的网关引导到 Rancher 服务。配置取决于您的 TLS 设置：
+
+*当 TLS 在网关或 Kubernetes 内终止时 (`tls: ingress`、`tls: secret` 或 `tls: letsEncrypt`):*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rancher
+  namespace: cattle-system  # Must match Rancher's namespace
+spec:
+  parentRefs:
+    - name: <your-gateway-name>
+      namespace: <your-gateway-namespace>
+      sectionName: <your-https-listener-name>  # Your Gateway's HTTPS listener
+  hostnames:
+    - <your-rancher-hostname>  # e.g., rancher.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: rancher  # Your Rancher service name
+          port: 80       # Use 443 if service.disableHTTP=true
+----
+
+*当 TLS 在外部终止时 (`tls: external`):*
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rancher
+  namespace: cattle-system
+spec:
+  parentRefs:
+    - name: <your-gateway-name>
+      namespace: <your-gateway-namespace>
+      sectionName: <your-http-listener-name>  # Your Gateway's HTTP listener
+  hostnames:
+    - <your-rancher-hostname>
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: rancher
+          port: 80
+----
+
+[#_http_to_https_redirect_route_optional]
+=== HTTP 到 HTTPS 重定向路由（可选）
+
+如果 TLS 在 Kubernetes 内部终止（而不是外部），您可能希望将 HTTP 流量重定向到 HTTPS。创建一个额外的 HTTPRoute：
+
+[source,yaml]
+----
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rancher-http-redirect
+  namespace: cattle-system
+spec:
+  parentRefs:
+    - name: <your-gateway-name>
+      namespace: <your-gateway-namespace>
+      sectionName: <your-http-listener-name>  # Your Gateway's HTTP listener
+  hostnames:
+    - <your-rancher-hostname>
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+----
+
+[#_using_extraobjects]
+== 使用 extraObjects
+
+您可以使用 `extraObjects` 值直接在 Rancher Helm 安装中包含这些 HTTPRoute 资源。这将所有资源一起管理：
+
+[source,yaml]
+----
+# values.yaml
+hostname: rancher.example.com
+tls: ingress
+
+extraObjects:
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: rancher
+    spec:
+      parentRefs:
+        - name: my-shared-gateway
+          namespace: gateway-system
+          sectionName: https
+      hostnames:
+        - rancher.example.com
+      rules:
+        - matches:
+            - path:
+                type: PathPrefix
+                value: /
+          backendRefs:
+            - name: rancher
+              port: 80
+
+  - apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: rancher-http-redirect
+    spec:
+      parentRefs:
+        - name: my-shared-gateway
+          namespace: gateway-system
+          sectionName: http
+      hostnames:
+        - rancher.example.com
+      rules:
+        - filters:
+            - type: RequestRedirect
+              requestRedirect:
+                scheme: https
+                statusCode: 301
+----
+
+[#_backend_port_selection]
+== 后端端口选择
+
+`backendRefs` 中的端口取决于您的 `service.disableHTTP` 设置：
+
+|===
+| `service.disableHTTP` | 后端端口
+
+| `false`（默认）
+| `80`
+
+| `true`
+| `443`
+
+|===
+
+[#_listener_selection_summary]
+== 监听器选择摘要
+
+|===
+| TLS 配置 | 主路由监听器 | 重定向路由
+
+| `tls: external`
+| HTTP 监听器
+| 不需要
+
+| `tls: ingress`
+| HTTPS 监听器
+| HTTP 监听器（可选）
+
+| `tls: secret`
+| HTTPS 监听器
+| HTTP 监听器（可选）
+
+| `tls: letsEncrypt`
+| HTTPS 监听器
+| HTTP 监听器（可选）
+
+|===
+
+[#_troubleshooting]
+== 查错
+
+*HTTPRoute 未被接受：*
+
+* 验证网关名称和名称空间是否正确
+* 确保 `sectionName` 与您的网关上现有的监听器匹配
+* 检查监听器是否允许来自 Rancher 名称空间的路由（请参见网关的 `allowedRoutes` 配置）
+
+*连接被拒绝或超时：*
+
+* 确认Rancher服务存在且有端点：`kubectl get endpoints rancher -n cattle-system`
+* 验证后端端口与您的`service.disableHTTP`设置匹配
+
+*证书错误：*
+
+* 如果使用`tls: ingress`或`tls: secret`，请确保您的网关的HTTPS监听器配置了适当的证书
+* 验证证书覆盖您的Rancher主机名

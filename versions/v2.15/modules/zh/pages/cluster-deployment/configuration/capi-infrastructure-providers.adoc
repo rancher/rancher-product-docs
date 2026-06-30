@@ -1,0 +1,496 @@
+= 配置原生 CAPI 基础设施提供程序以部署 RKE2 集群
+:revdate: 2026-04-03
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/capi-infrastructure-providers.adoc
+:product-path: cluster-deployment/configuration/capi-infrastructure-providers.adoc 
+ifeval::["{build-type}" != "community"]
+:url-CAPI-docs: https://documentation.suse.com/cloudnative/cluster-api/latest/en/index.html
+:url-CAPIProvider: https://documentation.suse.com/cloudnative/cluster-api/{turtles-docs-version}/en/reference/capiprovider.html
+:xref-enable-experimental-features: xref:rancher-admin/experimental-features/experimental-features.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-CAPI-docs: https://turtles.docs.rancher.com/turtles/stable/en/index.html
+:url-CAPIProvider: https://turtles.docs.rancher.com/turtles/stable/en/reference/capiprovider.html
+:xref-enable-experimental-features: xref:how-to-guides/advanced-user-guides/enable-experimental-features/index.adoc
+endif::[]
+
+[CAUTION]
+====
+**这是一个技术预览，使用原生 CAPI 基础设施提供程序是 Rancher 2.14 中引入的实验性功能。**本指南的目的是用于评估，**不应** 用于生产集群，并注意某些配置字段可能会发生变化。此功能的未来版本可能与此版本不兼容。
+====
+
+[#_overview]
+== 概述
+
+Rancher 2.14 可以使用本地 CAPI 基础设施提供程序配置 RKE2 集群，例如 https://cluster-api-aws.sigs.k8s.io/[CAPA]（Cluster API Provider AWS）和 https://github.com/kubernetes-sigs/cluster-api-provider-vsphere[CAPV]（Cluster API Provider vSphere）。
+
+标准 RKE2 配置依赖于 Rancher 的内部启动和控制平面提供程序，以及 Rancher 节点驱动程序（通过 `rancher/machine`）作为基础设施提供程序。此新模式允许您用原生 CAPI 基础设施提供程序替代 Rancher 节点驱动程序，同时保留 Rancher 的启动和控制平面逻辑。
+
+本指南提供了使用 CAPA 和 CAPV 评估此配置模式的简单示例。请参考每个提供程序的文档以获取有关可用选项的更多详细信息，并根据您的需求调整这些示例。
+
+[NOTE]
+====
+使用本地 CAPI 基础设施提供程序和 Rancher 作为引导和控制平面提供程序的配置与使用 {url-CAPI-docs}[{turtles-product-name}] 和 https://caprke2.docs.rancher.com/[CAPRKE2] 提供程序配置 RKE2 集群并随后将其导入 Rancher 是不同的。
+====
+
+[#_limitations_and_requirements]
+=== 限制和要求
+
+* 不支持的配置：当前不支持 Windows 工作节点和 IPv6。
+* UI 限制：通过 UI 进行详细的集群管理已被禁用；集群必须通过将 Kubernetes 对象应用于本地集群来创建和修改。但是，集群浏览器仍然可以访问。
+* Kubernetes 云提供程序要求：需要一个特定于云的 Kubernetes 提供程序，用于下游集群运行的基础设施（例如， https://cloud-provider-aws.sigs.k8s.io/[Kubernetes AWS Cloud Provider] 用于 CAPA 或 `rancher-vsphere-cpi` 图表用于 CAPV）。
+
+[#_general_steps]
+== 一般步骤
+
+对于 CAPA 和 CAPV，一般步骤如下：
+
+. 安装 Rancher。
+. 安装 CAPI 基础设施提供者，选择 CAPA 或 CAPV。
+. 为提供者设置身份资源。
+. 创建 CAPI 基础设施集群资源。
+. 创建一个或多个 CAPI 基础设施机器模板资源。
+. 创建一个 Rancher `clusters.provisioning.cattle.io` 资源，引用身份、基础设施集群和基础设施机器模板资源。
+
+应用 `clusters.provisioning.cattle.io` 资源后，集群会出现在 Rancher 集群管理列表中（单击 **☰ > 集群管理**），但此类型集群的详细视图当前不可用。
+
+要查看配置过程的进度并进行故障排除，请参考本地集群中各种 CAPI 和 Rancher 配置资源的状态：
+
+. 单击 **☰**，然后单击您本地群集的图标。
+. 使用顶部的下拉菜单筛选 **所有名称空间**。
+. 从侧边栏中选择 **更多资源 > 集群配置**。
+
+基础设施提供者部署的日志（例如 `capa-controller-manager`）也显示有用的信息。
+
+[#_installing_the_infrastructure_provider]
+== 正在安装基础设施提供者
+
+Rancher 允许通过创建 Rancher Turtles {url-CAPIProvider}[`CAPIProvider`] 资源以声明方式安装基础设施提供者。
+
+[#_examples]
+=== 示例
+
+CAPA：
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capa-system
+---
+apiVersion: turtles-capi.cattle.io/v1alpha1
+kind: CAPIProvider
+metadata:
+  name: aws
+  namespace: capa-system
+spec:
+  type: infrastructure
+  variables:
+    # Global credentials for the provider are not needed
+    # as these examples define credentials for the AWSCluster.
+    AWS_B64ENCODED_CREDENTIALS: ""
+----
+
+CAPV：
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capv-system
+---
+apiVersion: turtles-capi.cattle.io/v1alpha1
+kind: CAPIProvider
+metadata:
+  name: vsphere
+  namespace: capv-system
+spec:
+  type: infrastructure
+  variables:
+    # Global credentials for the provider are not needed
+    # as these examples define credentials for the VsphereCluster.
+    VSPHERE_USERNAME: ""
+    VSPHERE_PASSWORD: ""
+----
+
+[#_provisioning_a_cluster]
+== 配置集群
+
+在这些示例中，使用了一个包含所有角色（控制平面、etcd 和工作节点）的单一机器池，但可以通过指定更多机器池和单独角色来调整示例。
+
+在您的上游群集中创建资源，并替换 `<>` 括号内的值。
+
+[CAUTION]
+====
+在 `clusters.provisioning.cattle.io` 资源中定义的每个机器池应引用不同的机器模板。
+====
+
+[#_capa]
+=== CAPA
+
+首先，按照 CAPA 的要求配置 IAM。这些角色由下游节点使用实例配置文件来假定，以启用 Kubernetes AWS 云提供程序。
+
+为此，CAPA 提供了 `clusterawsadm` 工具来生成和应用所需的对象。有关更多 https://cluster-api-aws.sigs.k8s.io/topics/using-clusterawsadm-to-fulfill-prerequisites[详细信息]，请参阅 CAPA 手册。
+
+然后，在上游集群中配置提供程序身份，以便 CAPA 提供程序可以在 AWS 上创建资源。有关所有 https://cluster-api-aws.sigs.k8s.io/topics/multitenancy[选项]，请参阅手册。
+
+在此示例中，我们将使用 `AWSClusterStaticIdentity`。
+
+使用您的凭据创建一个密钥：
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: capa-lab-credentials
+  namespace: capa-system
+type: Opaque
+stringData:
+  AccessKeyID: <access key id>
+  SecretAccessKey: <secret access key>
+  # You might have a session token depending on your credential type.
+  # SessionToken: <session token>
+----
+
+然后，创建引用该密钥的身份对象：
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSClusterStaticIdentity
+metadata:
+  name: capa-lab-identity
+spec:
+  secretRef: capa-lab-credentials
+  allowedNamespaces:
+    # The namespace of the AWSCluster resource that points
+    # to this identity for provisioning.
+    list:
+      - fleet-default
+----
+
+现在，创建 `AWSCluster` https://cluster-api-aws.sigs.k8s.io/crd/#infrastructure.cluster.x-k8s.io%2fv1beta2[资源]。该对象定义了所有机器池的基础设施配置。
+
+CAPA 在其默认配置中创建 VPC、子网、安全组和负载均衡器，但必须配置额外的规则以允许 Rancher 和 RKE2 所需的端口。为简单起见，此示例定义了允许节点之间所有流量的额外安全组规则，但可以配置更严格的规则。
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSCluster
+metadata:
+  name: capa-lab
+  namespace: fleet-default
+spec:
+  identityRef:
+    kind: AWSClusterStaticIdentity
+    name: capa-lab-identity
+
+  controlPlaneLoadBalancer:
+    healthCheckProtocol: TCP
+    loadBalancerType: nlb
+
+  region: <e.g. us-east-1>
+
+  # These two additional rules allow all incoming traffic
+  # from other nodes.
+  network:
+    additionalControlPlaneIngressRules:
+      - protocol: "-1"
+        sourceSecurityGroupRoles:
+          - controlplane
+          - node
+    additionalNodeIngressRules:
+      - protocol: "-1"
+        sourceSecurityGroupRoles:
+          - controlplane
+          - node
+----
+
+接下来，为控制平面机器池创建机器模板。为 `clusters.provisioning.cattle.io` 资源中定义的每个机器池创建额外的模板。
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: capa-lab-control-plane
+  namespace: fleet-default
+spec:
+  template:
+    spec:
+      ami:
+        # The ami requires cloud-init.
+        id: <your ami>
+      # This should correspond to the profile created through clusterawsadm.
+      # Worker or etcd-only nodes should use nodes.cluster-api-provider-aws.sigs.k8s.io.
+      iamInstanceProfile: control-plane.cluster-api-provider-aws.sigs.k8s.io
+      instanceType: t3.medium
+      # This refers to the name of an EC2 key pair.
+      sshKeyName: <your ssh key>
+      rootVolume:
+        size: 16
+      cloudInit:
+        insecureSkipSecretsManager: true
+----
+
+[CAUTION]
+====
+将 `insecureSkipSecretsManager` 选项设置为 true，以绕过 AWS 秘密管理器作为提供的实例的 userdata 源。此源限制了 userdata 的可见性，但需要一个自定义的 cloud-init 数据源，而该数据源目前与 Rancher 生成的 userdata 不兼容。有关更多信息，请参见 https://cluster-api-aws.sigs.k8s.io/topics/userdata-privacy[CAPA 文档]。
+====
+
+最后，创建 Rancher `clusters.provisioning.cattle.io` 资源，并指向刚刚创建的 CAPA 集群和机器模板。
+
+[source,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: capa-lab
+  namespace: fleet-default
+spec:
+  kubernetesVersion: v1.35.1+rke2r1
+  rkeConfig:
+    # This is the ref to the infra cluster defined above.
+    infrastructureRef:
+      kind: AWSCluster
+      name: capa-lab
+      namespace: fleet-default
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    machinePools:
+      - name: ctrl
+        controlPlaneRole: true
+        etcdRole: true
+        workerRole: true
+        quantity: 3
+        machineConfigRef:
+          kind: AWSMachineTemplate
+          name: capa-lab-control-plane
+          namespace: fleet-default
+          apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    machineGlobalConfig:
+      cni: calico
+      disable-kube-proxy: false
+      etcd-expose-metrics: false
+      ingress-controller: traefik
+      protect-kernel-defaults: false
+      cloud-provider-name: external
+      node-name-from-cloud-provider-metadata: true
+    # The AWS cloud controller definition. The controller uses the IAM instance profile for its AWS credentials.
+    additionalManifest: |-
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: aws-cloud-controller-manager
+        namespace: kube-system
+      spec:
+        chart: aws-cloud-controller-manager
+        repo: https://kubernetes.github.io/cloud-provider-aws
+        targetNamespace: kube-system
+        bootstrap: true
+        valuesContent: |-
+          hostNetworking: true
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          args:
+            - --configure-cloud-routes=false
+            - --v=5
+            - --cloud-provider=aws
+----
+
+[#_capv]
+=== CAPV
+
+首先，在上游集群中配置提供程序身份，以便 CAPV 提供程序可以在您的 vSphere 服务器上创建资源。请参阅手册以获取所有身份 https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/v1.15.2/docs/identity_management.md[选项]，以及一般的vSphere https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/v1.15.2/docs/getting_started.md[要求]。
+
+在此示例中，我们将使用 `VSphereClusterIdentity`。
+
+使用您的凭据创建一个密钥：
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: capv-lab-credentials
+  namespace: capv-system
+type: Opaque
+stringData:
+  username: <your vSphere username>
+  password: <your vSphere password>
+----
+
+然后，创建引用该密钥的身份对象：
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: VSphereClusterIdentity
+metadata:
+  name: capv-lab-identity
+spec:
+  secretName: capv-lab-credentials
+  allowedNamespaces:
+    selector:
+      # The namespace of the VSphereCluster for which this identity
+      # is used when provisioning.
+      matchLabels:
+        kubernetes.io/metadata.name: fleet-default
+----
+
+与 CAPA 一样，在下游集群中安装 https://github.com/kubernetes/cloud-provider-vsphere[vSphere 的云提供商] 也是必要的。
+
+要安全地传输CPI图表的凭据，您可以在Rancher中启用预引导功能。这可以通过 {xref-enable-experimental-features}[启用] `provisioningprebootstrap` 功能标志来完成，并导致 Rancher 重启。
+
+现在，创建发送到下游集群的密钥。如果您使用不同的名称创建`clusters.provisioning.cattle.io`资源，请确保更新下面的`rke.cattle.io/object-authorized-for-clusters`注解。
+
+[source,yaml]
+----
+# Credential secret synced to the downstream cluster for the vsphere CPI chart.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vsphere-cpi-creds
+  namespace: fleet-default
+  annotations:
+    # Can be a comma-separated list for multiple clusters, with no spaces.
+    rke.cattle.io/object-authorized-for-clusters: capv-lab
+    provisioning.cattle.io/sync-bootstrap: "true"
+    provisioning.cattle.io/sync-target-namespace: kube-system
+type: Opaque
+stringData:
+  # Change the prefix of the key to match your vCenter host.
+  <vsphere host>.username: <your vSphere username>
+  <vsphere host>.password: <your vSphere password>
+----
+
+现在，创建 `VSphereCluster` 资源。该资源定义了所有机器池共有的基础设施配置。请参阅CAPV文档以获取更多配置选项。
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: VSphereCluster
+metadata:
+  name: capv-lab
+  namespace: fleet-default
+spec:
+  identityRef:
+    kind: VSphereClusterIdentity
+    name: capv-lab-identity
+  server: <vsphere fqdn>
+----
+
+接下来，为控制平面机器池创建机器模板。为 `clusters.provisioning.cattle.io` 资源中定义的每个机器池创建额外的模板。
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: VSphereMachineTemplate
+metadata:
+  name: capv-lab-control-plane
+  namespace: fleet-default
+spec:
+  template:
+    spec:
+      datacenter: <datacenter>
+      datastore: <datastore>
+      diskGiB: 20
+      folder: <your folder>
+      memoryMiB: 4096
+      network:
+        devices:
+        - dhcp4: true
+          networkName: <your network>
+      numCPUs: 2
+      os: Linux
+      resourcePool: <your resource pool>
+      template: <your VM template>
+----
+
+最后，创建 Rancher `clusters.provisioning.cattle.io` 资源，并指向刚刚创建的 CAPV 集群和机器模板。请注意，此示例为了简单起见禁用了CSI图表。CPI图表是必需的。
+
+[source,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: capv-lab
+  namespace: fleet-default
+spec:
+  kubernetesVersion: v1.35.1+rke2r1
+  rkeConfig:
+    infrastructureRef:
+      kind: VSphereCluster
+      name: capv-lab
+      namespace: fleet-default
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    machinePools:
+      - name: ctrl
+        controlPlaneRole: true
+        etcdRole: true
+        workerRole: true
+        quantity: 3
+        machineConfigRef:
+          kind: VSphereMachineTemplate
+          name: capv-lab-control-plane
+          namespace: fleet-default
+          apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    machineGlobalConfig:
+      cni: calico
+      disable-kube-proxy: false
+      etcd-expose-metrics: false
+      ingress-controller: traefik
+      protect-kernel-defaults: false
+      disable:
+        - rancher-vsphere-csi
+      cloud-provider-name: rancher-vsphere
+    chartValues:
+      rancher-vsphere-cpi:
+        vCenter:
+          datacenters: <your datacenter>
+          host: <vsphere fqdn>
+          # The credential secret is transferred by the prebootstrap mechanism,
+          # and the cpi chart expects the default name (vsphere-cpi-creds).
+          credentialsSecret:
+            generate: false
+----
+
+[#_changing_machine_templates]
+=== 更改机器模板
+
+CAPI基础设施提供者的机器模板，如`AWSMachineTemplate`和`VSphereMachineTemplate`通常是不可变的。要修改机器池中实例的配置，请创建一个不同名称的新模板，然后在`clusters.provisioning.cattle.io`中编辑机器池以指向此新模板。这会导致该池中的所有机器使用新配置重新创建。
+
+[#_customizing_userdata]
+=== 自定义用户数据
+
+可以为`clusters.provisioning.cattle.io`资源中的每个机器池定义自定义用户数据。为此，请使用`.spec.rkeConfig.machinePools.userdata.inlineUserdata`作为纯云配置格式中的内联yaml字符串。该字段的内容与Rancher生成的用户数据合并，以启动集群节点。
+
+[CAUTION]
+====
+请勿在此字段中包含敏感数据，因为它是其他资源的一部分，而不是密文。
+
+此字段是实验性的，可能会发生变化。它仅对本文档中描述的本地CAPI提供者有效，并且对通过标准方法和节点驱动程序由Rancher提供的集群没有影响。
+====
+
+修改userdata字段会导致池中的所有机器被重新创建。
+
+[source,yaml]
+----
+# Only some fields of the provisioning cluster resource are shown here.
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: capv-lab
+  namespace: fleet-default
+spec:
+  kubernetesVersion: v1.35.1+rke2r1
+  rkeConfig:
+    machinePools:
+      - name: ctrl
+        userdata:
+          inlineUserdata: |
+            runcmd:
+              - ["echo", "Hello!"]
+----

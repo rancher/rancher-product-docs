@@ -1,0 +1,165 @@
+= 配置 Okta (SAML)
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-okta-saml.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-okta-saml.adoc
+ifeval::["{build-type}" != "community"]
+:xref-global-permissions: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/global-permissions.adoc
+:xref-openldap-reference: xref:rancher-admin/users/authn-and-authz/openldap/reference.adoc
+:xref-authn-authz: xref:rancher-admin/users/authn-and-authz/authn-and-authz.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-global-permissions: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/global-permissions.adoc 
+:xref-openldap-reference: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/configure-openldap/openldap-config-reference.adoc
+:xref-authn-authz: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/index.adoc
+endif::[]
+
+如果您的组织使用 Okta 身份提供者（IdP）进行用户身份验证，您可以配置 Rancher 以允许用户使用其 IdP 凭据登录。
+
+[NOTE]
+====
+
+Okta 集成仅支持服务提供者发起的登录。
+====
+
+
+[#_prerequisites]
+== 先决条件
+
+在 Okta 中，创建一个具有以下设置的 SAML 应用程序。有关帮助，请参见 https://developer.okta.com/standards/SAML/setting_up_a_saml_application_in_okta[Okta 文档]。
+
+|===
+| 设置 | 值
+
+| `Single Sign on URL`
+| `+https://yourRancherHostURL/v1-saml/okta/saml/acs+`
+
+| `Audience URI (SP Entity ID)`
+| `+https://yourRancherHostURL/v1-saml/okta/saml/metadata+`
+|===
+
+[#_configuring_okta_in_rancher]
+== 在 Rancher 中配置 Okta
+
+您可以将 Okta 与 Rancher 集成，以便经过身份验证的用户可以通过其组权限访问 Rancher 资源。Okta 返回一个 SAML 断言，用于验证用户身份，包括用户所属的组。
+
+. 在左上角，点击 *☰ > 用户与身份验证*。
+. 在左侧导航菜单中，点击 *身份验证提供者*。
+. 单击 *Okta*。
+. 完成 *配置 Okta 账户* 表单。以下示例描述了如何将 Okta 属性从属性声明映射到 Rancher 中的字段。
++
+|===
+| 字段 | 说明
+
+| 显示名称字段
+| 属性声明中包含用户显示名称的属性名称。
+
+| 用户名字段
+| 属性声明中包含用户名/名的属性名称。
+
+| UID 字段
+| 属性声明中每个用户唯一的属性名称。
+
+| 组字段
+| 组属性声明中展示您的组的属性名称。
+
+| Rancher API 主机
+| 您的 Rancher 服务器的 URL。
+
+| 私钥/证书
+| 用于断言加密的密钥/证书对。
+
+| 元数据 XML
+| 您在应用程序 `Sign On` 部分找到的 `Identity Provider metadata` 文件。
+|===
++
+
+[TIP]
+====
+您可以使用 openssl 命令生成密钥/证书对。例如：
+
+----
+ openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -keyout myservice.key -out myservice.crt
+----
+====
+
+
+. 完成 *配置 Okta 账户* 表单后，单击 *启用*。
++
+Rancher 会将您重定向到 IdP 登录页面。输入与 Okta IdP 进行身份验证的凭据，以验证您的 Rancher Okta 配置。
++
+
+[NOTE]
+====
+如果没有任何反应，可能是因为您的浏览器阻止了弹出窗口。确保为 Rancher 域禁用弹出窗口拦截器，并在您可能使用的其他扩展中将其加入白名单。
+====
+
+
+*结果：*Rancher 已配置为与 Okta 一起使用。您的用户现在可以使用他们的 Okta 登录信息登录 Rancher。
+
+[NOTE]
+.SAML提供者注意事项
+====
+如果您在没有 OpenLDAP 的情况下配置 Okta，您将无法搜索或直接查找用户或组。这带来了几个注意事项：
+
+* 在Rancher中分配权限时，用户和组不会被验证。
+* 添加用户时，必须正确输入确切的用户ID（即`UID Field`）。当您输入用户ID时，不会搜索可能匹配的其他用户ID。
+* 添加组时，您必须从文本框旁边的下拉列表中选择该组。Rancher假设文本框中的任何输入都是用户。
+* 组下拉菜单仅显示您是成员的组。但是，如果您拥有管理员权限或受限的管理员权限，您可以加入您不是成员的组。
+====
+
+[#_okta_with_openldap_search]
+== Okta 与 OpenLDAP 搜索
+
+您可以添加一个 OpenLDAP 后端来协助用户和组的搜索。Rancher 将显示来自 OpenLDAP 服务的额外用户和组。这允许对当前登录用户未加入的组分配权限。
+
+[#_openldap_prerequisites]
+=== OpenLDAP先决条件
+
+如果您将 Okta 用作您的 IdP，您可以 https://help.okta.com/en-us/Content/Topics/Directory/LDAP-interface-main.htm[为 Rancher 设置 LDAP 接口]。您还可以配置一个外部 OpenLDAP 服务器。
+
+您必须使用 LDAP 绑定账户（即服务账户）配置 Rancher，以便您可以搜索和检索应有访问权限的用户和组的 LDAP 条目。请勿使用管理员账户或个人账户作为 LDAP 绑定账户。 https://help.okta.com/en-us/Content/Topics/users-groups-profiles/usgp-add-users.htm[在 OpenLDAP 中创建]一个专用账户，具有对配置的搜索基础下的用户和组的只读访问权限。
+
+[CAUTION]
+.安全考虑
+====
+
+OpenLDAP 服务账户用于所有搜索。Rancher 用户将看到 OpenLDAP 服务账户可查看的用户和组，无论他们各自的 SAML 权限如何。
+====
+
+
+____
+*使用 TLS？*
+
+如果 OpenLDAP 服务器使用的证书是自签名的或来自未被认可的证书颁发机构，Rancher 需要 CA 证书（与任何中间证书拼接在一起），格式为 PEM。请在配置时提供此证书，以便 Rancher 可以验证证书链。
+____
+
+[#_configure_openldap_in_rancher]
+=== 在Rancher中配置OpenLDAP
+
+{xref-openldap-reference}[配置OpenLDAP服务器、组和用户的设置]。请注意，嵌套组成员资格不可用。
+
+____
+在继续配置之前，请熟悉 {xref-authn-authz}#_external_authentication_configuration_and_principal_users[外部身份验证配置和主要用户]。
+____
+
+. 使用分配了 {xref-global-permissions}[管理员] 角色的本地用户（即 _本地主体_）登录 Rancher。
+. 在左上角，点击 *☰ > 用户与身份验证*。
+. 在左侧导航菜单中，点击 *身份验证提供者*。
+. 点击 *Okta*，或者如果已经配置了 SAML，点击 *编辑配置*。
+. 在*用户和组搜索*下，勾选*配置OpenLDAP服务器*
+
+如果在测试与 OpenLDAP 服务器的连接时遇到问题，请确保您输入了服务账户的凭据并正确配置了搜索基础。检查 Rancher 日志可以帮助确定根本原因。调试日志可能包含有关错误的更详细信息。有关更多信息，请参阅 xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[如何启用调试日志]。
+
+[#_configuring_saml_single_logout_slo]
+== 配置SAML单点注销（SLO）
+
+include::shared:ROOT:partial$en/configure-slo.adoc[]
+
+[#_saml_and_openldap_group_permissions]
+== SAML 和 OpenLDAP 组权限
+
+include::shared:ROOT:partial$en/saml-openldap-group-permissions.adoc[]

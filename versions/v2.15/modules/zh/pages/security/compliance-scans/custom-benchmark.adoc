@@ -1,0 +1,95 @@
+= 为运行集群扫描创建自定义基准版本
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/compliance-scans/custom-benchmark.adoc 
+:product-path: security/compliance-scans/custom-benchmark.adoc
+:experimental:
+
+每个基准版本定义了一组测试配置文件，这些文件定义了由 https://github.com/aquasecurity/kube-bench[kube-bench]工具运行的合规性测试。
+`rancher-compliance`应用程序安装了一些默认的基准版本，这些版本在合规性基准应用程序菜单下列出。
+
+但可能存在一些Kubernetes集群设置需要自定义基准测试的配置。例如，Kubernetes配置文件或证书的路径可能与上游CIS基准查找它们的标准位置不同。
+
+但在以下情况下，可能需要自定义配置或补救措施：
+
+* 非标准文件位置：当Kubernetes二进制文件、配置或证书路径偏离上游基准默认值时。
++
+示例：与传统Kubernetes不同，K3s将控制平面组件打包成一个单一的二进制文件。因此，`--anonymous-auth`标志的存在和配置应在K3s的日志中验证(`journalctl`)，而不是通过`kube-apiserver`进程检查(`ps`)。
+
+* 替代风险缓解措施：如果一个设置未满足检查，但有一个同样有效的补偿控制并附有理由。或者由于其设计，根本不受检查要求的影响。
++
+示例：默认情况下，K3s 将 API 服务器嵌入到 k3s 进程中。没有API服务器Pod规范文件，因此不需要验证后者的文件权限。
+
+[#_1_prepare_the_custom_benchmark_version_configmap]
+== 1.准备自定义基准版本ConfigMap
+
+要创建自定义基准版本，首先需要创建一个包含基准版本配置文件的ConfigMap，并将其上传到您希望运行扫描的Kubernetes集群。
+
+为了准备自定义基准版本ConfigMap，假设我们想添加一个名为`foo`的自定义基准版本。
+
+. 创建一个名为`foo`的目录，并在该目录中放置 https://github.com/aquasecurity/kube-bench[kube-bench]工具查找的所有配置YAML文件。例如，这里是通用CIS 1.5基准版本 https://github.com/aquasecurity/kube-bench/tree/master/cfg/cis-1.5的配置YAML文件。
+. 放置完整的`config.yaml`文件，其中包括所有应测试的组件。
+. 将基准版本名称添加到 `target_mapping` 部分的 `config.yaml`：
++
+[,yaml]
+----
+ target_mapping:
+   "foo":
+     - "master"
+     - "node"
+     - "controlplane"
+     - "etcd"
+     - "policies"
+----
+
+. 通过创建 ConfigMap 将此目录上传到您的 Kubernetes 集群：
++
+[,yaml]
+----
+ kubectl create configmap -n <namespace> foo --from-file=<path to directory foo>
+----
+
+[#_2_add_a_custom_benchmark_version_to_a_cluster]
+== 2.向集群添加自定义基准版本
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在 *集群* 页面，转到您想要添加自定义基准的集群并点击 *探索*。
+. 在左侧导航栏中，点击 *合规性 > 基准版本*。
+. 单击*创建*。
+. 输入 *名称* 和自定义基准版本的描述。
+. 选择适用于您的基准版本的集群提供商。
+. 从下拉菜单中选择您上传的 ConfigMap。
+. 如果适用，添加最低和最高 Kubernetes 版本限制。
+. 单击*创建*。
+
+[#_3_create_a_new_profile_for_the_custom_benchmark_version]
+== 3.为自定义基准版本创建新控制文件
+
+要使用您的自定义基准版本运行扫描，您需要添加一个指向该基准版本的新控制文件。
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在 *集群* 页面，转到您想要添加自定义基准的集群并点击 *探索*。
+. 在左侧导航栏中，点击 *合规性 > 扫描*。
+. 单击*创建*。
+. 提供一个 *名称* 和描述。在此示例中，我们将其命名为 `foo-profile`。
+. 从下拉菜单中选择基准版本。
+. 单击*创建*。
+
+[#_4_run_a_scan_using_the_custom_benchmark_version]
+== 4.使用自定义基准版本运行扫描
+
+一旦指向您的自定义基准版本 `foo` 的控制文件被创建，您可以创建一个新的扫描以运行基准版本中的自定义测试配置。
+
+要运行扫描，
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在 *集群* 页面，转到您想要添加自定义基准的集群并点击 *探索*。
+. 在左侧导航栏中，点击 menu:CIS 基准[扫描]。
+. 单击*创建*。
+. 选择新的集群扫描控制文件。
+. 单击*创建*。
+
+*结果：*生成一份包含扫描结果的报告。要查看结果，请点击出现的扫描名称。

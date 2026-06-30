@@ -1,0 +1,267 @@
+= 配置 Keycloak (SAML)
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2026-04-24
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authentication-config/configure-keycloak-saml.adoc 
+:product-path: rancher-admin/users/authn-and-authz/configure-keycloak-saml.adoc
+:description: 创建一个 Keycloak SAML 客户端并配置 Rancher 以与 Keycloak 一起使用。到最后，您的用户将能够使用他们的 Keycloak 登录信息登录 Rancher。
+
+如果您的组织使用 Keycloak 身份提供者（IdP）进行用户身份验证，您可以配置 Rancher 以允许用户使用其 IdP 凭据登录。
+
+[#_prerequisites]
+== 先决条件
+
+* 您必须配置一个 https://www.keycloak.org/guides#getting-started[Keycloak IdP 服务器]。
+* 在 Keycloak 中，创建一个 https://www.keycloak.org/docs/latest/server_admin/#saml-clients[新的 SAML 客户端]，并使用以下设置。请参阅 https://www.keycloak.org/docs/latest/server_admin/#saml-clients[Keycloak 文档] 以获取帮助。
++
+|===
+| 设置 | 值
+
+| `Sign Documents`
+| `ON` ^1^
+
+| `Sign Assertions`
+| `ON` ^1^
+
+| 所有其他 `ON/OFF` 设置
+| `OFF`
+
+| `Client ID`
+| 要么是 `+https://yourRancherHostURL/v1-saml/keycloak/saml/metadata+`，要么是 Rancher Keycloak 配置的 `Entry ID Field` 中配置的值^2^
+
+| `Client Name`
+| +++<CLIENT_NAME>+++(例如 `rancher`)+++</CLIENT_NAME>+++
+
+| `Client Protocol`
+| `SAML`
+
+| `Valid Redirect URI`
+| `+https://yourRancherHostURL/v1-saml/keycloak/saml/acs+`
+|===
++
+____
+^1^：可选地，您可以启用这两个设置中的一个或两个。
+^2^：在配置并保存 SAML 提供者之前，Rancher SAML 元数据不会生成。
+____
++
+image::keycloak/keycloak-saml-client-configuration.png[]
+
+* 在新的 SAML 客户端中，创建映射器以暴露用户字段
+** 添加所有 "内置协议映射器"
++
+image::keycloak/keycloak-saml-client-builtin-mappers.png[]
+** 创建一个新的 "组列表" 映射器，将成员属性映射到用户的组
++
+image::keycloak/keycloak-saml-client-group-mapper.png[]
+
+[#_getting_the_idp_metadata]
+== 获取 IDP 元数据
+
+[tabs]
+======
+Keycloak 5 及更早版本::
++
+--
+要获取 IDP 元数据，请从您的 Keycloak 客户端导出一个 `metadata.xml` 文件。
+在*安装*选项卡中，选择*SAML元数据IDPSSODescriptor*格式选项并下载您的文件。
+--
+
+Keycloak 6-13::
++
+--
+. 在*配置*部分，单击*领域设置*选项卡。
+. 单击*常规*选项卡。
+. 在*端点*字段中，单击*SAML 2.0 身份提供者元数据*。
+
+验证IDP元数据包含以下属性：
+
+----
+xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+----
+
+某些浏览器，如Firefox，可能会呈现/处理文档，使内容看起来已被修改，并且某些属性似乎缺失。在这种情况下，请使用可以通过您的浏览器找到的原始响应数据。
+
+以下是Firefox的示例过程，但在其他浏览器中会略有不同：
+
+. 按*F12*访问开发者控制台。
+. 单击*网络*选项卡。
+. 在表格中，单击包含`descriptor`的行。
+. 在详细信息窗格中，单击*响应*选项卡。
+. 复制原始响应数据。
+
+获得的 XML 包含 `EntitiesDescriptor` 作为根元素。Rancher 期望根元素为 `EntityDescriptor`，而不是 `EntitiesDescriptor`。因此，在将此XML传递给Rancher之前，请按照以下步骤进行调整：
+
+. 将`EntitiesDescriptor`中未在`EntityDescriptor`中出现的所有属性复制到`EntityDescriptor`中。
+. 从开头删除`<EntitiesDescriptor>`标签。
+. 从 XML 的末尾删除 `</EntitiesDescriptor>`。
+
+您将得到类似下面示例的内容：
+
+----
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:dsig="http://www.w3.org/2000/09/xmldsig#" entityID="https://{KEYCLOAK-URL}/auth/realms/{REALM-NAME}">
+....
+</EntityDescriptor>
+----
+--
+
+Keycloak 14+::
++
+--
+. 在*配置*部分，单击*领域设置*选项卡。
+. 单击*常规*选项卡。
+. 在*端点*字段中，单击*SAML 2.0 身份提供者元数据*。
+
+验证IDP元数据包含以下属性：
+
+----
+xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+----
+
+某些浏览器，如Firefox，可能会呈现/处理文档，使内容看起来已被修改，并且某些属性似乎缺失。在这种情况下，请使用可以通过您的浏览器找到的原始响应数据。
+
+以下是Firefox的示例过程，但在其他浏览器中会略有不同：
+
+. 按*F12*访问开发者控制台。
+. 单击*网络*选项卡。
+. 在表格中，单击包含`descriptor`的行。
+. 在详细信息窗格中，单击*响应*选项卡。
+. 复制原始响应数据。
+--
+======
+
+[#_configuring_keycloak_in_rancher]
+== 在 Rancher 中配置 Keycloak
+
+. 在左上角，点击 *☰ > 用户与身份验证*。
+. 在左侧导航菜单中，点击 *身份验证提供者*。
+. 单击 *Keycloak SAML*。
+. 完成 *配置 Keycloak 账户* 表单。有关填写表单的帮助，请参见 <<_configuration_reference,配置参考>>。
+. 完成 *配置 Keycloak 账户* 表单后，单击 *启用*。
++
+Rancher 会将您重定向到 IdP 登录页面。输入与 Keycloak IdP 进行身份验证的凭据，以验证您的 Rancher Keycloak 配置。
++
+
+[NOTE]
+====
+您可能需要禁用弹出窗口拦截器才能查看IdP登录页面。
+====
+
+
+*结果：*Rancher 已配置为与 Keycloak 一起使用。您的用户现在可以使用他们的 Keycloak 登录凭据登录 Rancher。
+
+[NOTE]
+.SAML提供者注意事项
+====
+* 在Rancher中分配权限时，用户和组不会被验证。
+* 添加用户时，必须正确输入确切的用户ID（即`UID Field`）。当您输入用户ID时，不会搜索可能匹配的其他用户ID。
+* 添加组时，您必须从文本框旁边的下拉列表中选择该组。Rancher假设文本框中的任何输入都是用户。
+* 组下拉菜单仅显示您是成员的组。但是，如果您拥有管理员权限或受限的管理员权限，您可以加入您不是成员的组。
+====
+
+[#_configuration_reference]
+== 配置参考
+
+|===
+| 字段 | 说明
+
+| 显示名称字段
+| 包含用户显示名称的属性。 +
+ +
+示例：`givenName`
+
+| 用户名字段
+| 包含用户名/名的属性。 +
+ +
+示例：`email`
+
+| UID 字段
+| 每个用户唯一的属性。 +
+ +
+示例：`email`
+
+| 组字段
+| 为管理组成员资格创建条目。 +
+ +
+示例：`member`
+
+| 实体 ID 字段
+| 需要配置为 Keycloak 客户端中的客户端 ID 的 ID。 +
+ +
+默认值为: `+https://yourRancherHostURL/v1-saml/keycloak/saml/metadata+`
+
+| Rancher API 主机
+| 您的 Rancher 服务器的 URL。
+
+| 私钥/证书
+| 一个密钥/证书对，用于在 Rancher 和您的 IdP 之间创建安全外壳通道。
+
+| IDP-metadata
+| 您从IdP服务器导出的`metadata.xml`文件。
+|===
+
+[TIP]
+====
+
+您可以使用 openssl 命令生成一个密钥/证书对。例如：
+
+openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -keyout myservice.key -out myservice.cert
+====
+
+
+[#_annex_troubleshooting]
+== 附录：查错
+
+如果您在测试与 Keycloak 服务器的连接时遇到问题，请首先仔细检查您的 SAML 客户端的配置选项。您还可以检查Rancher日志，以帮助确定问题的原因。调试日志可能包含有关错误的更详细信息。请参阅xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[如何启用调试日志]中的文档。
+
+[#_you_are_not_redirected_to_keycloak]
+=== 您没有被重定向到 Keycloak。
+
+当您点击 *使用 Keycloak 进行身份验证* 时，您没有被重定向到您的 IdP。
+
+* 验证您的 Keycloak 客户端配置。
+* 确保 `Force Post Binding` 设置为 `OFF`。
+
+[#_forbidden_message_displayed_after_idp_login]
+=== IdP 登录后显示禁止访问消息。
+
+您已正确重定向到您的 IdP 登录页面，并且能够输入凭据，但之后您会收到 `Forbidden` 消息。
+
+* 检查 Rancher 调试日志。
+* 如果日志显示 `ERROR: either the Response or Assertion must be signed`，请确保在您的 Keycloak 客户端中将 `Sign Documents` 或 `Sign assertions` 设置为 `ON`。
+
+[#_http_502_when_trying_to_access_v1_saml_keycloak_saml_metadata]
+=== 尝试访问 /v1-saml/keycloak/saml/metadata 时出现 HTTP 502 错误。
+
+这通常是由于在配置 SAML 提供者之前未创建元数据。
+尝试将 Keycloak 配置并保存为您的 SAML 提供者，然后访问元数据。
+
+[#_keycloak_error_were_sorry_failed_to_process_response]
+=== Keycloak 错误：“我们很抱歉，处理响应失败”
+
+* 检查您的 Keycloak 日志。
+* 如果日志显示 `failed: org.keycloak.common.VerificationException: Client does not have a public key`，请在您的 Keycloak 客户端中将 `Encrypt Assertions` 设置为 `OFF`。
+
+[#_keycloak_error_were_sorry_invalid_requester]
+=== Keycloak 错误：“我们很抱歉，请求者无效”
+
+* 检查您的 Keycloak 日志。
+* 如果日志显示 `request validation failed: org.keycloak.common.VerificationException: SigAlg was null`，请在您的 Keycloak 客户端中将 `Client Signature Required` 设置为 `OFF`。
+
+[#_cni_community_popularity]
+== CNI 社区受欢迎程度。
+
+[#_configuring_saml_single_logout_slo]
+== 配置SAML单点注销（SLO）
+
+include::shared:ROOT:partial$en/configure-slo.adoc[]
+
+[#_saml_and_openldap_group_permissions]
+== SAML 和 OpenLDAP 组权限
+
+include::shared:ROOT:partial$en/saml-openldap-group-permissions.adoc[]

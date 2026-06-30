@@ -1,0 +1,216 @@
+= 备份恢复使用指南
+ifeval::["{build-type}" != "srfa"]
+:page-languages: [en, de, es, fr, ja, pt, zh]
+endif::[]
+:revdate: 2025-08-26
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-restore-usage-guide.adoc 
+:product-path: rancher-admin/back-up-restore-and-disaster-recovery/usage-guide.adoc
+ifeval::["{build-type}" != "community"]
+:xref-backup-cluster: xref:rancher-admin/back-up-restore-and-disaster-recovery/back-up.adoc
+:xref-rancher-restore-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/restore.adoc
+:xref-rancher-backup-config: xref:rancher-admin/back-up-restore-and-disaster-recovery/configuration/backup.adoc
+:xref-rancher-upgrades: xref:installation-and-upgrade/upgrades.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-backup-cluster: xref:how-to-guides/new-user-guides/backup-restore-and-disaster-recovery/back-up-rancher.adoc
+:xref-rancher-restore-config: xref:reference-guides/backup-restore-configuration/restore-configuration.adoc
+:xref-rancher-backup-config: xref:reference-guides/backup-restore-configuration/backup-configuration.adoc
+:xref-rancher-upgrades: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/upgrades.adoc
+endif::[]
+
+Rancher 备份图表是我们用于灾难恢复和迁移的解决方案。此图表允许您备份 Kubernetes 资源并将其保存到多种持久存储位置。
+
+此图表是一个非常简单的工具，涉及 Rancher 生态系统的多个不同领域。因此，出现了一些边缘案例，导致了未记录的功能。本文件旨在阐明 Rancher 备份的正确定义使用方法，并讨论我们遇到的一些边缘情况。
+
+[#_functionality_overview]
+== 功能概述
+
+[#_backup]
+=== 备份
+
+操作员将图表中由 resourceSet 捕获的所有资源收集为内存中的非结构化对象。在收集资源后，将资源压缩为 tar 文件，以 JSON 格式的清单集合保存，然后上传至用户定义的对象存储。此备份可以设置为重复调度，并且也可以加密。此加密选项很重要，因为某些资源是敏感的，值以明文形式存储而未加密。
+
+有关选项的更多信息，包括加密，以配置备份，请参见 {xref-rancher-backup-config}[备份配置文档]。
+
+[NOTE]
+====
+
+如 {xref-backup-cluster}[备份 Rancher 文档]中所述，您必须手动保存加密配置文件的内容，因为操作员将 *不* 备份它。
+====
+
+
+[#_restore]
+=== 恢复
+
+有两种主要的恢复场景，分别是恢复到运行 Rancher 的集群和恢复到全新的集群。只有在备份来自同一集群且在恢复期间启用了 {xref-rancher-restore-config}#_prune_during_restore[`prune` 选项] 的情况下，您才能恢复到运行 Rancher 的集群。恢复的输入与备份类似。它需要一个备份文件名、加密配置密钥名称和存储位置。
+
+资源按以下顺序恢复：
+
+. 自定义资源定义 (CRDs)
+. 集群范围资源
+. 命名空间资源
+
+有关配置还原选项的更多信息，请参见{xref-rancher-restore-config}[还原配置文档]。
+
+[#_resource_sets]
+=== 资源集
+
+resourceSet决定备份还原操作员在备份中收集哪些资源。它是一组 ResourceSelectors，定义了使用键/值匹配、正则表达式匹配或 Kubernetes 客户端的 labelSelector 的选择要求。
+
+以下是 resourceSelector 可用的不同字段：
+
+* apiVersion
+* excludeKinds
+* excludeResourceNameRegexp
+* kinds
+* kindsRegexp
+* labelSelectors
+* namespaceRegexp
+* namespaces
+* resourceNameRegexp
+* resourceNames
+
+Rancher Backups图表包含一个 https://github.com/rancher/backup-restore-operator/tree/release/v3.0/charts/rancher-backup/files/default-resourceset-contents[默认resourceSet]，这是在安装图表时附加到一个大型resourceSet的YAML文件组合。文件顺序无关紧要。resourceSets在不同版本之间可能会有所不同。
+
+[CAUTION]
+====
+
+如果您希望对resourceSet进行编辑，请在安装图表*之前*进行编辑。
+====
+
+
+[#_proper_usage]
+== 正确使用
+
+本节概述了根据用例正确使用Rancher Backups图表的指南。
+
+[#_all_cases]
+=== 所有情况
+
+* Rancher Backups必须安装在本地群集上。
+ ** 注意：Rancher Backups不处理除其安装的集群以外的任何集群。它可以还原本地群集上的集群资源，但不会与下游集群通信或备份它们。
+* 还原的Rancher版本必须与备份中的Rancher版本匹配。
+* Kubernetes版本应予以考虑，因为您可能正在还原过时的资源（从您要还原的Kubernetes版本中弃用的资源）。
+
+[#_backups]
+=== 备份
+
+* 某些用户生成的资源不会被备份，除非它们能被默认资源集捕获，或者资源集经过调整以捕获它们。
+ ** 我们提供一个标签`resources.cattle.io/backup:true`，当它被添加到任何命名空间中的秘密时，将导致其被备份。
+* 备份是非变更的
+* 备份仅限于本地群集
+
+[#_restores]
+=== 恢复
+
+* 恢复是指将备份恢复到其本地群集。这可以在安装了Rancher的情况下进行（*必须启用修剪*），也可以在未安装的情况下进行（没有特殊说明）。
+* 恢复时需要注意的一件事是，您可能会发现自己需要"`wipe`"任何Rancher资源的集群。这可以通过将 https://github.com/rancher/rancher-cleanup[Rancher清理脚本]作为作业部署到集群中来完成。这使您能够再次安装Rancher备份并恢复到一个全新的本地群集。
+ ** 确保使用kubectl来部署脚本。
+
+[#_migrations]
+=== 迁移
+
+迁移有一些更复杂的地方，因为我们是恢复到不同的集群。这些是一些常被忽视或遗忘的事项。
+
+* 迁移时Rancher域名必须相同。这意味着您之前集群的域名现在必须指向新集群。
+* Rancher*不*应在您要迁移到的集群上运行。这可能会导致Rancher备份和某些Rancher服务出现许多问题。
+* 在备份*恢复*后，安装与备份*相同*版本的Rancher。
+* 如果您选择在不同的Kubernetes版本上配置新集群，请注意这可能会导致各种不受支持的行为，因为可用的Kubernetes API可能与您备份时的不同。这可能导致已弃用的资源被恢复，从而引发问题。
+* 在迁移期间，您*不*应执行任何升级。
+
+[#_edge_cases_and_improper_usage]
+== 边缘案例和不当使用
+
+以下是一些*不正确*使用或期望Rancher备份的示例。
+
+[#_upgrades]
+=== 升级
+
+* 使用Rancher备份来升级Rancher版本不是有效的用例。推荐的步骤是先备份当前版本，然后使用{xref-rancher-upgrades}[这些说明]升级您的 Rancher 实例，最后在升级完成后再进行*另一个*备份。这样，如果升级失败，您将有一个备份可以恢复，并且第二个备份将有效以恢复到升级后的Rancher版本。
+* 使用Rancher备份来升级Kubernetes版本也不是有效的用例。因为Kubernetes API和可用资源与版本相关，使用备份恢复进行升级可能会导致资源集不匹配的问题，这些资源可能已被弃用、不受支持或已更新。如何升级您的集群版本将取决于其配置方式，但建议使用与上述相同的格式（备份、升级、备份）。
+
+[#_resourceset]
+=== ResourceSet
+
+* 由于来自各个团队的资源和服务不断演变，开发人员应注意是否需要向默认资源集添加或删除新资源。
+* Rancher备份仅备份默认资源集所捕获的内容（除非已编辑）。 我们为用户创建的秘密添加了一个特定标签，该标签将备份任何名称和命名空间的秘密，只要它具有该标签（请参见<<_backups,备份的正确使用>>）。
+
+[#_downstream_clusters]
+=== 下游集群
+
+* Rancher备份*仅*备份本地群集上的Kubernetes资源。这意味着下游集群*不*会被触及或备份，除了它们在本地群集资源中的存在。下游集群的更新和通信由rancher-agent和rancher-webhook负责。
+
+[#_restoring_deleted_resources]
+=== 恢复已删除的资源
+
+* 某些资源会产生外部结果，例如配置下游集群。删除下游集群并在本地群集上恢复集群资源*不*会导致Rancher重新配置该集群。根据资源的不同，恢复可能无法完全将资源恢复到可用状态。
+* "恢复已删除集群"的边缘情况*不*是一个不受支持的功能。对于下游集群，无论是预配的还是导入的，删除它们会导致一系列清理任务，这使得用户无法恢复已删除的集群。预配的集群将销毁其节点和与Rancher相关的预配资源，而导入的集群可能会销毁其Rancher代理和与本地群集注册相关的其他资源/服务。
+
+[CAUTION]
+====
+
+尝试删除和恢复下游集群可能会导致Rancher、Rancher备份、rancher-webhook、Fleet等出现各种问题。不建议这样做。
+====
+
+
+[#__fleet_product_name_harvester_product_name_and_other_services]
+=== {fleet-product-name}、{harvester-product-name}和其他服务
+
+由Rancher备份支持的其他服务通常会发生变化和演变。随着这种情况的发生，它们的资源和备份需求也可能会发生变化。某些资源可能不需要备份，而某些资源可能根本不被备份。团队在开发过程中应考虑这一点，并评估其相关资源集是否正确捕获了服务所需的资源，以确保能够正确恢复。
+
+[#_monitoring_backups_and_restores]
+== 监控备份和恢复
+
+Rancher为备份操作员提供开箱即用的监控功能。这些功能默认是禁用的，但在部署操作员Helm Chart时可以轻松启用。
+
+[#_metrics]
+=== 指标
+
+可以通过在Helm Chart值中设置`monitoring.metrics.enabled: true`和`monitoring.serviceMonitor.enabled: true`来启用指标。启用后，操作员将导出以下指标。请注意，*rancher-monitoring*需要事先安装，以便正确导出指标。
+
+[cols="1,1"]
+|===
+|**指标名称**|**说明**
+
+|`rancher_backup_info`
+|有关特定Rancher备份CR的详细信息（标签：`name`、`status`、`resourceSetName`、`retentionCount`、`backupType`、`filename`、`storageLocation`、`nextSnapshot`、`lastSnapshot`）。类型*GaugeVec*.
+
+|`rancher_backup_count`
+|现有的Rancher备份CR的数量。类型 *Gauge*。
+
+|`rancher_backups_attempted_total`
+|由操作员处理的Rancher备份的总数量（标签：`name`）。类型 *CounterVec*。
+
+|`rancher_backups_failed_total`
+|此操作员处理的失败Rancher备份的总数量（标签：`name`）。类型 *CounterVec*。
+
+|`rancher_backup_duration_seconds`
+|操作员处理每个备份的持续时间（以秒为单位）（标签：`name`）。类型 *HistogramVec*，用户可以自定义桶。
+
+|`rancher_backup_last_processed_timestamp_seconds`
+|最后处理的备份的Unix时间（以秒为单位）（标签：`name`）。类型 *GaugeVec*。
+
+|`rancher_restore_info`
+|特定Rancher恢复CR的详细信息（标签：`name`、`status`、`fileName`、`prune`、`storageLocation`、`restoreTime`）。类型 *GaugeVec*。
+
+|`rancher_restore_count`
+|现有的Rancher恢复CR的数量。类型 *Gauge*。
+|===
+
+[#_alerting]
+=== 警报
+
+默认情况下只提供一个警报，'BackupFailed'，当备份未能被操作员处理时会警告用户。可以通过设置 `monitoring.prometheusRules.defaultAlert.enabled: true` 来启用。
+
+用户还可以通过设置 `monitoring.prometheusRules.customRules.enabled: true` 并在 `monitoring.prometheusRules.customRules.rules` 下定义它们来部署自己的警报规则。
+
+[#_dashboards]
+=== 仪表板
+
+Rancher 还提供 Grafana 仪表板以帮助监控备份操作员的健康状况。然而，这些只能通过 *rancher-monitoring* Helm Chart 部署。为此需要设置 `rancherBackupMonitoring.dashboards.enabled: true`。
+
+[#_conclusion]
+== 结论
+
+Rancher 备份是一个非常有用的工具，但在其范围和预期用途上有些限制。为了避免可能出现的问题，必须按照所述的具体步骤操作，以确保 Helm Chart 能够正常运行。
