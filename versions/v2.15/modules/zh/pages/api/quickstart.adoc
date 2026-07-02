@@ -1,0 +1,176 @@
+= RK-API 快速入门指南
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: api/quickstart.adoc 
+:product-path: api/quickstart.adoc
+ifeval::["{build-type}" != "community"]
+:xref-api-reference: xref:api/reference.adoc
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-api-reference: xref:api/api-reference.adoc
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+endif::[]
+
+您可以通过 Kubernetes API 访问 Rancher 的资源。本指南帮助您作为 Rancher 用户开始使用此 API。
+
+. 在左上角，点击 *☰ > 全局设置*。
+. 找到并复制 `server-url` 字段中的地址。
+. {xref-user-api-keys}#_creating_an_api_key[创建]一个没有作用域的 Rancher API 密钥。
+
+[WARNING]
+====
+
+没有作用域的 Rancher API 密钥授予用户可以访问的所有资源的无限制访问权限。为了防止未经授权的使用，此密钥应安全存储并定期更换。
+====
+
+
+. 创建一个 `kubeconfig.yaml` 文件。将 `$SERVER_URL` 替换为服务器 URL，将 `$API_KEY` 替换为您的 Rancher API 密钥：
++
+[,yaml]
+----
+ apiVersion: v1
+ kind: Config
+ clusters:
+ - name: "rancher"
+   cluster:
+     server: "$SERVER_URL"
+
+ users:
+ - name: "rancher"
+   user:
+     token: "$API_KEY"
+
+ contexts:
+ - name: "rancher"
+   context:
+     user: "rancher"
+     cluster: "rancher"
+
+ current-context: "rancher"
+----
+
+您可以使用此文件与任何兼容的工具，例如 kubectl 或 https://github.com/kubernetes/client-go[client-go]。有关快速演示，请参见 <<_api_kubectl_example,kubectl 示例>>。
+
+有关处理更复杂证书设置的更多信息，请参见 <<_specifying_ca_certs,指定 CA 证书>>。
+
+有关可用 kubeconfig 选项的更多信息，请参见 https://kubernetes.io/docs/tasks/access-application-cluster/configure-access-multiple-clusters/[上游文档]。
+
+[#_api_kubectl_example]
+== API kubectl 示例
+
+在此示例中，我们将展示如何使用 kubectl 创建一个项目，然后删除它。有关其他可用 Rancher 资源的列表，请参阅 {xref-api-reference}[API 参考] 页面。
+
+[NOTE]
+====
+
+目前，并非所有 Rancher 资源都可以通过 Rancher Kubernetes API 访问。
+====
+
+
+. 将您的 KUBECONFIG 环境变量设置为您刚刚创建的 kubeconfig 文件：
+
+[,bash]
+----
+  export KUBECONFIG=$(pwd)/kubeconfig.yaml
+----
+
+. 使用 `kubectl explain` 查看项目的可用字段或资源的复杂子字段：
+
+[,bash]
+----
+  kubectl explain projects
+  kubectl explain projects.spec
+----
+
+并非所有资源都可能具有详细输出。
+
+. 在名为 `project.yaml` 的文件中添加以下内容：
+
+[,yaml]
+----
+  apiVersion: management.cattle.io/v3
+  kind: Project
+  metadata:
+    # name should be unique across all projects in every cluster
+    name: p-abc123
+    # generateName can be used instead of `name` to randomly generate a name.
+    # generateName: p-
+    # namespace should match spec.ClusterName.
+    namespace: local
+  spec:
+    # clusterName should match `metadata.Name` of the target cluster.
+    clusterName: local
+    description: Example Project
+    # displayName is the human-readable name and is visible from the UI.
+    displayName: Example
+----
+
+. 创建项目：
+
+[,bash]
+----
+  kubectl create -f project.yaml
+----
+
+. 删除项目：
+
+删除项目的方式取决于您创建项目名称的方式。
+
+*A。如果您在创建项目时使用了 `name`*:
+
+ ```bash
+ kubectl delete -f project.yaml
+ ```
+
+*B。如果您使用了`generateName`*：
+
+....
+Replace `$PROJECT_NAME` with the randomly generated name of the project displayed by Kubectl after you created the project.
+
+```bash
+kubectl delete project $PROJECT_NAME -n local
+```
+....
+
+[#_specifying_ca_certs]
+== 指定CA证书
+
+为了确保您的工具能够识别Rancher的CA证书，大多数设置需要对上述模板进行额外修改。
+
+. 在左上角，点击 *☰ > 全局设置*。
+. 找到并复制 `ca-certs` 字段中的值。
+. 将该值保存在名为 `rancher.crt` 的文件中。
+
+[NOTE]
+====
+  如果您的Rancher实例被其他服务代理，您必须提取该服务使用的证书，并将其添加到kubeconfig文件中，如第5步所示。
+====
+
+
+. 以下命令将`rancher.crt`转换为base64输出，去除所有换行，并使用证书更新kubeconfig中的集群，最后删除`rancher.crt`文件：
+
+[,bash]
+----
+  export KUBECONFIG=$PATH_TO_RANCHER_KUBECONFIG
+  kubectl config set clusters.rancher.certificate-authority-data $(cat rancher.crt | base64 -i - | tr -d '\n')
+  rm rancher.crt
+----
+
+. （可选）如果您使用的是系统不信任的自签名证书，可以在kubeconfig中使用kubectl设置不安全选项：
+
+[WARNING]
+====
+
+此选项不应在生产环境中使用，因为它存在安全风险。
+====
+
+
+[,bash]
+----
+  export KUBECONFIG=$PATH_TO_RANCHER_KUBECONFIG
+  kubectl config set clusters.rancher.insecure-skip-tls-verify true
+----
+
+如果您的Rancher实例被其他服务代理，您必须提取该服务使用的证书，并将其添加到kubeconfig文件中，如上所示。

@@ -1,0 +1,238 @@
+= 容器网络接口 (CNI) 提供者
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-01-26
+:page-revdate: {revdate}
+:community-path: faq/container-network-interface-providers.adoc 
+:product-path: faq/container-network-interface-providers.adoc
+:description: 了解容器网络接口 (CNI)、Rancher 提供的 CNI 提供者、它们提供的功能，以及如何为您选择提供者
+ifeval::["{build-type}" != "community"]
+:xref-node-reqs: xref:cluster-deployment/node-requirements.adoc
+:xref-rke2-config: xref:cluster-deployment/configuration/rke2.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-node-reqs: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/node-requirements-for-rancher-managed-clusters.adoc
+:xref-rke2-config: xref:reference-guides/cluster-configuration/rancher-server-configuration/rke2-cluster-configuration.adoc
+endif::[]
+
+[#_what_is_cni]
+== 什么是 CNI？
+
+CNI（容器网络接口）是一个 https://cncf.io/[云原生计算基金会项目]，由用于编写插件以配置 Linux 容器中的网络接口的规范和库组成，以及多个插件。CNI 仅关注容器的网络连接性以及在容器被删除时移除分配的资源。
+
+Kubernetes 使用 CNI 作为网络提供者与 Kubernetes pod 网络之间的接口。
+
+image::cni-logo.png[CNI 标志]
+
+有关更多信息，请访问 https://github.com/containernetworking/cni[CNI GitHub 项目]。
+
+[#_what_network_models_are_used_in_cni]
+== CNI 中使用了哪些网络模型？
+
+CNI 网络提供者使用封装网络模型（如虚拟可扩展局域网 (https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#vxlan[VXLAN]））或未封装网络模型（如边界网关协议 (https://en.wikipedia.org/wiki/Border_Gateway_Protocol[BGP]））来实现其网络结构。
+
+[#_what_is_an_encapsulated_network]
+=== 什么是封装网络？
+
+该网络模型提供了一个逻辑的第二层 (L2) 网络，封装在现有的第三层 (L3) 网络拓扑之上，跨越 Kubernetes 集群节点。使用此模型，您可以为容器提供一个隔离的 L2 网络，而无需路由分发，所有这些的代价是处理的最小开销和增加的 IP 数据包大小，这来自于覆盖封装生成的 IP 头。封装信息通过 UDP 端口在 Kubernetes 工作器之间分发，交换有关如何访问 MAC 地址的网络控制平面信息。在这种网络模型中常用的封装方式是 VXLAN、互联网协议安全 (IPSec) 和 IP-in-IP。
+
+简单来说，这种网络模型在 Kubernetes 工作器之间生成了一种网络桥接，pod 在其中连接。
+
+当需要扩展的 L2 桥接时，使用此网络模型。该网络模型对 Kubernetes 工作器的 L3 网络延迟敏感。如果数据中心位于不同的地理位置，请确保它们之间的延迟较低，以避免最终的网络分段。
+
+使用此网络模型的CNI网络提供商包括Flannel、Canal、Weave和Cilium。默认情况下，Calico不使用此模型，但可以配置为使用。
+
+image::encapsulated-network.png[封装网络]
+
+[#_what_is_an_unencapsulated_network]
+=== 什么是未封装网络？
+
+此网络模型提供L3网络，以在容器之间路由数据包。此模型不会生成隔离的 L2 网络，也不会产生额外开销。这些好处的代价是 Kubernetes 工作器必须管理所需的任何路由分发。此网络模型使用 Kubernetes 工作器之间的网络协议来分发路由信息，以到达 pods，而不是使用 IP 头进行封装，例如 https://en.wikipedia.org/wiki/Border_Gateway_Protocol[BGP]。
+
+简单来说，此网络模型在 Kubernetes 工作器之间生成一种网络路由器，提供有关如何到达 pods 的信息。
+
+当优先选择路由的L3网络时，使用此网络模型。此模式在操作系统级别动态更新 Kubernetes 工作器的路由。它对延迟的敏感性较低。
+
+使用此网络模型的CNI网络提供商包括Calico和Cilium。尽管Cilium不是默认模式，但可以配置为使用此模型。
+
+image::unencapsulated-network.png[未封装网络]
+
+[#_what_cni_providers_are_provided_by_rancher]
+== Rancher提供哪些CNI提供商？
+
+[#__rke2_product_name_kubernetes_clusters]
+=== {rke2-product-name} Kubernetes集群
+
+开箱即用，Rancher为RKE2 Kubernetes集群提供以下CNI网络提供商：Calico、Canal、Cilium和Flannel。
+
+在从Rancher创建新的Kubernetes集群时，您可以选择您的CNI网络提供商。
+
+[#_calico]
+==== Calico
+
+image::calico-logo.png[卡利科标志]
+
+Calico 在云中的 Kubernetes 集群中启用网络和网络策略。默认情况下，Calico 使用纯粹的、未封装的 IP 网络结构和策略引擎为您的 Kubernetes 工作负载提供网络。工作负载能够通过 BGP 在云基础设施和本地之间进行通信。
+
+如果需要，Calico 还提供无状态的 IP-in-IP 或 VXLAN 封装模式。Calico 还提供策略隔离，允许您使用高级的入口和出口策略来保护和管理您的 Kubernetes 工作负载。
+
+如果使用 BGP，Kubernetes 工作器应打开 TCP 端口 `179`；如果使用 VXLAN 封装，则应打开 UDP 端口 `4789`。此外，使用 Typha 时需要 TCP 端口 `5473`。有关更多详细信息，请参见 {xref-node-reqs}#_networking_requirements[用户集群的端口要求]。
+
+[NOTE]
+.重要说明：
+====
+
+在 Rancher v2.6.3 中，Calico 探针在 RKE2 安装时在 Windows 节点上失败。*请注意，此问题已在 v2.6.4 中解决。*
+
+* 要解决此问题，请首先导航到 `\https://<rancherserverurl>/v3/settings/windows-rke2-install-script`。
+* 在那里，将当前设置：`+https://raw.githubusercontent.com/rancher/wins/v0.1.3/install.ps1+` 更改为此新设置：`+https://raw.githubusercontent.com/rancher/rke2/master/windows/rke2-install.ps1+`。
+====
+
+
+image::calico-diagram.svg[卡利科图示]
+
+有关更多信息，请参见以下页面：
+
+* https://www.projectcalico.org/[项目 Calico 官方网站]
+* https://github.com/projectcalico/calico[项目 Calico GitHub 页面]
+
+[#_canal]
+==== Canal
+
+image::canal-logo.png[Canal 标志]
+
+Canal 是一个 CNI 网络提供者，结合了 Flannel 和 Calico 的优点。它允许用户轻松地将 Calico 和 Flannel 网络作为统一的网络解决方案一起部署，结合 Calico 的网络策略执行与 Calico（未封装）和/或 Flannel（封装）网络连接选项的丰富超集。
+
+在Rancher中，Canal是默认的CNI网络提供者，结合了Flannel和VXLAN封装。
+
+Kubernetes工作器应打开UDP端口`8472`（VXLAN）和TCP端口`9099`（健康检查）。如果使用Wireguard，您应打开UDP端口`51820`和`51821`。有关更多详细信息，请参阅{xref-node-reqs}[用户集群的端口要求]。
+
+image::canal-diagram.png[]
+
+有关更多信息，请参阅 https://github.com/rancher/rke2-charts/tree/main-source/packages/rke2-canal[Rancher维护的Canal源]和 https://github.com/projectcalico/canal[Canal GitHub页面]。
+
+[#_cilium]
+==== Cilium
+
+image::cilium-logo.png[Cilium 徽标]
+
+Cilium在Kubernetes中启用网络和网络策略（L3、L4和L7）。默认情况下，Cilium使用eBPF技术在节点内部路由数据包，并使用VXLAN将数据包发送到其他节点。也可以配置未封装的技术。
+
+Cilium建议使用大于5.2的内核版本，以充分利用eBPF的潜力。Kubernetes 工作器应打开 TCP 端口 `8472` 用于 VXLAN，TCP 端口 `4240` 用于健康检查。此外，必须启用ICMP 8/0以进行健康检查。有关更多信息，请查看 https://docs.cilium.io/en/latest/operations/system_requirements/#firewall-requirements[Cilium系统要求]。
+
+[#_flannel]
+==== Flannel
+
+image::flannel-logo.png[Flannel徽标]
+
+Flannel是一种简单易用的L3网络结构配置方式，专为Kubernetes设计。Flannel在每个主机上运行一个名为flanneld的单一二进制代理，负责从更大、预配置的地址空间中为每个主机分配子网租约。Flannel使用Kubernetes API或etcd直接存储网络配置、分配的子网和任何辅助数据（例如主机的公共IP）。数据包通过几种后端机制之一进行转发，默认封装为 https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#vxlan[VXLAN]。
+
+封装流量默认情况下是未加密的。Flannel提供两种加密解决方案：
+
+* https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#ipsec[IPSec]，它利用 https://www.strongswan.org/[strongSwan] 在 Kubernetes 工作器之间建立加密的 IPSec 隧道。这是一个用于加密的实验性后端。
+* https://github.com/flannel-io/flannel/blob/master/Documentation/backends.md#wireguard[WireGuard]，这是一个比strongSwan性能更快的替代方案。
+
+Kubernetes 工作器应打开 UDP 端口 `8472`（VXLAN）。有关更多详细信息，请参见{xref-node-reqs}#_networking_requirements[用户集群的端口要求]。
+
+image::flannel-diagram.png[Flannel 图示]
+
+有关更多信息，请参见 https://github.com/flannel-io/flannel[Flannel GitHub 页面]。
+
+[#_ingress_routing_across_nodes_in_cilium]
+===== Cilium中的节点间入口路由
+
+{blank} +
+默认情况下，Cilium不允许Pod与其他节点上的Pod进行通信。为了解决这个问题，请启用入口控制器以通过`CiliumNetworkPolicy`在节点之间路由请求。
+
+在选择Cilium CNI并为您的新集群启用项目网络隔离后，请按如下方式配置：
+
+----
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: hn-nodes
+  namespace: default
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+      - remote-node
+----
+
+[#_cni_features_by_provider]
+== 按提供商划分的CNI功能
+
+下表总结了Rancher提供的每个CNI网络提供商的不同功能。
+
+|===
+| 提供器 | 网络模型 | 路由分发 | 网络策略 | 网格 | 外部数据存储 | 加密 | 入口/出口策略
+
+| Canal
+| 封装（VXLAN）
+| 否
+| 是
+| 否
+| K8s API
+| 是
+| 是
+
+| Flannel
+| 封装（VXLAN）
+| 否
+| 否
+| 否
+| K8s API
+| 是
+| 否
+
+| Calico
+| 封装（VXLAN，IPIP）或未封装
+| 是
+| 是
+| 是
+| Etcd和K8s API
+| 是
+| 是
+
+| Weave
+| 封装
+| 是
+| 是
+| 是
+| 否
+| 是
+| 是
+
+| Cilium
+| 封装（VXLAN）
+| 是
+| 是
+| 是
+| Etcd和K8s API
+| 是
+| 是
+|===
+
+* 网络模型：封装或未封装。有关更多信息，请参见 <<_what_network_models_are_used_in_cni,在 CNI 中使用的网络模型是什么？>>
+* 路由分发：一种外部网关协议，旨在交换互联网的路由和可达性信息。BGP 可以帮助集群之间的 Pod 到 Pod 网络连接。在未封装的 CNI 网络提供商中，此功能是必需的，通常由 BGP 完成。如果您计划构建跨网络段分割的集群，路由分发是一个不错的功能。
+* 网络策略：Kubernetes 提供通过网络策略强制执行服务间通信规则的功能。此功能在 Kubernetes v1.7 中是稳定的，并且可以与某些网络插件一起使用。
+* 网格：此功能允许不同 Kubernetes 集群之间实现服务间网络通信。
+* 外部数据存储：具有此功能的 CNI 网络提供商需要外部数据存储来存储其数据。
+* 加密：此功能允许加密和安全的网络控制和数据平面。
+* 入口/出口策略：此功能允许您管理 Kubernetes 和非 Kubernetes 通信的路由控制。
+
+[#_cni_community_popularity]
+== CNI 社区受欢迎程度
+
+include::shared:ROOT:partial$en/cni-popularity.adoc[]
+
+[#_which_cni_provider_should_i_use]
+== 我应该使用哪个 CNI 提供商？
+
+这取决于您的项目需求。有许多不同的提供商，每个提供商都有各种功能和选项。没有一个提供商能够满足每个人的需求。
+
+Canal 是默认的 CNI 网络提供商。我们推荐它用于大多数用例。它通过 Flannel 提供容器的封装网络，同时添加 Calico 网络策略，从而在网络层面实现项目/命名空间隔离。
+
+[#_how_can_i_configure_a_cni_network_provider]
+== 我该如何配置 CNI 网络提供商？
+
+请参见{xref-rke2-config}[集群选项]以了解如何为您的集群配置网络提供商。有关更高级的配置选项，请参见如何使用{xref-rke2-config}#_cluster_config_file_reference[配置文件]配置您的集群。

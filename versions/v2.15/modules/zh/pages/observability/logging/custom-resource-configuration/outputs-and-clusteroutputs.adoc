@@ -1,0 +1,319 @@
+= 输出和集群输出
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/logging/custom-resource-configuration/outputs-and-clusteroutputs.adoc 
+:product-path: observability/logging/custom-resource-configuration/outputs-and-clusteroutputs.adoc
+ifeval::["{build-type}" != "community"]
+:xref-logging: xref:observability/logging/logging.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-logging: xref:integrations-in-rancher/logging/index.adoc
+endif::[]
+
+请参阅 https://kube-logging.github.io/docs/configuration/flow/[日志操作员文档]以获取有关如何配置`Flows`和`ClusterFlows`的完整详细信息。
+
+请参阅{xref-logging}#_日志缓冲区重载Pods[与日志服务的Rancher集成：故障排除]以了解如何解决日志缓冲区的内存问题。
+
+[#_outputs]
+== 输出
+
+`Output`资源定义了您的`Flows`可以发送日志消息的位置。`Outputs`是日志`Flow`的最终阶段。
+
+`Output`是一个名称空间资源，这意味着只有同一名称空间中的`Flow`可以访问它。
+
+您可以在这些定义中使用秘密，但它们也必须在同一名称空间中。
+
+`Outputs`可以通过在Rancher UI中填写表单来配置。
+
+有关`Output`自定义资源的详细信息，请参见 https://kube-logging.github.io/docs/configuration/crds/v1beta1/output_types/[OutputSpec.]。
+
+Rancher UI提供了用于配置以下`Output`类型的表单：
+
+* Amazon ElasticSearch
+* Azure存储
+* Cloudwatch
+* Datadog
+* Elasticsearch
+* 文件
+* Fluentd
+* GCS
+* Kafka
+* Kinesis流
+* LogDNA
+* LogZ
+* Loki
+* New Relic
+* Splunk
+* SumoLogic
+* Syslog
+
+Rancher UI提供了用于配置`Output`类型、目标和访问凭据（如适用）的表单。
+
+有关日志操作员支持的每个日志插件的示例配置，请参见 https://kube-logging.github.io/docs/configuration/plugins/outputs/[日志操作员文档]。
+
+[#_clusteroutputs]
+== ClusterOutputs
+
+`ClusterOutput`定义了一个没有名称空间限制的`Output`。仅在与日志操作员部署在同一名称空间时有效。
+
+`ClusterOutputs`可以通过在Rancher UI中填写表单来配置。
+
+有关 `ClusterOutput` 自定义资源的详细信息，请参见 https://kube-logging.github.io/docs/configuration/crds/v1beta1/clusteroutput_types/[ClusterOutput.]
+
+[#_yaml_examples]
+== YAML 示例
+
+安装日志记录后，您可以使用这些示例来帮助构建自己的日志记录管道。
+
+* <<_cluster_output_to_elasticsearch,集群输出到 ElasticSearch>>
+* <<_output_to_splunk,输出到 Splunk>>
+* <<_output_to_syslog,输出到 Syslog>>
+* <<_unsupported_outputs,不支持的输出>>
+
+[#_cluster_output_to_elasticsearch]
+=== 集群输出到 ElasticSearch
+
+假设您想将集群中的所有日志发送到一个 `elasticsearch` 集群。首先，我们创建一个集群 `Output`。
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+    name: "example-es"
+    namespace: "cattle-logging-system"
+spec:
+    elasticsearch:
+      host: elasticsearch.example.com
+      port: 9200
+      scheme: http
+----
+
+我们在与我们的操作员相同的名称空间中创建了这个 `ClusterOutput`，但未配置 Elasticsearch：`cattle-logging-system.`。每次我们创建 `ClusterFlow` 或 `ClusterOutput` 时，都必须将其放入 `cattle-logging-system` 名称空间。
+
+现在我们已经配置了日志的去向，让我们配置所有日志发送到该 `ClusterOutput`。
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+    name: "all-logs"
+    namespace: "cattle-logging-system"
+spec:
+  globalOutputRefs:
+    - "example-es"
+----
+
+我们现在应该能看到配置的索引及其日志。
+
+[#_output_to_splunk]
+=== 输出到 Splunk
+
+如果我们有一个应用团队只希望将特定名称空间的日志发送到 `splunk` 服务器怎么办？在这种情况下，我们可以使用名称空间 `Outputs` 和 `Flows`。
+
+在开始之前，让我们设置该团队的应用程序：`coolapp`。
+
+[,yaml]
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devteam
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coolapp
+  namespace: devteam
+  labels:
+    app: coolapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: coolapp
+  template:
+    metadata:
+      labels:
+        app: coolapp
+    spec:
+      containers:
+        - name: generator
+          image: paynejacob/loggenerator:latest
+----
+
+在 `coolapp` 运行时，我们将遵循与创建 `ClusterOutput` 时类似的路径。然而，与 `ClusterOutputs` 不同，我们在应用程序的名称空间中创建我们的 `Output`。
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Output
+metadata:
+  name: "devteam-splunk"
+  namespace: "devteam"
+spec:
+  splunkHec:
+    hec_host: splunk.example.com
+    hec_port: 8088
+    protocol: http
+----
+
+再次，让我们给我们的 `Output` 一些日志：
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Flow
+metadata:
+  name: "devteam-logs"
+  namespace: "devteam"
+spec:
+  localOutputRefs:
+    - "devteam-splunk"
+----
+
+[#_output_to_syslog]
+=== 输出到 Syslog
+
+假设您想将集群中的所有日志发送到一个 `syslog` 服务器。首先，我们创建一个 `ClusterOutput`：
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: "example-syslog"
+  namespace: "cattle-logging-system"
+spec:
+  syslog:
+    buffer:
+      timekey: 30s
+      timekey_use_utc: true
+      timekey_wait: 10s
+      flush_interval: 5s
+    format:
+      type: json
+      app_name_field: test
+    host: syslog.example.com
+    insecure: true
+    port: 514
+    transport: tcp
+----
+
+现在我们已经配置了日志的去向，让我们配置所有日志发送到该 `Output`。
+
+[,yaml]
+----
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+  name: "all-logs"
+  namespace: cattle-logging-system
+spec:
+  globalOutputRefs:
+    - "example-syslog"
+----
+
+[#_unsupported_outputs]
+=== 不支持的输出
+
+在最后一个示例中，我们创建一个 `Output`，将日志写入一个不支持的目标：
+
+[NOTE]
+.关于 Syslog 的说明：
+====
+
+`syslog`是一个受支持的 `Output`。然而，这个示例仍然提供了关于使用不支持的插件的概述。
+====
+
+
+[,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: syslog-config
+  namespace: cattle-logging-system
+type: Opaque
+stringData:
+  fluent-bit.conf: |
+    [INPUT]
+        Name              forward
+        Port              24224
+
+    [OUTPUT]
+        Name              syslog
+        InstanceName      syslog-output
+        Match             *
+        Addr              syslog.example.com
+        Port              514
+        Cluster           ranchers
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fluentbit-syslog-forwarder
+  namespace: cattle-logging-system
+  labels:
+    output: syslog
+spec:
+  selector:
+    matchLabels:
+      output: syslog
+  template:
+    metadata:
+      labels:
+        output: syslog
+    spec:
+      containers:
+      - name: fluentbit
+        image: paynejacob/fluent-bit-out-syslog:latest
+        ports:
+          - containerPort: 24224
+        volumeMounts:
+          - mountPath: "/fluent-bit/etc/"
+            name: configuration
+      volumes:
+      - name: configuration
+        secret:
+          secretName: syslog-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslog-forwarder
+  namespace: cattle-logging-system
+spec:
+  selector:
+    output: syslog
+  ports:
+    - protocol: TCP
+      port: 24224
+      targetPort: 24224
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+  name: all-logs
+  namespace: cattle-logging-system
+spec:
+  globalOutputRefs:
+    - syslog
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: syslog
+  namespace: cattle-logging-system
+spec:
+  forward:
+    servers:
+      - host: "syslog-forwarder.cattle-logging-system"
+    require_ack_response: false
+    ignore_network_errors_at_startup: false
+----
+
+让我们分析一下这里发生了什么。首先，我们创建一个容器的部署，该容器具有额外的 `syslog` 插件，并接受从另一个 `fluentd` 转发的日志。接下来，我们创建一个 `Output`，配置为转发到我们的部署。然后，部署 `fluentd` 将所有日志转发到配置的 `syslog` 目标。

@@ -1,0 +1,778 @@
+= 设置亚马逊云提供商
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-01-15
+:page-revdate: {revdate}
+:community-path: how-to-guides/新用户指南/在Rancher中设置Kubernetes集群/设置云提供商/amazon.adoc 
+:product-path: cluster-deployment/set-up-cloud-providers/amazon.adoc
+:weight: 1 
+ifeval::["{build-type}" != "community"]
+:xref-custom-clusters: xref:cluster-deployment/custom-clusters/custom-clusters.adoc
+:xref-infra-aws: xref:cluster-deployment/infra-providers/aws/aws.adoc
+:xref-migrate-out-of-tree-amazon: xref:cluster-deployment/migrate-to-an-out-of-tree-cloud-provider/amazon.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-custom-clusters: xref:reference-guides/cluster-configuration/rancher-server-configuration/use-existing-nodes/index.adoc
+:xref-infra-aws: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/create-an-amazon-ec2-cluster.adoc
+:xref-migrate-out-of-tree-amazon: xref:how-to-guides/新用户指南/在Rancher中设置Kubernetes集群/迁移到外部云提供商/迁移到amazon.adoc
+endif::[]
+
+[NOTE]
+.重要说明：
+====
+
+在 Kubernetes 1.27 及更高版本中，您必须使用外部 AWS 云提供商。内部云提供商已被弃用。亚马逊云提供商已被完全移除，升级到 Kubernetes 1.27 后将无法使用。下面列出的步骤仍然需要设置亚马逊云提供商。您可以在创建 IAM 角色并配置 ClusterID 后<<_using_the_out_of_tree_aws_cloud_provider,设置外部云提供商>>。
+
+您还可以在 Kubernetes 1.26 及更早版本上{xref-migrate-out-of-tree-amazon}[从内部迁移到外部 AWS 云提供商]。所有现有集群必须在升级到 v1.27 之前进行迁移，以保持功能正常。
+
+从 Kubernetes 1.23 开始，您必须停用 `CSIMigrationAWS` 功能门控才能使用内部 AWS 云提供商。您可以通过在高级集群配置中将 `feature-gates=CSIMigrationAWS=false` 设置为集群的 Kubelet、控制器管理器、API 服务器和调度程序的附加参数来实现。
+====
+
+
+当您使用亚马逊作为云提供商时，您可以利用以下功能：
+
+* *负载均衡器：*当您在 *端口映射* 中选择 `Layer-4 Load Balancer` 或者在启动带有 `type: LoadBalancer` 的 `Service` 时，启动 AWS 弹性负载均衡器 (ELB)。
+* *持久卷*：使用 AWS 弹性块存储 (EBS) 作为持久卷。
+
+有关亚马逊云提供商的更多信息，请参见 https://kubernetes.github.io/cloud-provider-aws/[cloud-provider-aws README]。
+
+要设置亚马逊云提供商，
+
+. <<_1_create_an_iam_role_and_attach_to_the_instances,创建 IAM 角色并附加到实例>>
+. <<_2_configure_the_clusterid,配置 ClusterID>>
+
+[#_1_create_an_iam_role_and_attach_to_the_instances]
+== 1.创建 IAM 角色并附加到实例
+
+所有添加到集群的节点必须能够与 EC2 交互，以便它们可以创建和删除资源。您可以通过使用附加到实例的 IAM 角色来启用此交互。请参阅 https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html#create-iam-role[亚马逊文档：创建 IAM 角色] 了解如何创建 IAM 角色。有两个示例策略：
+
+* 第一个策略适用于具有 `controlplane` 角色的节点。这些节点必须能够创建/删除 EC2 资源。以下 IAM 策略是一个示例，请根据您的用例删除任何不需要的权限。
+* 第二个策略适用于具有 `etcd` 或 `worker` 角色的节点。这些节点只需能够从 EC2 检索信息。
+
+在创建 {xref-infra-aws}[亚马逊 EC2 集群] 时，您必须在创建 *节点模板* 时填写所创建 IAM 角色的 *IAM 实例配置文件名称*（不是 ARN）。
+
+在创建 {xref-custom-clusters}[自定义集群] 时，您必须手动将 IAM 角色附加到实例。
+
+具有 `controlplane` 角色的节点的 IAM 策略：
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeTags",
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVolumes",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:CreateVolume",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:ModifyVolume",
+        "ec2:AttachVolume",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteVolume",
+        "ec2:DetachVolume",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:DescribeVpcs",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:AttachLoadBalancerToSubnets",
+        "elasticloadbalancing:ApplySecurityGroupsToLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancerPolicy",
+        "elasticloadbalancing:CreateLoadBalancerListeners",
+        "elasticloadbalancing:ConfigureHealthCheck",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteLoadBalancerListeners",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DetachLoadBalancerFromSubnets",
+        "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+        "elasticloadbalancing:SetLoadBalancerPoliciesForBackendServer",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:CreateListener",
+        "elasticloadbalancing:CreateTargetGroup",
+        "elasticloadbalancing:DeleteListener",
+        "elasticloadbalancing:DeleteTargetGroup",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeLoadBalancerPolicies",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:ModifyListener",
+        "elasticloadbalancing:ModifyTargetGroup",
+        "elasticloadbalancing:RegisterTargets",
+        "elasticloadbalancing:SetLoadBalancerPoliciesOfListener",
+        "iam:CreateServiceLinkedRole",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "*"
+      ]
+    }
+  ]
+}
+----
+
+具有 `etcd` 或 `worker` 角色的节点的 IAM 策略：
+
+[,json]
+----
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones",
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DescribeRepositories",
+        "ecr:ListImages",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+----
+
+[#_2_configure_the_clusterid]
+== 2.配置 ClusterID
+
+以下资源需要标记为 `ClusterID`：
+
+* *节点*：在Rancher中添加的所有主机。
+* *子网*：用于您的集群的子网。
+* *安全组*：用于您的集群的安全组。
+
+[NOTE]
+====
+
+请勿标记多个安全组。标记多个组在创建弹性负载均衡器（ELB）时会导致错误。
+====
+
+
+当您创建 {xref-infra-aws}[亚马逊 EC2 集群] 时，`ClusterID` 会自动为所创建的节点配置。其他资源仍需手动标记。
+
+请使用以下标签：
+
+*键* = `kubernetes.io/cluster/<cluster-id>` *值* = `owned`
+
+将标签的值设置为 `owned` 告诉集群所有带有此标签的资源由该集群拥有和管理。
+
+如果您在集群之间共享资源，可以将标签更改为：
+
+*键* = `kubernetes.io/cluster/<cluster-id>` *值* = `shared`。
+
+字符串值 `<cluster-id>` 是 Kubernetes 集群的 ID。
+
+[NOTE]
+====
+
+不要给资源标记多个拥有或共享的标签。
+====
+
+
+[#_using_amazon_elastic_container_registry_ecr]
+== 使用亚马逊弹性容器注册表 (ECR)
+
+当在 <<_1_create_an_iam_role_and_attach_to_the_instances,创建 IAM 角色并附加到实例>> 中提到的 IAM 控制文件被附加到实例时，kubelet 组件能够自动获取 ECR 凭证。在使用 Kubernetes 版本低于 v1.15.0 时，需要在集群中配置亚马逊云提供商。从 Kubernetes 版本 v1.15.0 开始，kubelet 可以在未配置亚马逊云提供商的情况下获取 ECR 凭证。
+
+[#_using_the_out_of_tree_aws_cloud_provider]
+== 使用外部 AWS 云提供商
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. 必须遵循 https://cloud-provider-aws.sigs.k8s.io/prerequisites/[节点名称约定和其他先决条件]，以便云提供商能够正确找到实例。
+. Rancher 管理的 RKE2/K3s 集群不支持配置 `providerID`。但是，如果在配置集群对象上设置以下配置，引擎将正确设置节点名称：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineGlobalConfig:
+      cloud-provider-name: aws
+----
++
+此选项将传递给在节点上运行的各种 Kubernetes 组件的配置，并且必须逐个组件覆盖，以防止内部云提供商意外运行：
++
+*在 Etcd 上覆盖：*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/etcd-role
+              operator: In
+              values:
+                - 'true'
+----
++
+*在控制平面上覆盖：*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+        disable-cloud-controller: true
+        kube-apiserver-arg:
+          - cloud-provider=external
+        kube-controller-manager-arg:
+          - cloud-provider=external
+        kubelet-arg:
+          - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/control-plane-role
+              operator: In
+              values:
+                - 'true'
+----
++
+*在工作节点上覆盖：*
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    machineSelectorConfig:
+      - config:
+          kubelet-arg:
+            - cloud-provider=external
+        machineLabelSelector:
+          matchExpressions:
+            - key: rke.cattle.io/worker-role
+              operator: In
+              values:
+                - 'true'
+----
+
+. 如果依赖上述机制设置提供商 ID，请选择 `Amazon`。否则，选择 *外部云提供商* 云提供商，该提供商为 Kubernetes 组件设置 `--cloud-provider=external`。
+. 指定 `aws-cloud-controller-manager` Helm 图表作为要安装的附加清单：
++
+[,yaml]
+----
+spec:
+  rkeConfig:
+    additionalManifest: |-
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: aws-cloud-controller-manager
+        namespace: kube-system
+      spec:
+        chart: aws-cloud-controller-manager
+        repo: https://kubernetes.github.io/cloud-provider-aws
+        targetNamespace: kube-system
+        bootstrap: true
+        valuesContent: |-
+          hostNetworking: true
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          args:
+            - --configure-cloud-routes=false
+            - --v=5
+            - --cloud-provider=aws
+----
+--
+
+RKE::
++
+--
+. 必须遵循 https://cloud-provider-aws.sigs.k8s.io/prerequisites/[节点名称约定和其他先决条件]，以便云提供商能够找到实例。Rancher 配置的集群不支持配置 `providerID`。
++
+[NOTE]
+====
+如果您使用基于 IP 的命名，节点必须以实例名称命名，后面跟着区域域名 (`ip-xxx-xxx-xxx-xxx.ec2.<region>.internal`)。如果您在 DHCP 选项中设置了自定义域名，则必须在 `kube-proxy` 和 `kubelet` 上设置 `--hostname-override` 以匹配此命名约定。
+====
++
+为了满足节点命名约定，当选择 `External Amazon` 云提供商时，Rancher 允许设置 `useInstanceMetadataHostname`。启用 `useInstanceMetadataHostname` 将查询 EC2 元数据服务，并将 `/hostname` 设置为 `hostname-override`，适用于 `kubelet` 和 `kube-proxy`：
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true
+----
++
+在为自定义集群设置 `hostname-override` 的自定义值时，您不得启用 `useInstanceMetadataHostname`。当您创建一个 {xref-custom-clusters}[自定义集群] 时，向 `docker run` 节点注册命令添加 `--node-name` 以设置 `hostname-override` --，例如 `"$(hostname -f)"`。这可以手动完成，或通过在 Rancher UI 中使用 *显示高级选项* 来添加 *节点名称*。
+
+. 选择云提供商。
++
+选择 *外部 Amazon（树外）* 将设置 `--cloud-provider=external` 并启用 `useInstanceMetadataHostname`。如步骤 1 中所述，启用 `useInstanceMetadataHostname` 将查询 EC2 元数据服务，并将 `+http://169.254.169.254/latest/meta-data/hostname+` 设置为 `hostname-override`，适用于 `kubelet` 和 `kube-proxy`。
++
+[NOTE]
+====
+在通过 `node-name` 为自定义集群设置自定义节点名称时，您必须禁用 `useInstanceMetadataHostname`。
+====
++
+[,yaml]
+----
+rancher_kubernetes_engine_config:
+  cloud_provider:
+    name: external-aws
+    useInstanceMetadataHostname: true/false
+----
++
+使用 *外部* 云提供商的现有集群将为 Kubernetes 组件设置 `--cloud-provider=external`，但不会设置节点名称。
+
+. 在集群完成配置后安装 AWS 云控制器管理器。请注意，在部署云控制器管理器之前，集群尚未成功配置，节点仍处于 `uninitialized` 状态。这可以手动完成，或通过 <<_helm_chart_installation_from_ui,UI 中的 Helm 图表>> 完成。
++
+请参考官方 AWS 上游文档，了解 https://kubernetes.github.io/cloud-provider-aws[云控制器管理器]。
+--
+======
+
+[#_helm_chart_installation_from_cli]
+=== 通过 CLI 安装 Helm 图表 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+关于 https://github.com/kubernetes/cloud-provider-aws/tree/master/charts/aws-cloud-controller-manager[Helm 图表安装] 的官方上游文档可以在 GitHub 上找到。
+
+. 添加 Helm 储存库：
++
+[,shell]
+----
+helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
+helm repo update
+----
+
+. 创建一个包含以下内容的 `values.yaml` 文件以覆盖默认 `values.yaml`：
++
+[,yaml]
+----
+# values.yaml
+hostNetworking: true
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/control-plane
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+args:
+  - --configure-cloud-routes=false
+  - --use-service-account-credentials=true
+  - --v=2
+  - --cloud-provider=aws
+clusterRoleRules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - '*'
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/status
+    verbs:
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services/status
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+     - ''
+    resources:
+      - serviceaccounts
+    verbs:
+    - create
+    - get
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts/token
+    verbs:
+      - create
+----
+
+. 安装 Helm 图表：
++
+[,shell]
+----
+helm upgrade --install aws-cloud-controller-manager aws-cloud-controller-manager/aws-cloud-controller-manager --values values.yaml
+----
++
+验证 Helm 图表是否成功安装：
++
+[,shell]
+----
+helm status -n kube-system aws-cloud-controller-manager
+----
+
+. （可选）验证云控制器管理器更新是否成功：
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
+--
+
+RKE::
++
+--
+关于 https://github.com/kubernetes/cloud-provider-aws/tree/master/charts/aws-cloud-controller-manager[Helm 图表安装] 的官方上游文档可以在 GitHub 上找到。
+
+. 添加 Helm 储存库：
++
+[,shell]
+----
+helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
+helm repo update
+----
+
+. 创建一个包含以下内容的 `values.yaml` 文件以覆盖默认 `values.yaml`：
++
+[,yaml]
+----
+# values.yaml
+hostNetworking: true
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+args:
+  - --configure-cloud-routes=false
+  - --use-service-account-credentials=true
+  - --v=2
+  - --cloud-provider=aws
+clusterRoleRules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - '*'
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/status
+    verbs:
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services/status
+    verbs:
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+     - ''
+    resources:
+      - serviceaccounts
+    verbs:
+    - create
+    - get
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumes
+    verbs:
+      - get
+      - list
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts/token
+    verbs:
+      - create
+----
+
+. 安装 Helm 图表：
++
+[,shell]
+----
+helm upgrade --install aws-cloud-controller-manager -n kube-system aws-cloud-controller-manager/aws-cloud-controller-manager --values values.yaml
+----
++
+验证 Helm 图表是否成功安装：
++
+[,shell]
+----
+helm status -n kube-system aws-cloud-controller-manager
+----
+
+. 如果存在，请编辑 Daemonset 以去除默认节点选择器 `node-role.kubernetes.io/control-plane: ""`：
++
+[,shell]
+----
+kubectl edit daemonset aws-cloud-controller-manager -n kube-system
+----
+
+. （可选）验证云控制器管理器更新是否成功：
++
+[,shell]
+----
+kubectl rollout status daemonset -n kube-system aws-cloud-controller-manager
+----
+--
+======
+
+[#_helm_chart_installation_from_ui]
+=== 通过 UI 安装 Helm 图表 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE2::
++
+--
+. 点击 *☰*，然后从左侧导航中选择集群的名称。
+. 选择 *应用* > *储存库*。
+. 点击 *创建* 按钮。
+. 在 *索引 URL* 字段中输入 `+https://kubernetes.github.io/cloud-provider-aws+`。
+. 从左侧导航中选择 *应用* > *图表* 并安装 *aws-cloud-controller-manager*。
+. 选择名称空间 `kube-system`, 并启用 *安装前自定义 Helm 选项*。
+. 添加以下容器参数：
++
+[,yaml]
+----
+  - '--use-service-account-credentials=true'
+  - '--configure-cloud-routes=false'
+----
+
+. 将 `get` 添加到 `verbs`，以便在 `clusterRoleRules` 中获取 `serviceaccounts` 资源。这允许云控制器管理器在启动时获取服务账户。
++
+[,yaml]
+----
+  - apiGroups:
+      - ''
+    resources:
+      - serviceaccounts
+    verbs:
+      - create
+      - get
+----
+
+. Rancher 提供的 RKE2 节点被标记为 `node-role.kubernetes.io/control-plane`。更新容忍度和节点选择器：
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/control-plane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
++
+[NOTE]
+====
+目前存在一个 https://github.com/rancher/dashboard/issues/9249[已知问题]，节点选择器无法从 Rancher UI 更新。 继续安装图表，然后手动编辑 Daemonset 以设置 `nodeSelector`：
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/control-plane: 'true'
+----
+====
+
+. 安装图表并确认 Daemonset `aws-cloud-controller-manager` 正在运行。验证 `aws-cloud-controller-manager` pods 在目标名称空间中运行（`kube-system`，除非在第 6 步中修改）。
+--
+
+RKE::
++
+--
+. 点击 *☰*，然后从左侧导航中选择集群的名称。
+. 选择 *应用* > *储存库*。
+. 点击 *创建* 按钮。
+. 在 `+https://kubernetes.github.io/cloud-provider-aws+` *索引 URL* 字段中输入。
+. 从左侧导航中选择 *APP* > *图表* 并安装 *aws-cloud-controller-manager*。
+. 选择名称空间 `kube-system`, 并启用 *安装前自定义 Helm 选项*。
+. 添加以下容器参数：
++
+[,yaml]
+----
+  - '--use-service-account-credentials=true'
+  - '--configure-cloud-routes=false'
+----
+
+. 将 `get` 添加到 `verbs`，用于 `serviceaccounts` 中的 `clusterRoleRules` 资源。这允许云控制器管理器在启动时获取服务账户：
++
+[,yaml]
+----
+  - apiGroups:
+      - ''
+    resources:
+      - serviceaccounts
+    verbs:
+      - create
+      - get
+----
+
+. Rancher 提供的 RKE 节点被标记为 `node-role.kubernetes.io/controlplane`。更新容忍度和节点选择器：
++
+[,yaml]
+----
+tolerations:
+  - effect: NoSchedule
+    key: node.cloudprovider.kubernetes.io/uninitialized
+    value: 'true'
+  - effect: NoSchedule
+    value: 'true'
+    key: node-role.kubernetes.io/controlplane
+----
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
++
+[NOTE]
+====
+目前存在一个 https://github.com/rancher/dashboard/issues/9249[已知问题]，`nodeSelector` 无法从 Rancher UI 更新。 继续安装图表，然后手动部署守护程序集以设置 `nodeSelector`：
++
+[,yaml]
+----
+nodeSelector:
+  node-role.kubernetes.io/controlplane: 'true'
+----
+====
+
+. 安装图表并确认守护程序集 `aws-cloud-controller-manager` 成功部署：
++
+[,shell]
+----
+kubectl rollout status deployment -n kube-system aws-cloud-controller-manager
+----
+--
+======

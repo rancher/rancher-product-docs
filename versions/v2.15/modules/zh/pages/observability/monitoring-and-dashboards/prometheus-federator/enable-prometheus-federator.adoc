@@ -1,0 +1,106 @@
+= 启用 Prometheus Federator
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/monitoring-alerting-guides/prometheus-federator-guides/enable-prometheus-federator.adoc 
+:product-path: observability/monitoring-and-dashboards/prometheus-federator/enable-prometheus-federator.adoc
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-monitoring-and-dashboards: xref:observability/monitoring-and-dashboards/monitoring-and-dashboards.adoc
+:xref-enable-monitoring: xref:observability/monitoring-and-dashboards/enable-monitoring.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-monitoring-and-dashboards: xref:integrations-in-rancher/monitoring-and-alerting/index.adoc
+:xref-enable-monitoring: xref:how-to-guides/advanced-user-guides/monitoring-alerting-guides/enable-monitoring.adoc
+endif::[]
+
+[#_requirements]
+== 要求
+
+默认情况下，Prometheus Federator 已配置，并计划与 {xref-monitoring-and-dashboards}[rancher-monitoring] 一同部署，该组件同时部署 Prometheus Operator 和集群 Prometheus，每个项目监控堆栈默认配置为联合（federate）各命名空间的指标。
+
+有关安装 rancher-monitoring 的说明，请参阅 {xref-enable-monitoring}[此页面]。
+
+默认配置应该已经与您的 rancher-monitoring 堆栈兼容。然而，为了优化 Prometheus Federator 在您的集群中的安全性和可用性，我们建议对 rancher-monitoring 进行以下额外配置：
+
+* <<_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster,确保 cattle-monitoring-system 命名空间被放置在系统项目中>>。
+* <<_configure_rancher_monitoring_to_only_watch_for_resources_created_by_the_helm_chart_itself,配置 rancher-monitoring 仅监视 Helm 图表本身创建的资源>>。
+* <<_increase_the_cpu_memory_limits_of_the_cluster_prometheus,增加 Cluster Prometheus 的 CPU / 内存限制>>。
+
+[#_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster]
+=== 确保 cattle-monitoring-system 命名空间被放置在系统项目中（或一个类似锁定的项目，该项目可以访问集群中的其他项目）。
+
+image::install-in-system-project.png[选择项目-命名空间]
+
+Prometheus Operator 的安全模型要求其部署的命名空间（例如 `cattle-monitoring-system`）除集群管理员外，仅允许有限访问，以防止通过对 Pods 执行 exec 操作（如那些执行 Helm 操作的作业）从而实现权限提升。此外，将 Prometheus Federator 和所有项目 Prometheus 堆栈部署到系统项目中，确保每个项目 Prometheus 能够跨所有项目抓取工作负载，即使通过项目网络隔离定义了网络策略。它还为项目所有者、项目成员及其他用户提供受限访问权限，确保他们无法获取本不该访问的数据（例如，不允许对 Pods 执行 exec 操作，也不允许配置抓取其他项目命名空间指标的权限等）。
+
+. 打开 `System` 项目以检查您的命名空间：
++
+在 Rancher UI 中单击 menu:集群[项目/命名空间]。这将显示 `System` 项目中的所有命名空间：
++
+image::cattle-monitoring-system.png[选择项目-命名空间]
+
+. 如果您在 `cattle-monitoring-system` 命名空间中有现有的 Monitoring V2 安装，但该命名空间不在 `System` 项目中，您可以将 `cattle-monitoring-system` 命名空间移动到 `System` 项目或另一个有限访问的项目中。为此，您可以：
+ ** 将命名空间拖放到 `System` 项目中或
+ ** 选择命名空间右侧的 *⋮*，单击 *移动*，然后从 *目标项目* 下拉菜单中选择 `System`
++
+image::move-to-new-project.png[移动到新项目]
+
+[#_configure_rancher_monitoring_to_only_watch_for_resources_created_by_the_helm_chart_itself]
+=== 配置 rancher-monitoring 仅监视由 Helm 图表本身创建的资源
+
+由于每个项目监控堆栈将监视其他命名空间并收集额外的自定义工作负载指标或仪表板，因此建议在所有选择器上配置以下设置，以确保集群 Prometheus 堆栈仅监视由 Helm 图表本身创建的资源：
+
+----
+matchLabels:
+  release: "rancher-monitoring"
+----
+
+建议以下选择器字段具有此值：
+
+* `.Values.alertmanager.alertmanagerSpec.alertmanagerConfigSelector`
+* `.Values.prometheus.prometheusSpec.serviceMonitorSelector`
+* `.Values.prometheus.prometheusSpec.podMonitorSelector`
+* `.Values.prometheus.prometheusSpec.ruleSelector`
+* `.Values.prometheus.prometheusSpec.probeSelector`
+
+一旦启用此设置，您便可创建 ServiceMonitors 或 PodMonitors，并通过为其添加标签 `release: "rancher-monitoring"` 使其被集群 Prometheus 采集；在这种情况下，即便这些 ServiceMonitors 或 PodMonitors 所在的命名空间并非系统命名空间，它们也会默认被项目监控堆栈自动忽略。
+
+[NOTE]
+====
+
+如果您不希望用户在项目命名空间中创建 ServiceMonitors 和 PodMonitors 并将它们聚合到集群 Prometheus 中，则可在图表上额外设置 namespaceSelectors，使其仅针对系统命名空间（这些命名空间必须包含 `cattle-monitoring-system` 和 `cattle-dashboards`，即 rancher-monitoring 默认部署资源的命名空间；此外，您还需监控 `default` 命名空间以获取 apiserver 指标或创建自定义 ServiceMonitor 从默认命名空间中的 Service 抓取 apiserver 指标），以限制集群 Prometheus 捕捉其他 Prometheus Operator CR。在这种情况下，建议打开 `.Values.prometheus.prometheusSpec.ignoreNamespaceSelectors=true`，以允许您定义能够在系统命名空间内部监控非系统命名空间的 ServiceMonitors。
+====
+
+
+[#_increase_the_cpu_memory_limits_of_the_cluster_prometheus]
+=== 增加集群 Prometheus 的 CPU / 内存限制
+
+根据集群的设置，通常建议为集群 Prometheus 分配大量专用内存，以避免因内存不足（OOMKilled）而重启——这通常是由于集群中频繁的变动在短时间内生成并被 Prometheus 采集大量高基数指标所致。这也是默认 Rancher Monitoring 堆栈在正常规模集群中运行时大约需要 4GB RAM 的原因之一。然而，当引入所有向同一集群 Prometheus 发送 `/federate` 请求，并依赖其“正常运行”以从各自命名空间联合采集系统数据的项目监控堆栈时，为集群 Prometheus 分配充足的 CPU 和内存以防止停机、从而避免所有项目 Prometheus 出现数据缺口，就显得尤为重要。
+
+[NOTE]
+====
+
+关于集群 Prometheus 应配置多少内存没有具体建议，因为这完全取决于用户的设置——即可能遇到的高变动率以及在那时可能生成的指标规模；因此通常因情况而异。
+====
+
+
+[#_install_the_prometheus_federator_application]
+== 安装 Prometheus Federator 应用程序
+
+. 单击 *☰ > 集群管理*。
+. 转到您想要安装 Prometheus Federator 的集群，单击 *探索*。
+. 单击 *应用 \-> 图表*。
+. 单击 *Prometheus Federator* 图表。
+. 单击 *安装*。
+. 在 *元数据* 页面上，单击 *下一步*。
+. 在 *命名空间* > *项目发布命名空间项目 ID* 字段中，`System Project` 用作默认值，但可被具有相似 <<_ensure_the_cattle_monitoring_system_namespace_is_placed_into_the_system_project_or_a_similarly_locked_down_project_that_has_access_to_other_projects_in_the_cluster,有限访问>> 权限的其他项目覆盖。可以通过在本地上游集群中运行以下命令找到项目 ID：
+
+[,plain]
+----
+  kubectl get projects -A -o custom-columns="NAMESPACE":.metadata.namespace,"ID":.metadata.name,"NAME":.spec.displayName
+----
+
+. 单击 *安装*。
+
+*结果：*Prometheus Federator 应用程序已部署在 `cattle-monitoring-system` 命名空间中。

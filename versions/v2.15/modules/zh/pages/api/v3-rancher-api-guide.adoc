@@ -1,0 +1,102 @@
+= 之前的 v3 {rancher-product-name} API 指南
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-18
+:page-revdate: {revdate}
+:community-path: api/v3-rancher-api-guide.adoc 
+:product-path: api/v3-rancher-api-guide.adoc
+ifeval::["{build-type}" != "community"]
+:xref-api-reference: xref:api/reference.adoc
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-api-reference: xref:api/api-reference.adoc
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+endif::[]
+
+include::shared:ROOT:partial$en/api-support-warning.adoc[]
+
+Rancher v2.8.0 引入了 Rancher Kubernetes API (RK-API)，这是 Rancher 支持的 API。本页面描述了 v3 API。有关 RK-API 的更多信息，请参见 xref:api/quickstart.adoc[RK-API 快速入门] 和 {xref-api-reference}[参考指南]。
+
+[#_how_to_use_the_api]
+== 如何使用 API
+
+之前的 v3 API 具有自己的用户界面，可以通过 <<_enable_view_in_api,网页浏览器>> 访问。这是一种轻松查看资源、执行操作以及查看等效 `curl` 或 HTTP 请求与响应的方法。要访问它：
+
+. 点击右上角的用户头像。
+. 点击 *账户与 API 密钥*。
+. 在 *API 密钥* 部分，找到 *API 端点* 字段并点击链接。该链接看起来像 `\https://<rancher_fqdn>/v3`，其中 `<RANCHER_FQDN>` 是您 Rancher 部署的完全限定的域名。
+
+[#_authentication]
+== 身份验证
+
+API 请求必须包含身份验证信息。身份验证使用 HTTP 基本身份验证，使用 {xref-user-api-keys}[API 密钥]。API 密钥可以创建新集群，并通过 `/v3/clusters/` 访问多个集群。 {xref-cluster-project-roles}[集群和项目角色] 适用于这些密钥，并限制账户可以查看的集群和项目以及可以执行的操作。
+
+默认情况下，某些集群级 API 令牌的有效期为无限 (`ttl=0`)。换句话说，具有 `ttl=0` 的 API 词元不会过期，除非您使其失效。有关如何使其失效的详细信息，请参见 xref:./api-tokens.adoc[API 令牌页面]。
+
+[#_making_requests]
+== 发起请求
+
+API 通常是 RESTful 的，但具有多个功能，使得客户端可以发现所有内容的定义，从而可以编写通用客户端，而不必为每种资源类型编写特定代码。有关通用 API 规范的详细信息， https://github.com/rancher/api-spec/blob/master/specification.md[请参阅进一步文档]。
+
+* 每种类型都有一个描述的模式：
+ ** 访问此类型资源集合的 URL。
+ ** 资源可以拥有的每个字段，以及它们的类型、基本验证规则、是否是必需或可选等。
+ ** 对这种类型资源可能进行的每个操作，以及它们的输入和输出（也作为模式）。
+ ** 允许过滤的每个字段。
+ ** 集合本身或集合中单个资源可用的 HTTP 动词方法。
+
+该设计允许您仅加载模式列表并访问有关 API 的所有信息。API 的用户界面不包含特定于 Rancher 的代码。获取模式的 URL 在每个 HTTP 响应中作为 `X-Api-Schemas` 头发送。从那里，您可以在每个模式上跟随 `collection` 链接以了解在哪里列出资源，并在返回的资源中跟随其他 `links` 以获取任何其他信息。
+
+实际上，您可能只想构造 URL 字符串。我们强烈建议将其限制在顶层以列出集合（`/v3/<type>`）或获取特定资源（`/v3/<type>/<id>`）。比这更深的内容在未来版本中可能会发生变化。
+
+资源之间存在称为链接的关系。每个资源都包含一个 `links` 映射，记录了链接的名称以及可用于检索该信息的 URL。再次，您应该 `GET` 该资源，然后按照 `links` 映射中的 URL 进行操作，而不是自行构造这些字符串。
+
+大多数资源都有操作，这些操作可以执行任务或更改资源的状态。要使用它们，请向所需操作的 `actions` 映射中的 URL 发送 HTTP `POST`。某些操作需要输入或产生输出。请参阅每种类型的单独文档或特定信息的模式。
+
+要编辑资源，请向资源的 `links.update` 链接发送 HTTP `PUT`，并包含您想要更改的字段。如果链接缺失，则您没有权限更新该资源。未知字段和不可编辑的字段将被忽略。
+
+要删除资源，请向资源的 `links.remove` 链接发送 HTTP `DELETE`。如果链接缺失，则您没有权限更新该资源。
+
+要创建新资源，请向模式中的集合 URL 发送 HTTP `POST`（该 URL 为 `/v3/<type>`）。
+
+[#_filtering]
+== 过滤
+
+大多数集合可以通过 HTTP 查询参数在服务器端按常见字段进行过滤。`filters` 映射显示了可以过滤的字段以及您所做请求的过滤值。API 用户界面具有用于设置过滤的控件，并向您显示相应的请求。对于简单的 "等于" 匹配，仅需 `field=value`。可以向字段名称添加修饰符，例如，`field_gt=42` 表示 "字段大于 42"。有关详细信息，请参见 https://github.com/rancher/api-spec/blob/master/specification.md#filtering[API 规范]。
+
+[#_sorting]
+== 在非英语
+
+大多数集合可以通过 HTTP 查询参数在服务器端按常见字段进行排序。`sortLinks` 映射显示了可用的排序方式，以及按该方式对集合进行排序的 URL。它还包括有关当前响应按什么排序的信息（如果已指定）。
+
+[#_pagination]
+== 分页
+
+API 响应默认分页，每页限制 100 个资源。这可以通过 `limit` 查询参数更改，最多可达到 1000，例如，`/v3/pods?limit=1000`。集合响应中的 `pagination` 映射会告诉您是否拥有完整的结果集，如果没有，还会提供下一页的链接。
+
+[#_capturing_v3_api_calls]
+== 捕获 v3 API 调用
+
+您可以使用浏览器开发者工具捕获 v3 API 的调用方式。例如，您可以按照以下步骤使用 Chrome 开发者工具获取用于配置 Rancher Kubernetes 发行版集群的 API 调用：
+
+. 在 Rancher UI 中，转到 *集群管理* 并点击 *创建。*
+. 点击其中一种集群类型。此示例使用 Digital Ocean。
+. 填写表单，输入集群名称和节点模板，但不要点击 *创建*。
+. 您需要在创建集群之前打开开发者工具，以查看记录的 API 调用。要打开工具，请右键单击 Rancher UI 并点击 *检查。*
+. 在开发者工具中，点击*网络*选项卡。
+. 在*网络*选项卡上，确保选择了*Fetch/XHR*。
+. 在 Rancher UI 中，点击*创建*。在开发者工具中，您应该会看到一个新的网络请求，名称为 `cluster?_replace=true`。
+. 右键单击`cluster?_replace=true`并点击menu:复制[复制为 cURL。]
+. 将结果粘贴到任何文本编辑器中。您可以看到 POST 请求，包括发送到的 URL、所有头信息和请求的完整主体。此命令可用于从命令行创建集群。注意：请求应存储在安全的地方，因为它包含凭据。
+
+[#_enable_view_in_api]
+=== 启用 API 中的视图
+
+您还可以查看各自集群和资源的捕获的 v3 API 调用。此功能默认情况下未启用。要启用它：
+
+. 点击 UI 右上角的*用户图标*，从下拉菜单中选择*首选项*。
+. 在*高级功能*部分，点击*启用“在API中查看”*。
+
+一旦勾选，*在API中查看*链接将在UI的资源页面的*⋮*子菜单下显示。

@@ -1,0 +1,383 @@
+= 备份集群
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/新用户指南/备份、恢复和灾难恢复/备份 Rancher 启动的 Kubernetes 集群.adoc 
+:product-path: cluster-admin/backups-and-restore/backups.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+在 Rancher UI 中，可以轻松执行 {xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 的 etcd 备份和恢复。
+
+Rancher 建议为所有生产集群配置定期 `etcd` 快照。此外，也可以进行一次性快照。
+
+etcd 数据库的快照被创建并保存到 <<_local_backup_target,etcd 节点本地>> 或 <<_s3_backup_target,兼容 S3 的目标>>。配置 S3 的优点在于，如果所有 etcd 节点丢失，您的快照将被远程保存，并可用于恢复集群。
+
+[#_how_snapshots_work]
+== 快照的工作原理
+
+[#_snapshot_components]
+=== 快照组件
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+当 Rancher 创建快照时，它包括三个组件：
+
+* etcd 中的集群数据
+* Kubernetes 版本
+* 以 `cluster.yml` 形式的集群配置
+
+由于 Kubernetes 版本现在包含在快照中，因此可以将集群恢复到先前的 Kubernetes 版本。
+--
+
+RKE2/K3s::
++
+--
+Rancher 将快照创建委托给下游 Kubernetes 引擎。当 Kubernetes 引擎创建快照时，它包括三个组件：
+
+* etcd 中的集群数据
+* Kubernetes 版本
+* 集群配置
+
+由于 Kubernetes 版本包含在快照中，因此可以在恢复 etcd 快照的同时将集群恢复到先前的 Kubernetes 版本。
+--
+======
+
+快照的多个组件允许您在需要从快照恢复集群时选择以下选项：
+
+* *仅恢复 etcd 内容：*此恢复类似于在 Rancher v2.4.0 之前恢复快照。
+* *恢复 etcd 和 Kubernetes 版本：*如果 Kubernetes 升级是导致您的集群故障的原因，并且您没有进行任何集群配置更改，则应使用此选项。
+* *恢复 etcd、Kubernetes 版本和集群配置：*如果您在升级时同时更改了 Kubernetes 版本和集群配置，则应使用此选项。
+
+在进行任何配置更改或升级之前，始终建议先进行新的快照。
+
+[#_generating_the_snapshot_from_etcd_nodes]
+=== 从 etcd 节点生成快照
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+对于集群中的每个 etcd 节点，都会检查 etcd 集群的健康状况。如果节点报告 etcd 集群健康，则会从该节点创建快照，并可选择上传到 S3。
+
+快照存储在 `/opt/rke/etcd-snapshots` 中。如果该目录在节点上配置为共享挂载，则会被覆盖。在 S3 上，快照将始终来自最后一个上传它的节点，因为所有 etcd 节点都会上传快照，最后一个将保留。
+
+在存在多个 etcd 节点的情况下，任何创建的快照都是在集群健康检查后创建的，因此可以视为 etcd 集群中数据的有效快照。
+--
+
+RKE2/K3s::
++
+--
+默认情况下启用快照。
+
+快照目录默认为 `/var/lib/rancher/<RUNTIME>/server/db/snapshots`，其中 `<RUNTIME>` 是 `rke2` 或 `k3s`。
+
+在 RKE2 中，快照存储在每个 etcd 节点上。如果您有多个 etcd 或 etcd + 控制平面节点，您将拥有多个本地 etcd 快照的副本。
+--
+====== 
+
+### 快照命名约定 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+快照的名称是自动生成的。`--name` 选项可用于在使用 RKE CLI 创建一次性快照时覆盖快照的名称。
+
+当 Rancher 创建 RKE 集群的快照时，快照名称基于类型（快照是手动还是定期）和目标（快照是保存在本地还是上传到 S3）。命名约定如下：
+
+* `m` 代表手动
+* `r` 代表定期
+* `l` 代表本地
+* `s` 代表 S3
+
+一些示例快照名称包括：
+
+* c-9dmxz-rl-8b2cx
+* c-9dmxz-ml-kr56m
+* c-9dmxz-ms-t6bjb
+* c-9dmxz-rs-8gxc8
+--
+
+RKE2/K3s::
++
+--
+快照的名称是自动生成的。`--name` 选项可用于在使用 RKE2 或 K3s CLI 创建一次性快照时覆盖快照的基本名称。
+
+当 Rancher 创建 RKE2 或 K3s 集群的快照时，快照名称基于类型（快照是手动还是定期）和目标（快照是保存在本地还是上传到 S3）。命名约定如下：
+
+`<name>-<node>-<timestamp>`
+
+`<name>`：是由 `--name` 设置的基本名称，可以是以下之一
+
+* 在定期快照上会添加 `etcd-snapshot` 前缀
+* 在手动、按需快照上会添加 `on-demand` 前缀
+
+`<node>`：节点是快照创建时所在节点的名称。
+
+`<timestamp>` 是快照创建日期的 Unix 时间戳。
+
+一些示例快照名称包括：
+
+* `on-demand-my-super-rancher-k8s-node1-1652288934`
+* `on-demand-my-super-rancher-k8s-node2-1652288936`
+* `etcd-snapshot-my-super-rancher-k8s-node1-1652289945`
+* `etcd-snapshot-my-super-rancher-k8s-node2-1652289948`
+--
+======
+
+### 从快照恢复的工作原理 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+在恢复时，使用以下过程：
+
+. 如果已配置 S3，则从 S3 检索快照。
+. 快照被解压（如果是压缩的）。
+. 集群中的一个 etcd 节点将该快照文件提供给其他节点。
+. 其他 etcd 节点下载快照并验证校验和，以确保它们都使用相同的快照进行恢复。
+. 集群已恢复，恢复后操作将在集群中完成。
+--
+
+RKE2/K3s::
++
+--
+在恢复时，Rancher 提供了几组方案以执行恢复操作。使用了一组阶段，即：
+
+* Started
+* 关机
+* 恢复
+* RestartCluster
+* 已完成
+
+如果 etcd 快照恢复过程中出现故障，阶段将设置为 `Failed`。
+
+. 接收到 etcd 快照恢复请求，根据 `restoreRKEConfig`，集群配置/Kubernetes 版本将被协调。
+. 阶段设置为 `Started`。
+. 阶段设置为 `Shutdown`，整个集群将使用运行分发 `killall.sh` 脚本的计划关闭。选举出一个新的初始化节点。如果正在恢复的快照是本地快照，则将选择快照所在的节点作为初始化节点。如果快照是从 S3 恢复的，将使用现有的 init 节点。
+. 阶段设置为 `Restore`，快照已恢复到 init 节点上。
+. 阶段设置为 `RestartCluster`，集群将重新启动/重新加入到新恢复快照信息的 init 节点。
+. 阶段设置为 `Finished`，集群被认为已成功恢复。`cattle-cluster-agent` 将重新连接，集群将完成协调。
+--
+======
+
+## 配置定期快照 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+选择您希望定期创建快照的频率以及要保留多少个快照。时间以小时为单位。通过带时间戳的快照，用户可以进行时间点恢复。
+
+默认情况下，{xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 被配置为进行定期快照（保存到本地磁盘）。为了防止本地磁盘故障，建议使用 <<_s3_backup_target,S3 目标>> 或在磁盘上复制路径。
+
+在集群配置或编辑集群期间，快照的配置可以在*集群选项*的高级部分找到。单击*显示高级选项*。
+
+在*高级集群选项*部分，有几个可用的选项进行配置：
+
+|===
+| 选项 | 说明 | 默认值
+
+| etcd 快照备份目标
+| 选择您希望保存快照的位置。选项可以是本地或在S3中
+| 本地
+
+| 启用定期etcd快照
+| 启用/禁用定期快照
+| 是
+
+| 定期 etcd 快照创建周期
+| 定期快照之间的小时数
+| 12小时
+
+| 定期 etcd 快照保留数量
+| 要保留的快照数量
+| 6
+|===
+--
+
+RKE2/K3s::
++
+--
+设置您希望定期创建快照的时间表，以及要保留多少个快照。时间表采用传统的 cron 格式。保留策略决定每个节点保留与名称匹配的快照数量。
+
+默认情况下，{xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 被配置为每 5 小时进行一次定期快照（保存到本地磁盘），从凌晨 12 点开始。为了防止本地磁盘故障，建议使用 <<_s3_backup_target,S3 目标>> 或在磁盘上复制路径。
+
+在集群配置或编辑集群期间，快照的配置可以在*集群配置*下找到。单击*etcd*。
+
+|===
+| 选项 | 说明 | 默认值
+
+| 启用定期 etcd 快照
+| 启用/禁用定期快照
+| 是
+
+| 定期 etcd 快照创建周期
+| 定期快照的 cron 时间表
+| `0 */5 * * *`
+
+| 定期 etcd 快照保留数量
+| 要保留的快照数量
+| 5
+|===
+--
+====== 
+
+## 一次性快照 
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+除了定期快照，您可能还想创建一次性快照。例如，在升级集群的 Kubernetes 版本之前，最好先备份集群状态，以防升级故障。
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在*集群*页面，导航到您想要创建一次性快照的集群。
+. 点击 *⋮ > 创建快照*。
+--
+
+RKE2/K3s::
++
+--
+除了定期快照，您可能还想创建一次性快照。例如，在升级集群的 Kubernetes 版本之前，最好备份集群的状态，以防升级失败。
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在*集群*页面，导航到您想要创建一次性快照的集群。
+. 导航到 `Snapshots` 标签并点击 `Snapshot Now`
+
+[pass]
+<h3><a id="_how_taking_one_time_snapshots_works"></a>一次性快照的工作原理</h3>
+
+在创建一次性快照时，Rancher提供了一些计划来执行快照创建。使用了一组阶段，即：
+
+* Started
+* RestartCluster
+* 已完成
+
+如果etcd快照创建失败，阶段将设置为 `Failed`。
+
+. 接收到etcd快照创建请求。
+. 阶段设置为 `Started`。集群中的所有etcd节点根据集群配置接收到创建etcd快照的计划。
+. 阶段设置为 `RestartCluster`，并且每个etcd节点上的计划重置为etcd节点的原始计划。
+. 阶段设置为 `Finished`。
+--
+====== 
+
+*结果：*根据您的 <<_snapshot_backup_targets,快照备份目标>>，将创建一次性快照并保存在选定的备份目标中。
+
+[#_snapshot_backup_targets]
+== 快照备份目标
+
+Rancher支持两种不同的备份目标：
+
+* <<_local_backup_target,本地目标>>
+* <<_s3_backup_target,S3目标>>
+
+[#_local_backup_target]
+=== 本地备份目标
+
+[tabs,sync-group-id=k8s-distro]
+======
+RKE::
++
+--
+默认情况下，选择 `local` 备份目标。此选项的好处在于无需外部配置。快照会自动保存在 {xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 的 etcd 节点上，位于 `/opt/rke/etcd-snapshots`。所有定期快照都是在配置的时间间隔创建的。使用 `local` 备份目标的缺点是，如果发生完全灾难并且 _所有_ etcd 节点丢失，则无法恢复集群。
+--
+
+RKE2/K3s::
++
+--
+默认情况下，选择 `local` 备份目标。此选项的好处在于无需外部配置。快照会自动保存在 {xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 的 etcd 节点上，位于 `/var/lib/rancher/<runtime>/server/db/snapshots`，其中 `<runtime>` 可以是 `k3s` 或 `rke2`。所有定期快照都是根据 cron 调度创建的。使用 `local` 备份目标的缺点是，如果发生完全灾难并且 _所有_ etcd 节点丢失，则无法恢复集群。
+--
+======
+
+[#_s3_backup_target]
+=== S3 备份目标
+
+我们建议您使用 `S3` 备份目标。它允许您将快照存储在外部的 S3 兼容后端。由于快照不存储在本地，即使您丢失所有 etcd 节点，您仍然可以恢复集群。
+
+尽管 `S3` 目标相对于本地备份提供了优势，但确实需要额外的配置。
+
+[CAUTION]
+====
+
+如果您使用 S3 备份目标，请确保每个集群都有自己的存储桶或文件夹。Rancher 从为该集群配置的 S3 存储桶或文件夹中列出的任何可用快照中填充快照信息。
+====
+
+
+|===
+| 选项 | 说明 | 必需
+
+| S3 存储桶名称
+| 用于存储备份的 S3 存储桶名称
+| *
+
+| S3 区域
+| 备份存储桶的 S3 区域
+|
+
+| S3 区域端点
+| 备份存储桶的 S3 区域端点
+| *
+
+| S3 访问密钥
+| 具有访问备份存储桶权限的 S3 访问密钥
+| *
+
+| S3 秘密密钥
+| 具有访问备份存储桶权限的 S3 秘密密钥
+| *
+
+| 自定义 CA 证书
+| 用于访问私有 S3 后端的自定义证书
+|
+|===
+
+[#_using_a_custom_ca_certificate_for_s3]
+=== 为 S3 使用自定义 CA 证书
+
+备份快照可以存储在自定义 `S3` 备份中，如 https://min.io/[minio]。如果 S3 后端使用自签名或自定义证书，请使用 `Custom CA Certificate` 选项提供自定义证书以连接到 S3 后端。
+
+[#_iam_support_for_storing_snapshots_in_s3]
+=== 支持在 S3 中存储快照的 IAM
+
+`S3` 备份目标不仅支持使用 API 凭证，还支持使用 IAM 身份验证访问 AWS API。IAM 角色提供临时权限，供应用程序在调用 S3 存储的 API 时使用。要使用 IAM 身份验证，必须满足以下要求：
+
+* 集群 etcd 节点必须具有对指定备份存储桶的读/写访问权限的实例角色。
+* 集群 etcd 节点必须能够访问指定的 S3 端点。
+* Rancher Server 工作节点必须具有对指定备份存储桶的读/写访问权限的实例角色。
+* Rancher Server 工作节点必须能够访问指定的 S3 端点。
+
+要授予应用程序访问 S3 的权限，请参考 AWS 文档 https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2.html[使用 IAM 角色授予在 Amazon EC2 实例上运行的应用程序权限。]
+
+[#_viewing_available_snapshots]
+== 查看可用快照
+
+集群所有可用快照的列表可以在 Rancher UI 中查看。
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在 *集群* 页面中，转到您想查看快照的集群并单击其名称。
+. 点击 *快照* 标签以查看保存的快照列表。这些快照包含创建时的时间戳。
+
+[#_safe_timestamps_rke]
+== 安全时间戳 (RKE)
+
+快照文件带有时间戳，以简化使用外部工具和脚本处理文件，但在某些兼容 S3 的后端中，这些时间戳无法使用。
+
+添加选项 `safe_timestamp` 以支持兼容的文件名。当此标志设置为 `true` 时，快照文件名时间戳中的所有特殊字符将被替换。
+
+此选项在 UI 中不可直接使用，仅可通过 `Edit as Yaml` 接口使用。

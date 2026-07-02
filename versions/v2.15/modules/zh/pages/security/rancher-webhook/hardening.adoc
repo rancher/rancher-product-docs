@@ -1,0 +1,149 @@
+= 对 {rancher-product-name} Webhook 进行安全强化
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-security/rancher-webhook-hardening.adoc 
+:product-path: security/rancher-webhook/hardening.adoc
+
+Rancher Webhook 是 Rancher 中的重要组成部分，在执行 Rancher 及其工作负载的安全要求方面发挥着作用。为了减少其攻击面，访问应仅限于唯一有效的调用者：Kubernetes API 服务器。这可以通过独立使用网络策略和身份验证，或将两者结合使用来增强 webhook 的安全性，以抵御攻击。
+
+[#_block_external_traffic_using_network_policies]
+== 使用网络策略阻止外部流量
+
+Webhook 仅期望接受来自 Kubernetes API 服务器的请求。但是，默认情况下，Webhook 可以接受来自任何来源的流量。如果您使用支持网络策略的 CNI，可以创建一个策略，阻止不来自 API 服务器的流量。
+
+Kubernetes 中内置的 NetworkPolicy 资源无法阻止或允许来自集群主机的流量，而 `kube-apiserver` 进程始终在主机网络上运行。因此，您必须使用所用 CNI 的高级网络策略资源。以下是 Calico 和 Cilium 的示例。有关详细信息，请参阅您的 CNI 文档。
+
+[#_calico]
+=== Calico
+
+在 `crd.projectcalico.org/v1` API 组中使用 NetworkPolicy 资源。使用选择器 `app == 'rancher-webhook'` 为 webhook 创建规则，并将控制平面主机的 CIDR 设置为入口源：
+
+[,yaml]
+----
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-k8s
+  namespace: cattle-system
+spec:
+  selector: app == 'rancher-webhook'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        nets:
+        - 192.168.42.0/24 # CIDR of the control plane host. May list more than 1 if the hosts are in different subnets.
+      destination:
+        selector:
+          app == 'rancher-webhook'
+----
+
+[#_cilium]
+=== Cilium
+
+在 `cilium.io/v2` API 组中使用 CiliumNetworkPolicy 资源。将 `host` 和 `remote-node` 键添加到 `fromEntities` 入口规则中。这将阻止集群内和外部流量，同时允许来自主机的流量。
+
+[,yaml]
+----
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-k8s
+  namespace: cattle-system
+spec:
+  endpointSelector:
+    matchLabels:
+      app: rancher-webhook
+  ingress:
+    - fromEntities:
+      - host
+      - remote-node
+----
+
+[#_require_the_kubernetes_api_server_to_authenticate_to_the_webhook]
+== 要求 Kubernetes API 服务器对 webhook 进行身份验证
+
+Webhook 应仅接受来自 Kubernetes API 服务器的请求。默认情况下，Webhook 不要求客户端进行身份验证。它将接受任何请求。您可以配置 webhook 以要求凭据，以便只有 API 服务器可以访问它。更多信息可以在 https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#authenticate-apiservers[Kubernetes 文档] 中找到。
+
+. 配置 API 服务器以向 webhook 提供客户端证书，指向 AdmissionConfiguration 文件以配置 ValidatingAdmissionWebhook 和 MutatingAdmissionWebhook 插件：
++
+[,yaml]
+----
+ # /etc/rancher/admission/admission.yaml
+ apiVersion: apiserver.config.k8s.io/v1
+ kind: AdmissionConfiguration
+ plugins:
+ - name: ValidatingAdmissionWebhook
+   configuration:
+     apiVersion: apiserver.config.k8s.io/v1
+     kind: WebhookAdmissionConfiguration
+     kubeConfigFile: "/etc/rancher/admission/kubeconfig"
+ - name: MutatingAdmissionWebhook
+   configuration:
+     apiVersion: apiserver.config.k8s.io/v1
+     kind: WebhookAdmissionConfiguration
+     kubeConfigFile: "/etc/rancher/admission/kubeconfig"
+----
++
+这也是配置其他准入插件的相同配置文件，例如 PodSecurity。如果您的发行版或设置使用其他准入插件，也请进行配置。例如，将 https://documentation.suse.com/cloudnative/rke2/latest/en/security/pod_security_standards.html[RKE2 的 PodSecurity 配置] 添加到此文件中。
+
+. 创建 admission 插件所引用的 kubeconfig 文件。Rancher Webhook 仅支持客户端证书身份验证，因此生成一个 TLS 密钥对，并将 kubeconfig 设置为使用 `client-certificate` 和 `client-key` 或 `client-certificate-data` 和 `client-key-data`。例如：
++
+[,yaml]
+----
+ # /etc/rancher/admission/kubeconfig
+ apiVersion: v1
+ kind: Config
+ users:
+ - name: 'rancher-webhook.cattle-system.svc'
+   user:
+     client-certificate: /path/to/client/cert
+     client-key: /path/to/client/key
+----
+
+. 使用标志 `--admission-control-config-file` 启动 kube-apiserver 二进制文件，指向您的 AdmissionConfiguration 文件。执行此操作的方法因发行版而异，并且并非所有发行版都支持，例如在托管的 Kubernetes 提供商中。请查阅您的 Kubernetes 发行版的文档。
++
+对于 RKE2，`rke2-server` 可以使用如下配置文件启动：
++
+[,yaml]
+----
+ # /etc/rancher/rke2/config.yaml
+ kube-apiserver-arg:
+ - admission-control-config-file=/etc/rancher/admission/admission.yaml
+ kube-apiserver-extra-mount:
+ - /etc/rancher/admission:/etc/rancher/admission:ro
+----
++
+
+[WARNING]
+====
+ 某些发行版默认设置此标志。如果您的发行版提供自己的 AdmissionConfiguration，您必须将其包含在自定义准入控制配置文件中。例如，RKE2 在 `/etc/rancher/rke2/rke2-pss.yaml` 处安装一个 AdmissionConfiguration 文件，该文件配置 PodSecurity 准入插件。在 config.yaml 中设置 `admission-control-config-file` 将覆盖此基本安全设置。要同时包含这两个插件，请查阅 https://documentation.suse.com/cloudnative/rke2/latest/en/security/pod_security_standards.html[默认 Pod 安全标准文档] 并将适当的插件配置复制到您的 admission.yaml 中。
+====
+
+
+. 如果您使用 Rancher 在现有节点上配置集群，请在配置它们之前在节点上创建这些文件。
++
+如果您使用 Rancher 在新节点上配置集群，请允许配置完成，然后使用提供的 SSH 密钥和 IP 地址连接到节点，并将 RKE2 配置文件放在 `/etc/rancher/rke2/config.yaml.d/` 目录中。
+
+. 在集群使用这些凭据配置后，配置 Rancher 集群代理以启用 webhook 中的身份验证。创建一个包含这些图表值的文件：
++
+[,yaml]
+----
+ # values.yaml
+ auth:
+   clientCA: <base64-encoded certificate authority that signed the kube-apiserver's client certificates>
+   allowedCNs:
+   - <list of Common Names identifying the kube-apiserver's client certificates.>
+   - <if not provided, any cert signed by the given CA will be accepted.>
+----
+
+. 在已配置的集群的 `cattle-system` 命名空间中创建一个配置映射，包含这些值：
++
+----
+ kubectl --namespace cattle-system create configmap rancher-config --from-file=rancher-webhook=values.yaml
+----
++
+Webhook将使用这些值重新启动。

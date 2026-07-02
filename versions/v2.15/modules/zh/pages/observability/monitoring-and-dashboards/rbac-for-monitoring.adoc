@@ -1,0 +1,373 @@
+= 基于角色的访问控制
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: integrations-in-rancher/monitoring-and-alerting/rbac-for-monitoring.adoc 
+:product-path: observability/monitoring-and-dashboards/rbac-for-monitoring.adoc
+
+本节描述了 Rancher 监控的 RBAC 期望。
+
+[#_cluster_admins]
+== 集群管理员
+
+默认情况下，只有具有集群管理员 `ClusterRole` 的用户才能：
+
+* 将 `rancher-monitoring` 应用安装到集群中，并对 chart 部署执行所有其他相关配置。
+ ** 例如，是否创建默认仪表板，哪些导出器被部署到集群中以收集指标等。
+* 通过 Prometheus CR 在集群中创建/修改/删除 Prometheus 部署
+* 通过 Alertmanager CR 在集群中创建/修改/删除 Alertmanager 部署
+* 通过在适当的名称空间中创建 ConfigMaps 来持久化新的 Grafana 仪表板或数据源
+* 通过在 `cattle-monitoring-system` 名称空间中的 Secret 将某些 Prometheus 指标暴露给 k8s 自定义指标 API 以供 HPA 使用
+
+[#_users_with_kubernetes_clusterrole_based_permissions]
+== 具有 Kubernetes ClusterRole 基于权限的用户
+
+`rancher-monitoring` 图表安装以下三个 `ClusterRoles`。默认情况下，它们聚合到相应的 k8s `ClusterRoles` 中：
+
+|===
+| ClusterRole | 聚合到默认的 K8s ClusterRole
+
+| `monitoring-admin`
+| `admin`
+
+| `monitoring-edit`
+| `edit`
+
+| `monitoring-view`
+| `查看 `
+|===
+
+这些 `ClusterRoles` 根据可以执行的操作提供不同级别的访问权限给监控 CRD：
+
+|===
+| CRD（monitoring.coreos.com） | 管理员 | 编辑 | 查看
+
+| <ul><li>``prometheuses``</li><li>``alertmanagers``</li></ul>
+| 获取、列出、监视
+| 获取、列出、监视
+| 获取、列出、监视
+
+| <ul><li>``servicemonitors``</li><li>``podmonitors``</li><li>``prometheusrules``</li></ul>
+| *
+| *
+| 获取、列出、监视
+|===
+
+从高层次来看，默认情况下分配了以下权限。
+
+[#_users_with_kubernetes_admin_edit_permissions]
+=== 具有 Kubernetes 管理/编辑权限的用户
+
+只有具有集群管理员、管理员或编辑 `ClusterRole` 的用户才能：
+
+* 通过 ServiceMonitor 和 PodMonitor CR 修改 Prometheus 部署的抓取配置
+* 通过 PrometheusRules CR 修改 Prometheus 部署的告警/记录规则
+
+[#_users_with_kubernetes_view_permissions]
+=== 具有 Kubernetes 查看权限的用户
+
+只有拥有某些 Kubernetes `ClusterRole` 的用户才能：
+
+* 查看在集群中部署的 Prometheus 的配置
+* 查看在集群中部署的 Alertmanager 的配置
+* 通过 ServiceMonitor 和 PodMonitor CR 查看 Prometheus 部署的抓取配置
+* 通过 PrometheusRules CR 查看 Prometheus 部署的告警/记录规则
+
+[#_additional_monitoring_roles]
+=== 额外的监控角色
+
+监控还会创建额外的 `Roles`，这些默认情况下不分配给用户，而是在集群中创建。可以通过部署一个引用它的 `RoleBinding` 将其绑定到名称空间。要使用 `RoleBinding` 定义 `kubectl` 而非通过 Rancher，请点击 <<_assigning_roles_and_clusterroles_with_kubectl,这里>>。
+
+管理员应使用这些角色为用户提供更细粒度的访问权限：
+
+|===
+| 角色 | 用途
+
+| monitoring-config-admin
+| 允许管理员将角色分配给用户，以便能够查看/修改 cattle-monitoring-system 名称空间中的 Secrets 和 ConfigMaps。在此名称空间中修改 Secrets / ConfigMaps 可能允许用户更改集群的 Alertmanager 配置、Prometheus Adapter 配置、额外的 Grafana 数据源、TLS 密钥等。
+
+| monitoring-config-edit
+| 允许管理员将角色分配给用户，以便能够查看/修改 cattle-monitoring-system 名称空间中的 Secrets 和 ConfigMaps。在此名称空间中修改 Secrets / ConfigMaps 可能允许用户更改集群的 Alertmanager 配置、Prometheus Adapter 配置、额外的 Grafana 数据源、TLS 密钥等。
+
+| monitoring-config-view
+| 允许管理员将角色分配给用户，以便能够查看 cattle-monitoring-system 名称空间中的 Secrets 和 ConfigMaps。查看此名称空间中的 Secrets / ConfigMaps 可能允许用户观察集群的 Alertmanager 配置、Prometheus Adapter 配置、额外的 Grafana 数据源、TLS 密钥等。
+
+| monitoring-dashboard-admin
+| 允许管理员为用户分配角色，以便能够编辑/查看 cattle-dashboards 名称空间中的 ConfigMaps。该名称空间中的 ConfigMaps 将对应于持久化到集群中的 Grafana 仪表板。
+
+| monitoring-dashboard-edit
+| 允许管理员为用户分配角色，以便能够编辑/查看 cattle-dashboards 名称空间中的 ConfigMaps。该名称空间中的 ConfigMaps 将对应于持久化到集群中的 Grafana 仪表板。
+
+| monitoring-dashboard-view
+| 允许管理员为用户分配角色，以便能够查看 cattle-dashboards 名称空间中的 ConfigMaps。该名称空间中的 ConfigMaps 将对应于持久化到集群中的 Grafana 仪表板。
+|===
+
+[#_assigning_monitoring_roles_through_custom_roles]
+=== 通过自定义角色分配监控角色
+
+管理员可以在 Rancher UI 中为管理、编辑和查看监控分配自定义角色。这些 "角色" 在安装监控应用时默认创建。此外，这些角色也会部署到相应的 Kubernetes 角色：管理员、编辑和查看 `ClusterRoles`。
+
+[NOTE]
+.重要说明
+====
+
+当用户被添加到集群时，UI 不会提供 `monitoring-admin`、`monitoring-edit` 和 `monitoring-view` 选项。这些监控角色只能通过手动创建一个继承自项目所有者和项目监控查看角色的自定义角色来分配。
+====
+
+
+. 创建自定义角色：
+
+....
+1.1 Click **☰ > Users & Authentication > Roles**.
+
+1.2 Select the appropriate tab, e.g., **Cluster** role. Then click **Create Cluster Role**.
+
+1.3 In the **Name** field, create a custom role such as `View Monitoring`, `Edit Monitoring`, or `Admin Monitoring`.
+
+1.4 Click **Inherit From > Add Resource**, then select the Kubernetes role, as applicable, from the dropdown.
+
+1.5 Click **Create**.
+....
+
+. 将自定义角色分配给新用户：
+
+....
+2.1 Click **☰ > Cluster Management > Cluster Explore > Cluster > Cluster Members > Add**.
+
+2.2 Search for your new user name from **Select Member** options displayed.
+
+2.3 Assign the new custom role from **Cluster Permissions** to the new user.
+
+2.4 Click **Create**.
+....
+
+*结果：*新用户现在应该能够看到监控工具。
+
+[#_additional_monitoring_clusterroles]
+=== 附加监控 ClusterRoles
+
+监控还会创建额外的 `ClusterRoles`，这些默认情况下不分配给用户，而是在集群中创建。它们默认不被聚合，但可以通过部署引用它的 `RoleBinding` 或 `ClusterRoleBinding` 将其绑定到名称空间。要使用 `RoleBinding` 定义 `kubectl` 而非通过 Rancher，请点击 <<_assigning_roles_and_clusterroles_with_kubectl,这里>>。
+
+|===
+| 角色 | 用途
+
+| monitoring-ui-view
+| 此 ClusterRole 允许具有项目写入访问权限的用户在 Rancher UI 中查看指定集群的指标图。这是通过授予外部监控用户界面的只读访问权限来完成的。拥有此角色的用户可以列出 Prometheus、Alertmanager 和 Grafana 端点，并通过 Rancher 代理对 Prometheus、Alertmanager 和 Grafana 用户界面发出 GET 请求。 +
+ +
+此角色不授予对监控端点的访问权限。因此，拥有此角色的用户将无法在 Rancher 用户界面中查看集群监控图表和仪表板；但是，如果提供这些链接，他们仍然可以访问监控 Grafana、Prometheus 和 Alertmanager 用户界面。
+|===
+
+[NOTE]
+====
+
+绑定到 *查看监控* Rancher 角色和只读项目权限的用户无法在监控用户界面中查看链接。如果提供这些用户界面的链接，他们仍然可以访问外部监控用户界面。如果您希望授予拥有 *查看监控* 角色和只读项目权限的用户访问权限，请将 `cattle-monitoring-system` 名称空间移动到该项目中。
+====
+
+
+[#_assigning_roles_and_clusterroles_with_kubectl]
+=== 使用 kubectl 分配角色和集群角色
+
+[#_using_kubectl_create]
+==== 使用 `kubectl create`
+
+一种方法是使用 `kubectl create clusterrolebinding` 或 `kubectl create rolebinding` 来分配 `Role` 或 `ClusterRole`。以下示例展示了这一点：
+
+* 分配给特定用户：
+
+[tabs,sync-group-id=role-type]
+======
+clusterrolebinding::
++
+--
+[,plain]
+----
+kubectl create clusterrolebinding my-binding --clusterrole=monitoring-ui-view --user=u-l4npx
+----
+--
+
+rolebinding::
++
+--
+[,plain]
+----
+kubectl create rolebinding my-binding --clusterrole=monitoring-ui-view --user=u-l4npx --namespace=my-namespace
+----
+--
+======
+
+* 分配给所有经过身份验证的用户：
+
+[tabs,sync-group-id=role-type]
+======
+clusterrolebinding::
++
+--
+[,plain]
+----
+kubectl create clusterrolebinding my-binding --clusterrole=monitoring-ui-view --group=system:authenticated
+----
+--
+
+rolebinding::
++
+--
+[,plain]
+----
+kubectl create rolebinding my-binding --clusterrole=monitoring-ui-view --group=system:authenticated --namespace=my-namespace
+----
+--
+======
+
+[#_using_yaml_files]
+==== 使用 YAML 文件
+
+另一种方法是定义您创建的 YAML 文件中的绑定。您必须首先使用 YAML 文件配置 `RoleBinding` 或 `ClusterRoleBinding`。然后，通过运行 `kubectl apply` 命令应用配置更改。
+
+* *角色*：下面是一个示例 YAML 文件，帮助您在 Kubernetes 中配置 `RoleBindings`。您需要在下面填写名称。
+
+[NOTE]
+====
+
+名称区分大小写。
+====
+
+
+[,yaml]
+----
+# monitoring-config-view-role-binding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: monitoring-config-view
+  namespace: cattle-monitoring-system
+roleRef:
+  kind: Role
+  name: monitoring-config-view
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: User
+  name: u-b4qkhsnliz # this can be found via `kubectl get users -A`
+  apiGroup: rbac.authorization.k8s.io
+----
+
+* *kubectl*:下面是一个示例 `kubectl` 命令，用于应用您在 YAML 文件中创建的绑定。请记得相应地填写您的 YAML 文件名。
++
+[,plain]
+----
+kubectl apply -f monitoring-config-view-role-binding.yaml
+----
+
+[#_users_with_rancher_based_permissions]
+== 具有 Rancher 基于权限的用户
+
+Rancher 部署的默认角色（即集群拥有者、集群成员、项目拥有者、项目成员）、默认 Kubernetes 角色以及 rancher-monitoring 图表部署的角色之间的关系详见下表：
+
+.默认 Rancher 权限及对应的 Kubernetes ClusterRoles
+|===
+| Rancher 角色 | Kubernetes 角色 | 监控 ClusterRole / 角色 | ClusterRoleBinding 或 RoleBinding？
+
+| cluster-owner
+| cluster-admin
+| 不适用
+| ClusterRoleBinding
+
+| cluster-member
+| admin
+| monitoring-admin
+| ClusterRoleBinding
+
+| 项目拥有者
+| admin
+| monitoring-admin
+| 项目名称空间内的 RoleBinding
+
+| 项目成员
+| edit
+| monitoring-edit
+| 项目名称空间内的 RoleBinding
+|===
+
+除了这些默认角色外，以下 Rancher 项目角色可以应用于您的集群成员，以提供监控访问权限。这些 Rancher 角色与监控图表部署的 ClusterRoles 相关联：
+
+.非默认 Rancher 权限及相应的 Kubernetes ClusterRoles
+|===
+| Rancher 角色 | Kubernetes ClusterRole | 在 Rancher 中起始于 | 在监控 v2 中起始于
+
+| 查看监控*
+| <<_additional_monitoring_clusterroles,monitoring-ui-view>>
+| 2.4.8+
+| 9.4.204+
+|===
+
+[NOTE]
+====
+
+绑定到 *查看监控* Rancher 角色和只读项目权限的用户无法在监控用户界面中查看链接。如果提供这些用户界面的链接，他们仍然可以访问外部监控用户界面。如果您希望授予拥有 *查看监控* 角色和只读项目权限的用户访问权限，请将 `cattle-monitoring-system` 名称空间移动到该项目中。
+====
+
+
+[#_differences_in_2_5_x]
+=== 2.5.x 的差异
+
+在 Rancher 2.5.x 中，分配了项目成员或项目拥有者角色的用户将无法访问 Prometheus 或 Grafana，因为我们仅在集群级别创建 Grafana 或 Prometheus。
+
+此外，虽然项目拥有者默认只能添加在其项目名称空间内抓取资源的 ServiceMonitors / PodMonitors，但 PrometheusRules 并不局限于单一名称空间 / 项目。因此，项目拥有者在其项目名称空间内创建的任何警报规则或记录规则将适用于整个集群，尽管他们无法查看 / 编辑 / 删除在项目名称空间外创建的任何规则。
+
+[#_assigning_additional_access]
+=== 分配额外访问权限
+
+如果集群管理员希望为超出 rancher-monitoring 图表提供的角色的用户提供额外的管理员/编辑访问权限，以下表格标识了潜在影响：
+
+|===
+| CRD（monitoring.coreos.com） | 这会对名称空间 / 项目外造成影响吗？| 影响
+
+| `prometheuses`
+| 是的，该资源可以从整个集群的任何目标抓取指标（除非操作员本身另有配置）。
+| 用户将能够定义应在集群中创建的新集群级 Prometheus 部署的配置。
+
+| `alertmanagers`
+| 否
+| 用户将能够定义应在集群中创建的新集群级 Alertmanager 部署的配置。注意：如果您只想允许用户配置像 Routes 和 Receivers 这样的设置，您应该只提供对 Alertmanager 配置机密的访问。
+
+| <ul><li>``servicemonitors``</li><li>``podmonitors``</li></ul>
+| 不，默认情况下不是；这可以通过 `ignoreNamespaceSelectors` 在 Prometheus CR 上进行配置。
+| 用户将能够在他们获得此权限的名称空间内，通过服务 / Pod 暴露的端点设置 Prometheus 的抓取。
+
+| `prometheusrules`
+| 是的，PrometheusRules 是集群范围的。
+| 用户将能够根据整个集群收集的任何系列在 Prometheus 上定义警报或记录规则。
+|===
+
+|===
+| k8s 资源 | 名称空间 | 这会对名称空间 / 项目外造成影响吗？| 影响
+
+| <ul><li>``secrets``</li><li>``configmaps``</li></ul>
+| `cattle-monitoring-system`
+| 是的，此名称空间中的配置和机密会影响整个监控/警报管道。
+| 用户将能够创建或编辑机密/配置映射，例如 Alertmanager 配置、Prometheus 适配器配置、TLS 机密、额外的 Grafana 数据源等。这可能会对所有集群监控/警报产生广泛影响。
+
+| <ul><li>``secrets``</li><li>``configmaps``</li></ul>
+| `cattle-dashboards`
+| 是的，此名称空间中的配置和机密可以创建在集群级别上对所有收集的指标进行查询的仪表板。
+| 用户将能够创建仅持久化新 Grafana 仪表板的机密/配置映射。
+|===
+
+[#_role_based_access_control_for_grafana]
+== Grafana 的基于角色的访问控制
+
+Rancher 允许任何通过 Kubernetes 认证并访问 Rancher 监控图表部署的 Grafana 服务的用户通过 Rancher Dashboard UI 访问 Grafana。默认情况下，所有能够访问 Grafana 的用户都被赋予 https://grafana.com/docs/grafana/latest/permissions/organization_roles/#viewer-role[查看者] 角色，这允许他们查看 Rancher 部署的任何默认仪表板。
+
+然而，用户可以选择在必要时以 https://grafana.com/docs/grafana/latest/permissions/organization_roles/#admin-role[管理员]身份登录 Grafana。Grafana 实例的默认管理员用户名和密码将是`admin`/`prom-operator`，但在部署或升级图表时也可以提供其他凭据。
+
+要查看 Grafana UI，请安装 `rancher-monitoring`。然后：
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在*集群*页面上，转到您想查看可视化的集群，然后单击*探索*。
+. 在左侧导航栏中，单击*监控*。
+. 点击 *Grafana*。
+
+.Grafana 中的集群计算资源仪表板
+image::cluster-compute-resources-dashboard.png[Grafana 中的集群计算资源仪表板]
+
+.Grafana 中的默认仪表板
+image::grafana-default-dashboard.png[Grafana 中的默认仪表板]

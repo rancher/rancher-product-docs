@@ -1,0 +1,234 @@
+= 在 Google Kubernetes Engine 集群上安装 {rancher-product-name}
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-03-09
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rancher-on-gke.adoc 
+:product-path: installation-and-upgrade/hosted-kubernetes/rancher-on-gke.adoc
+ifeval::["{build-type}" != "community"]
+:xref-install-rancher: xref:installation-and-upgrade/install-rancher.adoc
+:xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
+:xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
+endif::[]
+
+在本节中，您将学习如何使用 Google Kubernetes Engine 安装 Rancher。
+
+如果您已经有一个 GKE Kubernetes 集群，请跳到关于 <<_7_install_an_ingress,安装 Ingress 的步骤。>>然后按照 {xref-install-rancher}#_install_the_rancher_helm_chart[本页面] 上的说明安装 Rancher Helm 图表。
+
+[#_prerequisites]
+== 先决条件
+
+* 您需要一个 Google 账户。
+* 您需要一个 Google Cloud 计费账户。您可以使用 Google Cloud 控制台管理您的 Cloud Billing 账户。有关 Cloud 控制台的更多信息，请访问 https://support.google.com/cloud/answer/3465889?hl=en&ref_topic=3340599[控制台的一般指南。]
+* 您需要至少一个正在使用的 IP 地址的云配额和至少 2 个处理器。有关 Rancher 服务器的硬件要求的更多详细信息，请参阅 {xref-install-reqs}[本节。]
+
+[#_1_enable_the_kubernetes_engine_api]
+== 1.启用 Kubernetes Engine API
+
+按照以下步骤启用 Kubernetes Engine API：
+
+. 访问 Google Cloud 控制台中的 https://console.cloud.google.com/projectselector/kubernetes?_ga=2.169595943.767329331.1617810440-856599067.1617343886[Kubernetes Engine 页面]。
+. 创建或选择一个项目。
+. 打开项目并为该项目启用 Kubernetes Engine API。等待 API 和相关服务被启用。这可能需要几分钟。
+. 确保您的 Cloud 项目已启用计费。有关如何为您的项目启用计费的信息，请参阅 https://cloud.google.com/billing/docs/how-to/modify-project#enable_billing_for_a_project[Google Cloud 文档。]
+
+[#_2_open_the_cloud_shell]
+== 2.打开 Cloud Shell
+
+Cloud Shell 是一个用于管理托管在 Google Cloud 上的资源的 shell 环境。Cloud Shell 预装了 `gcloud` 命令行工具和 kubectl 命令行工具。`gcloud` 工具为 Google Cloud 提供了主要的命令行接口，而 `kubectl` 则为对 Kubernetes 集群运行命令提供了主要的命令行接口。
+
+以下部分描述了如何从 Google Cloud 控制台或本地工作站启动 Cloud Shell。
+
+[#_cloud_shell]
+=== Cloud Shell
+
+要从 https://console.cloud.google.com[Google Cloud 控制台,] 启动 Cloud Shell，请转到控制台的右上角并单击终端按钮。当将鼠标悬停在按钮上时，标签为 *激活 Cloud Shell*。
+
+[#_local_shell]
+=== 本地 Shell
+
+要安装 `gcloud` 和 `kubectl`，请执行以下步骤：
+
+. 按照 https://cloud.google.com/sdk/docs/install[这些步骤] 安装 Cloud SDK。Cloud SDK 包含 `gcloud` 命令行工具。步骤因操作系统而异。
+. 安装 Cloud SDK 后，通过运行以下命令安装 `kubectl` 命令行工具：
++
+----
+ gcloud components install kubectl
+----
++
+在后续步骤中，`kubectl` 将被配置为使用新的 GKE 集群。
+
+. 如果尚未安装，请 https://helm.sh/docs/intro/install/[安装 Helm 3]。
+. 使用 `HELM_EXPERIMENTAL_OCI` 变量启用 Helm 实验性 https://github.com/helm/community/blob/master/hips/hip-0006.md[对 OCI 镜像的支持]。将以下行添加到 `~/.bashrc`（或在 macOS 中的 `~/.bash_profile`，或您的 Shell 存储环境变量的任何地方）：
++
+----
+ export HELM_EXPERIMENTAL_OCI=1
+----
+
+. 运行以下命令以加载您更新的 `.bashrc` 文件：
++
+----
+ source ~/.bashrc
+----
++
+如果您正在运行 macOS，请使用此命令：
++
+----
+ source ~/.bash_profile
+----
+
+[#_3_configure_the_gcloud_cli]
+== 3.配置 gcloud CLI
+
+使用以下方法之一设置默认 gcloud 设置：
+
+* 使用 gcloud init，如果您希望逐步设置默认值。
+* 使用 gcloud config 单独设置您的项目 ID、区域和地区。
+
+[tabs]
+======
+使用 gcloud init::
++
+--
+. 运行 gcloud init 并按照指示操作：
++
+----
+  gcloud init
+----
++
+如果您在远程服务器上使用 SSH，请使用 --console-only 标志以防止命令启动浏览器：
++
+----
+  gcloud init --console-only
+----
+
+. 按照说明授权 gcloud 使用您的 Google Cloud 帐户，并选择您创建的新项目。
+--
+
+使用 gcloud config::
++
+--
+--
+======
+
+[#_4_confirm_that_gcloud_is_configured_correctly]
+== 4.确认 gcloud 配置正确
+
+运行以下命令：
+
+----
+gcloud config list
+----
+
+输出应类似于以下内容：
+
+----
+[compute]
+region = us-west1 # Your chosen region
+zone = us-west1-b # Your chosen zone
+[core]
+account = <Your email>
+disable_usage_reporting = True
+project = <Your project ID>
+
+Your active configuration is: [default]
+----
+
+[#_5_create_a_gke_cluster]
+== 5.创建 GKE 集群
+
+以下命令创建一个三节点集群。
+
+将 `cluster-name` 替换为您的新集群名称。
+
+在选择 Kubernetes 版本时，请务必先查阅 https://rancher.com/support-matrix/[支持矩阵]，以找到已为您的 Rancher 版本验证的最高 Kubernetes 版本。
+
+要成功使用 Rancher 创建 GKE 集群，您的 GKE 必须处于标准模式。GKE 在创建 Kubernetes 集群时有两种操作模式，自动驾驶模式和标准模式。自动驾驶模式的集群配置对编辑 kube-system 命名空间有限制。然而，Rancher 在安装过程中需要在 kube-system 命名空间中创建资源。因此，您将无法在以 Autopilot 模式创建的 GKE 集群上安装 Rancher。有关 GKE 自动驾驶模式与标准模式差异的详细信息，请访问 https://cloud.google.com/kubernetes-engine/docs/resources/autopilot-standard-feature-comparison[比较 GKE 自动驾驶模式与标准模式]
+
+----
+gcloud container clusters create cluster-name --num-nodes=3 --cluster-version=<VERSION>
+----
+
+[#_6_get_authentication_credentials]
+== 6.获取身份验证凭据
+
+创建集群后，您需要获取身份验证凭据以与集群交互：
+
+----
+gcloud container clusters get-credentials cluster-name
+----
+
+此命令配置 `kubectl` 以使用您创建的集群。
+
+[#_7_install_an_ingress]
+== 7.安装Ingress
+
+集群需要一个Ingress，以便从集群外部访问Rancher。安装Ingress需要分配一个公共IP地址。确保您有足够的配额，否则将无法分配IP地址。公共 IP 地址的限制适用于每个订阅的区域级别。您可以使用 GCP 提供的托管 Ingress 控制器或像 Traefik 这样的第三方 Ingress 控制器。
+
+[WARNING]
+====
+如果已经在使用托管 Ingress 控制器，则不建议安装像 Traefik 这样的第三方 Ingress 控制器。
+====
+
+[WARNING]
+====
+**Ingress-NGINX EOL：**社区 `ingress-nginx` 控制器将在 2026 年 3 月达到终止服务（EOL）。此页面使用 Traefik，这是 Rancher 环境推荐的迁移路径。
+====
+
+Traefik 包含一个原生的 Ingress NGINX 提供程序。这使您可以在不重写现有 Ingress 对象的情况下从 NGINX 迁移，因为 Traefik 会自动解释 `nginx.ingress.kubernetes.io` 注释。如果您正在升级已经使用 `ingress-nginx` 的集群，请遵循此 https://doc.traefik.io/traefik/migrate/nginx-to-traefik/[指南] 以获取更多信息。
+
+要安装 Traefik，我们强烈建议使用 https://apps.rancher.io/applications/traefik-proxy[Rancher Prime 应用程序集合] 中的 Traefik 应用程序。查看他们的 https://docs.apps.rancher.io/howto-guides/integrate-with-rancher-manager[文档以与 Rancher 管理器集成]。
+
+
+[#_8_get_load_balancer_ip]
+== 8.获取负载均衡器 IP
+
+要获取负载均衡器的地址，请运行：
+
+----
+kubectl get service traefik --namespace=traefik
+----
+
+结果应类似如下内容：
+
+----
+NAME                       TYPE           CLUSTER-IP     EXTERNAL-IP                                                              PORT(S)
+ AGE
+traefik  LoadBalancer   10.0.116.18    40.31.180.83   80:31229/TCP,443:31050/TCP 27m
+----
+
+保存 `EXTERNAL-IP`。
+
+[#_9_set_up_dns]
+== 9.设置 DNS
+
+外部流量需要指向您创建的负载均衡器。
+
+为您保存的外部 IP 设置 DNS 记录。此 DNS 将用作 Rancher 服务器 URL.
+
+有许多有效的方法来设置 DNS。如需帮助，请参考有关 https://cloud.google.com/dns/docs/records[管理 DNS 记录的 Google Cloud 文档。]
+
+[#_10_install_the_rancher_helm_chart]
+== 10.安装 Rancher Helm 图表
+
+接下来，请按照 {xref-install-rancher}#_install_the_rancher_helm_chart[此页面] 上的说明安装 Rancher Helm 图表。Helm 的说明在任何 Kubernetes 发行版上安装 Rancher 时都是相同的。
+
+在安装 Rancher 时，请使用上一步中的 DNS 名称作为 Rancher 服务器 URL。可以作为 Helm 选项传递。例如，如果 DNS 名称是 `rancher.my.org`，您可以使用选项 `--set hostname=rancher.my.org` 运行 Helm 安装命令。
+
+在此设置上安装 Rancher 时，您还需要设置与 Rancher 的 ingress 资源一起使用的 ingress 控制器的名称：
+
+----
+--set ingress.ingressClassName=traefik
+----
+
+有关您选择的证书选项，请参阅 {xref-install-rancher}#_5_install_rancher_with_helm_and_your_chosen_certificate_option[此处的 Helm 安装命令]。
+
+在 Rancher v2.7.5 中，如果您打算在不启用 VPC 原生集群模式的情况下使用集群上的默认 GKE ingress，您需要设置以下标志：
+
+----
+--set service.type=NodePort
+----
+
+这是必要的，因为此设置与 `cattle-system/rancher` 的默认类型 ClusterIP 之间存在兼容性问题。

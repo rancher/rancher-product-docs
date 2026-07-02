@@ -1,0 +1,78 @@
+= iSCSI 卷
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/install-iscsi-volumes.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/install-iscsi-volumes.adoc
+ifeval::["{build-type}" != "community"]
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+endif::[]
+
+在 {xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 中，如果数据存储在 iSCSI 卷上，您可能会遇到 kubelet 无法自动连接到 iSCSI 卷的问题。此故障可能是由于 iSCSI 启动工具的兼容性问题。您可以通过在每个集群节点上安装 iSCSI 启动工具来解决此问题。
+
+存储在 iSCSI 卷上的 Rancher 启动的 Kubernetes 集群利用了 http://www.open-iscsi.com/[iSCSI 启动工具]，该工具嵌入在 kubelet 的 `rancher/hyperkube` Docker 镜像中。从每个 kubelet（即 _启动器_）开始，该工具发现并启动与 iSCSI 卷（即 _目标_）的会话。然而，在某些情况下，安装在启动器和目标上的 iSCSI 启动工具的版本可能不匹配，导致连接失败。
+
+如果您遇到此问题，可以通过在集群中的每个节点上安装 iSCSI 启动工具来解决。您可以通过登录到集群节点并输入以下命令之一来安装 iSCSI 启动工具：
+
+|===
+| 平台 | 软件包名称 | 安装命令
+
+| Ubuntu/Debian
+| `open-iscsi`
+| `sudo apt install open-iscsi`
+
+| RHEL
+| `iscsi-initiator-utils`
+| `yum install iscsi-initiator-utils -y`
+|===
+
+在节点上安装 iSCSI 启动工具后，编辑集群的 YAML，修改 kubelet 配置以挂载 iSCSI 二进制文件和配置，如下示例所示。
+
+[NOTE]
+.注意
+====
+
+* 在更新 Kubernetes YAML 以挂载 iSCSI 二进制文件和配置之前，请确保在集群节点上安装了 `open-iscsi`（deb）或 `iscsi-initiator-utils`（yum）软件包。如果此软件包在 Kubernetes YAML 中创建绑定挂载 _before_之前未安装，Docker 将自动在每个节点上创建目录和文件，并且不会允许软件包安装成功。
+* 下面的示例 YAML 不适用于 K3s，仅适用于 RKE 集群。由于 K3s kubelet 不在容器中运行，因此不需要添加额外的绑定。然而，所有 iSCSI 工具仍然必须安装在您的 K3s 节点上。
+====
+
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+----
+
+如果您使用的是 RHEL 7.9，您需要挂载文件 `/usr/lib64/libcrypto.so.10`，如下面的示例所示。
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.10:/usr/lib/libcrypto.so.10"
+----
+
+如果您使用的是 RHEL 8.6，您需要挂载文件 `/usr/lib64/libcrypto.so.1.1`，如下面的示例所示。
+
+----
+services:
+  kubelet:
+    extra_binds:
+      - "/etc/iscsi:/etc/iscsi"
+      - "/sbin/iscsiadm:/sbin/iscsiadm"
+      - "/usr/lib64/libcrypto.so.1.1:/usr/lib/libcrypto.so.1.1"
+----
+
+[TIP]
+====
+
+要验证 iscsiadm 是否正常工作，您可以在任何节点上运行命令 `docker exec kubelet iscsiadm --version`。
+====
+

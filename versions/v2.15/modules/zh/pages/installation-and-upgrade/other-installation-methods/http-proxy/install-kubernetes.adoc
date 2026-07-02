@@ -1,0 +1,127 @@
+= 2.安装Kubernetes
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-03-16
+:page-revdate: {revdate}
+:community-path: getting-started/installation-and-upgrade/other-installation-methods/rancher-behind-an-http-proxy/install-kubernetes.adoc 
+:product-path: installation-and-upgrade/other-installation-methods/http-proxy/install-kubernetes.adoc
+ifeval::["{build-type}" != "community"]
+:url-k3s-installation: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/installation.html
+:url-rke2-install-ha: https://documentation.suse.com/cloudnative/rke2/latest/en/install/ha.html
+:url-rke2-introduction: https://documentation.suse.com/cloudnative/rke2/latest/en/introduction.html
+:xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-installation: https://docs.k3s.io/installation
+:url-rke2-install-ha: https://docs.rke2.io/install/ha
+:url-rke2-introduction: https://docs.rke2.io/
+:xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
+endif::[]
+
+一旦基础设施准备就绪，您可以继续设置Kubernetes集群以安装Rancher。
+
+设置RKE2或K3s的步骤如下。
+
+为了方便，将代理的IP地址和端口导出到环境变量中，并在每个节点上为当前外壳设置`HTTP_PROXY`变量：
+
+[CAUTION]
+====
+`NO_PROXY`环境变量并没有标准化，值的接受格式可能因应用程序而异。在为Rancher配置`NO_PROXY`变量时，值必须遵循Golang所期望的格式。
+
+具体来说，值应该是一个以逗号分隔的字符串，仅包含IP地址、CIDR表示法、域名或特殊DNS标签（例如`*`）。有关预期值格式的完整描述，请参阅 https://pkg.go.dev/golang.org/x/net/http/httpproxy#Config[**上游Golang文档**]。
+====
+
+----
+export proxy_host="10.0.0.5:8888"
+export HTTP_PROXY=http://${proxy_host}
+export HTTPS_PROXY=http://${proxy_host}
+export NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16
+----
+
+[tabs]
+======
+K3s::
++
+--
+首先在K3s systemd服务上配置HTTP代理设置，以便K3s的containerd可以通过代理拉取镜像：
+
+----
+cat <<'EOF' | sudo tee /etc/default/k3s > /dev/null
+HTTP_PROXY=http://${proxy_host}
+HTTPS_PROXY=http://${proxy_host}
+NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+EOF
+----
+
+Rancher 需要安装在受支持的 Kubernetes 版本上。要查找与您的 Rancher 版本兼容的 Kubernetes 版本，请参考 https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher 支持矩阵]。
+
+要指定K3s（Kubernetes）版本，请在运行K3s安装脚本时使用INSTALL_K3S_VERSION（例如，`INSTALL_K3S_VERSION="v1.24.10+k3s1"`）环境变量。
+
+在第一个节点上，创建一个新集群：
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> K3S_TOKEN=<TOKEN> sh -s - server --cluster-init
+----
+
+然后加入其他节点：
+
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> K3S_TOKEN=<TOKEN> sh -s - server --server https://<SERVER>:6443
+----
+
+其中`<SERVER>`为服务器的IP或有效DNS，而`<TOKEN>`则是服务器在`/var/lib/rancher/k3s/server/node-token`处提供的词元。
+
+有关安装K3s的更多信息，请参见{url-k3s-installation}[K3s安装文档]。
+
+要查看您的集群，请运行：
+
+----
+kubectl cluster-info
+kubectl get pods --all-namespaces
+----
+--
+
+RKE2::
++
+--
+在每个节点上，运行RKE2安装脚本。确保您正在安装的RKE2版本是 https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher支持的]。
+
+----
+curl -sfL https://get.rke2.io | INSTALL_RKE2_CHANNEL=v1.xx sh -
+----
+
+然后，您必须在RKE2 systemd服务上配置HTTP代理设置，以便RKE2的containerd可以通过代理拉取镜像：
+
+----
+cat <<'EOF' | sudo tee /etc/default/rke2-server > /dev/null
+HTTP_PROXY=http://${proxy_host}
+HTTPS_PROXY=http://${proxy_host}
+NO_PROXY=127.0.0.0/8,10.0.0.0/8,cattle-system.svc,172.16.0.0/12,192.168.0.0/16,.svc,.cluster.local
+EOF
+----
+
+接下来，在每个节点上创建RKE2配置文件，遵循{url-rke2-install-ha}[RKE2高可用性文档]。
+
+之后启动并启用`rke2-server`服务：
+
+----
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+----
+
+有关安装RKE2的更多信息，请参见{url-rke2-introduction}[RKE2文档]。
+
+要查看您的集群，请运行：
+
+----
+export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+alias kubectl=/var/lib/rancher/rke2/bin/kubectl
+kubectl cluster-info
+kubectl get pods --all-namespaces
+----
+--
+======
+
+[#_issues_or_errors]
+== 有问题或错误吗？
+
+请参阅{xref-install-upgrade-troubleshooting}[故障排除]页面。
