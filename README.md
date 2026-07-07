@@ -62,7 +62,7 @@ npm ci
 
 ### Build the Static Website Using the Local Documentation Content
 
-There are several playbook files available to build different variants of the documentation site, such as the community, product (Rancher Prime), or SRFA (SUSE Rancher for AWS) site, using either local or remote content.
+There are several playbook files available to build different variants of the documentation site, such as the community (Rancher Manager), product (Rancher Prime), or SRFA (SUSE Rancher for AWS) site, using either local or remote content.
 
 If you want to build and view the documentation content from your local machine, you can use one of the local playbooks:
 
@@ -130,7 +130,7 @@ An exception to this is a new minor version (such as `v2.10.0`), for which devel
 There are two separate directory trees for documentation content:
 
 - `community-docs/<VERSION>/`: Contains content for the community site, published at https://ranchermanager.docs.rancher.com/.
-- `versions/<VERSION>/`: Contains content for the product site, published at https://documentation.suse.com/.
+- `versions/<VERSION>/`: Contains content for the Prime site, published at https://documentation.suse.com/cloudnative/rancher-manager/.
 
 To support single-sourcing, most of the AsciiDoc files in the `community-docs` tree are symlinked to their respective counterparts in the product `versions` directory. For community docs, these files are organized under the following directory structure:
 
@@ -156,7 +156,7 @@ ifeval::["{build-type}" == "community"]
 This content only appears in the Rancher Community documentation.
 endif::[]
 
-// Content specifically for the product site
+// Content specifically for the Prime site
 ifeval::["{build-type}" == "product"]
 This content only appears in the SUSE Rancher Prime documentation.
 endif::[]
@@ -193,6 +193,9 @@ You can then safely refer to this heading using the explicit anchor:
 xref:#_my_anchor[My Anchor]
 ```
 
+Note: If you want to link from one documentation page to another, do not use absolute URLs. Antora uses a special `xref:` syntax to dynamically link files across versions and modules.
+
+Example: xref:installation/requirements.adoc[System Requirements]
 #### Updating Navigation
 
 When adding a new documentation page, or renaming or removing an existing one, you must update the navigation file (`nav.adoc`) for the respective version. This ensures that the site's sidebar menu accurately reflects the available content.
@@ -208,7 +211,16 @@ For more information on how to structure the navigation lists, refer to the [Ant
 
 - Site-level configuration is done through a playbook file. For example, `playbook-community-local.yml`. Refer to the [Antora playbook documentation](https://docs.antora.org/antora/latest/playbook/) for more information.
 - Component-level configuration is done through a file called `antora.yml`. For example, `versions/<VERSION>/antora.yml` or `community-docs/<VERSION>/antora.yml`. Refer to the [Antora  antora.yml documentation](https://docs.antora.org/antora/latest/component-version-descriptor/) for more information.
+#### Troubleshooting Common Issues
 
+**Error:** `Antora documentation component not found` or CSS formatting looks completely broken.
+**Fix:** You likely forgot to initialize the submodules. Run `git submodule update --init` and rebuild.
+
+**Error:**  `npm ERR! code EBADENGINE` or dependency conflicts.
+**Fix:** Ensure you are using a modern Node.js LTS version (e.g., Node 18 or Node 20). If you used `npm install`, delete your `node_modules` folder and run `npm ci` instead.
+
+**Issue:** Changes aren't updating in the browser.
+**Fix:** Antora does not feature "live-reload". Every time you make a change to a file, you must stop your terminal process, rerun `npx antora playbook-product-local.yml`, and refresh your browser.
 ## License
 
 Copyright (c) 2014-2026 [SUSE, LLC.](https://www.suse.com/)
