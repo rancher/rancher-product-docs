@@ -113,7 +113,9 @@ Our repository does not allow you to make changes directly to the `main` branch.
 
 ### Branching Strategy
 
-Most documentation development happens on the `main` branch. However, when working on version-specific content, your pull requests should target a version branch (for example, `v2.10.10`). These version branches are created at the beginning of the development cycle for a specific release. Once the version is released, the release branch is merged back into `main`. 
+Most documentation development happens on the `main` branch. However, when working on version-specific content, your pull requests should target a version branch (for example, `v2.10.10`). These version branches are created at the beginning of the development cycle for a specific release. Once the version is released, the release branch is merged back into `main`.
+
+An exception to this is a new minor version (such as `v2.10.0`), for which development is opened on `main` from the beginning of the development cycle.
 
 ### File Organization
 
