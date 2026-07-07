@@ -1,6 +1,8 @@
-# SUSE® Rancher Manager Documentation
+# SUSE® Rancher Prime and Rancher Manager Documentation
 
-This repository is used to publish the documentation on the [SUSE Documentation website](https://documentation.suse.com/cloudnative/rancher-manager/). For inquiries about the Rancher software, please refer to [Rancher GitHub repository](https://github.com/rancher/rancher/).
+This is the source for the official SUSE Rancher Prime and Rancher Manager documentation.
+
+For inquiries about the Rancher software, please refer to [Rancher GitHub repository](https://github.com/rancher/rancher/).
 
 ## Build the Documentation Site
 
@@ -27,14 +29,6 @@ node -v
 ```
 
 If you don't have Node.js installed on your machine, install it, preferably via [nvm](https://github.com/nvm-sh/nvm).
-
-### Clone the Repository
-
-Run the git command to clone this repository.
-
-```
-git clone https://github.com/rancher/rancher-product-docs.git
-```
 
 ### Install Dependencies
 
@@ -121,8 +115,6 @@ Our repository does not allow you to make changes directly to the `main` branch.
 
 Most documentation development happens on the `main` branch. However, when working on version-specific content, your pull requests should target a version branch (for example, `v2.10.10`). These version branches are created at the beginning of the development cycle for a specific release. Once the version is released, the release branch is merged back into `main`. 
 
-An exception to this is a new minor version (such as `v2.10.0`), for which development is opened on `main` from the beginning of the development cycle.
-
 ### File Organization
 
 #### Content and Asset Files
@@ -193,12 +185,17 @@ You can then safely refer to this heading using the explicit anchor:
 xref:#_my_anchor[My Anchor]
 ```
 
-Note: If you want to link from one documentation page to another, do not use absolute URLs. Antora uses a special `xref:` syntax to dynamically link files across versions and modules.
+> [!NOTE]
+> If you want to link from one documentation page to another, do not use absolute URLs. Antora uses a special xref: syntax to cross-reference pages. For example:
+>
+> ```asciidoc
+> xref:installation/requirements.adoc[System Requirements]
+> ```
+> For more information, refer to the [Antora Xref documentation](https://docs.antora.org/antora/latest/page/xref/).
 
-Example: xref:installation/requirements.adoc[System Requirements]
 #### Updating Navigation
 
-When adding a new documentation page, or renaming or removing an existing one, you must update the navigation file (`nav.adoc`) for the respective version. This ensures that the site's sidebar menu accurately reflects the available content.
+When adding a new documentation page, or renaming or removing an existing one, you must update the navigation file (`nav.adoc`) for the respective version (and locale). This ensures that the site's sidebar menu accurately reflects the available content.
 
 If the page is single-sourced, the `nav.adoc` file needs to be updated in both the community and product directory trees, for example:
 
@@ -211,16 +208,24 @@ For more information on how to structure the navigation lists, refer to the [Ant
 
 - Site-level configuration is done through a playbook file. For example, `playbook-community-local.yml`. Refer to the [Antora playbook documentation](https://docs.antora.org/antora/latest/playbook/) for more information.
 - Component-level configuration is done through a file called `antora.yml`. For example, `versions/<VERSION>/antora.yml` or `community-docs/<VERSION>/antora.yml`. Refer to the [Antora  antora.yml documentation](https://docs.antora.org/antora/latest/component-version-descriptor/) for more information.
+
+#### Translations
+
+Translations are only published for the Prime site and are available under the `versions/<VERSION>/modules/` directory. Translations are imported in batches, so contributors should not update individual translations manually.
+
+The list of available locales for each page is defined by the `:page-languages:` attribute at the beginning of each page. This attribute is used for the language switcher on the Prime site.
+
 #### Troubleshooting Common Issues
 
 **Error:** `Antora documentation component not found` or CSS formatting looks completely broken.
 **Fix:** You likely forgot to initialize the submodules. Run `git submodule update --init` and rebuild.
 
 **Error:**  `npm ERR! code EBADENGINE` or dependency conflicts.
-**Fix:** Ensure you are using a modern Node.js LTS version (e.g., Node 18 or Node 20). If you used `npm install`, delete your `node_modules` folder and run `npm ci` instead.
+**Fix:** Ensure you are using a modern Node.js LTS version (e.g., Node 18 or Node 20). If you used `npm install`, delete your `node_modules` directory and run `npm ci` instead.
 
 **Issue:** Changes aren't updating in the browser.
-**Fix:** Antora does not feature "live-reload". Every time you make a change to a file, you must stop your terminal process, rerun `npx antora playbook-product-local.yml`, and refresh your browser.
+**Fix:** Antora does not feature "live-reload". Every time you make a change to a file, you must stop your terminal process, rerun `npx antora <PLAYBOOK_FILE>`, and refresh your browser.
+
 ## License
 
 Copyright (c) 2014-2026 [SUSE, LLC.](https://www.suse.com/)
