@@ -1,6 +1,6 @@
 # SUSE® Rancher Prime and Rancher Manager Documentation
 
-This is the source for the official SUSE Rancher Prime and Rancher Manager documentation.
+This is the source for the official SUSE Rancher Prime, SUSE Rancher for AWS and Rancher Manager documentation.
 
 For inquiries about the Rancher software, please refer to [Rancher GitHub repository](https://github.com/rancher/rancher/).
 
