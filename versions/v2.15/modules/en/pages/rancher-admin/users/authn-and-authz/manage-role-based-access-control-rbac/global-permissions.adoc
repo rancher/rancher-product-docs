@@ -1,6 +1,6 @@
 = Global Permissions
 :page-languages: [en, de, es, fr, ja, pt, zh]
-:revdate: 2026-07-02
+:revdate: 2026-07-13
 :page-revdate: {revdate}
 :community-path: how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/global-permissions.adoc 
 :product-path: rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/global-permissions.adoc
@@ -291,6 +291,101 @@ Any user with this permission will be a cluster-owner on all downstream clusters
 Using this field on <<_configuring_default_global_permissions,default GlobalRoles>> may result in users gaining excessive permissions.
 ====
 
+[#_globalrole_permissions_in_specific_namespaces]
+==== GlobalRole Permissions in Specific Namespaces
+
+GlobalRoles can grant access to resources in specific namespaces through two fields, `namespacedRules` and `inheritedNamespacedRules`. The first, `namespacedRules`, is used to provide access to namespaces within the management cluster.
+
+For example, the following GlobalRole when assigned to a user would allow that user to read secrets in the namespace `my-secrets-namespace` on the management cluster.
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+displayName: Secret Reader
+metadata:
+  name: secret-reader
+namespacedRules:
+  my-secrets-namespace:
+    - apiGroups:
+      - ""
+      resources:
+      - secrets
+      verbs:
+      - "get"
+      - "list"
+      - "watch"
+----
+
+The second field, `inheritedNamespacedRules`, works similarly, but is intended for namespaces within all downstream clusters. The following example shows a GlobalRole that gives full access to the `cattle-monitoring-system` namespace on every cluster.
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+displayName: Edit Monitoring User
+metadata:
+  name: monitoring-role
+inheritedNamespacedRules:
+  cattle-monitoring-system:
+    - apiGroups:
+      - "*"
+      resources:
+      - "*"
+      verbs:
+      - "*"
+----
+
+If a cluster does not have the namespace `cattle-monitoring-system`, then no permissions will be provided. If the namespace is then created later on the cluster, the permissions will automatically be added for the user bound to the above GlobalRole.
+
+Both fields are maps of whose keys are namespaces and values are an array of PolicyRules. That way, multiple namespaces and rules per namespace can be specified.
+
+[NOTE]
+====
+This field alone does not provide access to the cluster directly. Users still need to be provided permissions to access the cluster, either via `inheritedClusterRoles` or ClusterRoleTemplateBindings.
+====
+
+[#_globalrole_permissions_for_fleet_workspaces]
+==== GlobalRole Permissions for Fleet Workspaces
+
+GlobalRoles can grant access to Fleet workspaces in each downstream cluster with the field `inheritedFleetWorkspacePermissions`. This allows users to deploy Fleet resources in all workspaces except `fleet-local`. The field is made up of two parts: 
+
+* `resourceRules` which grants rules to Fleet resources
+* `workspaceVerbs` which grants permissions to the cluster-wide `fleetworkspace` resources.
+
+Example:
+
+[,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+metadata:
+  name: fleet-permissions
+inheritedClusterRoles:
+   - cluster-owner
+inheritedFleetWorkspacePermissions:
+  resourceRules:
+    - apiGroups:
+        - fleet.cattle.io
+      resources:
+        - clusterregistrationtokens
+        - gitreporestrictions
+        - clusterregistrations
+        - clusters
+        - gitrepos
+        - bundles
+        - clustergroups
+      verbs:
+        - "*"
+  workspaceVerbs:
+    - get
+    - list
+    - update
+    - create
+    - delete
+    - patch
+    - fleetaddcluster
+----
 
 [#_configuring_default_global_permissions]
 === Configuring Default Global Permissions
