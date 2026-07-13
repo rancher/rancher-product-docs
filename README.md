@@ -134,7 +134,32 @@ For product docs, the directory structure is as follows:
 
 - `versions/<VERSION>/modules/<LOCALE>/pages/`
 
+To define the location of the documentation page in the product `versions` documentation tree and its community symlink counterpart in the `community-docs` tree, use the `:community-path:` and `:product-path:` attributes at the top of the AsciiDoc file.
+
+For example:
+
+```asciidoc
+:community-path: reference-guides/kubernetes-concepts.adoc 
+:product-path: about-rancher/concepts.adoc
+```
+
 Other asset files (for example, images) have their own subdirectories. For example, `versions/<VERSION>/modules/en/images`.
+
+#### Backporting Changes
+
+When you need to backport changes between different versions, you can try running the `./product-docs-common/scripts/recurring/backport_modules.sh` script. This script helps contributors with porting changes as found in Git-modified files.
+
+For example, to port changes to versions `v2.11` and `v2.12`, run:
+
+```bash
+./product-docs-common/scripts/recurring/backport_modules.sh v2.11 v2.12
+```
+
+For more information and a complete list of options, refer to the script's help menu by running:
+
+```bash
+./product-docs-common/scripts/recurring/backport_modules.sh --help
+```
 
 #### Single-Sourcing with Conditionals
 
