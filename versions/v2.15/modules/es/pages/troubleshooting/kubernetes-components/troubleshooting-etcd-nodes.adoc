@@ -12,12 +12,14 @@ Esta sección contiene comandos y consejos para solucionar problemas en nodos co
 
 El contenedor de etcd debería tener el estado *En marcha*. La duración mostrada después de *Up* es el tiempo que el contenedor ha estado en ejecución.
 
+[,shell]
 ----
 docker ps -a -f=name=etcd$
 ----
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 CONTAINER ID   IMAGE                                 COMMAND                  CREATED          STATUS          PORTS     NAMES
 d26adbd23643   rancher/mirrored-coreos-etcd:v3.5.7   "/usr/local/bin/etcd…"   30 minutes ago   Up 30 minutes             etcd
@@ -28,6 +30,7 @@ d26adbd23643   rancher/mirrored-coreos-etcd:v3.5.7   "/usr/local/bin/etcd…"   
 
 El registro del contenedor puede contener información sobre cuál podría ser el problema.
 
+[,shell]
 ----
 docker logs etcd
 ----
@@ -63,6 +66,7 @@ La salida debería contener todos los nodos con el rol de `etcd` y la salida deb
 
 Comando:
 
+[,shell]
 ----
 docker exec etcd etcdctl member list
 ----
@@ -74,12 +78,14 @@ Los valores para `RAFT TERM` deben ser iguales y `RAFT INDEX` no deben estar dem
 
 Comando:
 
+[,shell]
 ----
 docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint status --write-out table
 ----
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 +-----------------+------------------+---------+---------+-----------+-----------+------------+
 | ENDPOINT        |        ID        | VERSION | DB SIZE | IS LEADER | RAFT TERM | RAFT INDEX |
@@ -96,12 +102,14 @@ Resultado de ejemplo:
 
 Comando:
 
+[,shell]
 ----
 docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint health
 ----
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 https://IP:2379 is healthy: successfully committed proposal: took = 2.113189ms
 https://IP:2379 is healthy: successfully committed proposal: took = 2.649963ms
@@ -113,6 +121,7 @@ https://IP:2379 is healthy: successfully committed proposal: took = 2.451201ms
 
 Comando:
 
+[,shell]
 ----
 for endpoint in $(docker exec etcd etcdctl member list | cut -d, -f5); do
    echo "Validating connection to ${endpoint}/health"
@@ -122,6 +131,7 @@ done
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 Validating connection to https://IP:2379/health
 {"health": "true"}
@@ -136,6 +146,7 @@ Validating connection to https://IP:2379/health
 
 Comando:
 
+[,shell]
 ----
 for endpoint in $(docker exec etcd etcdctl member list | cut -d, -f4); do
   echo "Validating connection to ${endpoint}/version";
@@ -145,6 +156,7 @@ done
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 Validating connection to https://IP:2380/version
 {"etcdserver":"3.5.7","etcdcluster":"3.5.0"}
@@ -161,12 +173,14 @@ etcd activará alarmas, por ejemplo, cuando se quede sin espacio.
 
 Comando:
 
+[,shell]
 ----
 docker exec etcd etcdctl alarm list
 ----
 
 Salida de ejemplo cuando se activa la alarma NOSPACE:
 
+[,shell]
 ----
 memberID:x alarm:NOSPACE
 memberID:x alarm:NOSPACE
@@ -190,6 +204,7 @@ Resoluciones:
 
 Comando:
 
+[,shell]
 ----
 rev=$(docker exec etcd etcdctl endpoint status --write-out json | egrep -o '"revision":[0-9]*' | egrep -o '[0-9]*')
 docker exec etcd etcdctl compact "$rev"
@@ -197,6 +212,7 @@ docker exec etcd etcdctl compact "$rev"
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 compacted revision xxx
 ----
@@ -206,12 +222,14 @@ compacted revision xxx
 
 Comando:
 
+[,shell]
 ----
 docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl defrag
 ----
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 Finished defragmenting etcd member[https://IP:2379]
 Finished defragmenting etcd member[https://IP:2379]
@@ -223,12 +241,14 @@ Finished defragmenting etcd member[https://IP:2379]
 
 Comando:
 
+[,shell]
 ----
 docker exec -e ETCDCTL_ENDPOINTS=$(docker exec etcd etcdctl member list | cut -d, -f5 | sed -e 's/ //g' | paste -sd ',') etcd etcdctl endpoint status --write-out table
 ----
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 +-----------------+------------------+---------+---------+-----------+-----------+------------+
 | ENDPOINT        |        ID        | VERSION | DB SIZE | IS LEADER | RAFT TERM | RAFT INDEX |
@@ -247,6 +267,7 @@ Después de verificar que el tamaño de la base de datos ha disminuido tras la c
 
 Comando:
 
+[,shell]
 ----
 docker exec etcd etcdctl alarm list
 docker exec etcd etcdctl alarm disarm
@@ -255,6 +276,7 @@ docker exec etcd etcdctl alarm list
 
 Resultado de ejemplo:
 
+[,shell]
 ----
 docker exec etcd etcdctl alarm list
 memberID:x alarm:NOSPACE
@@ -279,6 +301,7 @@ Ya no se puede cambiar dinámicamente el nivel de registro en etcd v3.5 o poster
 
 Para configurar el nivel de registro de etcd, edita el YAML del clúster:
 
+[,shell]
 ----
 services:
   etcd:
@@ -291,6 +314,7 @@ services:
 
 En versiones anteriores de etcd, puedes usar la API para cambiar dinámicamente el nivel de registro.  Configura el registro de depuración utilizando los comandos a continuación:
 
+[,shell]
 ----
 docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -XPUT -d '{"Level":"DEBUG"}' --cacert $(docker exec etcd printenv ETCDCTL_CACERT) --cert $(docker exec etcd printenv ETCDCTL_CERT) --key $(docker exec etcd printenv ETCDCTL_KEY) $(docker exec etcd printenv ETCDCTL_ENDPOINTS)/config/local/log
 ----
@@ -299,6 +323,7 @@ Para restablecer el nivel de registro a su valor predeterminado (`INFO`), puedes
 
 Comando:
 
+[,shell]
 ----
 docker run --net=host -v $(docker inspect kubelet --format '{{ range .Mounts }}{{ if eq .Destination "/etc/kubernetes" }}{{ .Source }}{{ end }}{{ end }}')/ssl:/etc/kubernetes/ssl:ro appropriate/curl -s -XPUT -d '{"Level":"INFO"}' --cacert $(docker exec etcd printenv ETCDCTL_CACERT) --cert $(docker exec etcd printenv ETCDCTL_CERT) --key $(docker exec etcd printenv ETCDCTL_KEY) $(docker exec etcd printenv ETCDCTL_ENDPOINTS)/config/local/log
 ----
@@ -313,6 +338,7 @@ Si deseas investigar el contenido de tu etcd, puedes observar eventos en streami
 
 Comando:
 
+[,shell]
 ----
 docker exec etcd etcdctl watch --prefix /registry
 ----
@@ -324,12 +350,14 @@ Si solo deseas ver las claves afectadas (y no los datos binarios), puedes añadi
 
 Comando:
 
+[,shell]
 ----
 docker exec etcd etcdctl get /registry --prefix=true --keys-only
 ----
 
 Puedes procesar los datos para obtener un resumen del conteo por clave, utilizando el comando a continuación:
 
+[,shell]
 ----
 docker exec etcd etcdctl get /registry --prefix=true --keys-only | grep -v ^$ | awk -F'/' '{ if ($3 ~ /cattle.io/) {h[$3"/"$4]++} else { h[$3]++ }} END { for(k in h) print h[k], k }' | sort -nr
 ----
