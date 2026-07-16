@@ -151,6 +151,92 @@ EOF
   run_cmd "$file" "$ex_cmd"
 }
 
+# Update a specific block in the release-notes.adoc file.
+update_release_notes_block() {
+  local file="$1"
+  local version="$2"
+  local new_prime_mark="$3"
+  local new_community_mark="$4"
+  local current_marker="$5"
+  local current_end_marker="$6"
+  local past_marker="$7"
+  local rn_link="$8"
+
+  # Check if the block exists in the file before trying to update it.
+  if ! grep -q "//.*${current_marker}\." "$file"; then
+    return 0
+  fi
+
+  local current_block
+  current_block=$(awk "/\/\/.*${current_end_marker}\./{p=0} /\/\/.*${current_marker}\./{p=1; next} p" "$file")
+  
+  # Check if the block is empty or contains only whitespace
+  if [[ -z "$(echo -n "$current_block" | tr -d '[:space:]')" ]]; then
+    current_block=""
+  fi
+
+  local past_block=""
+  if [[ -n "$current_block" ]]; then
+    local old_version
+    # Get the first non-empty line to extract the version
+    old_version=$(echo "$current_block" | awk 'NF' | head -n 1 | cut -d '|' -f 2 | tr -d ' ')
+
+    if [[ -n "$old_version" ]]; then
+      # When moving a version to "Past", update its support matrix link from "N/A" to a URL.
+      local url_version_part="rancher-$(echo "$old_version" | tr '.' '-')"
+      local support_matrix_url="https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/${url_version_part}/"
+      local support_matrix_cell="| ${support_matrix_url}[View]"
+      # Replace the "| N/A" line for the support matrix with the generated URL.
+      # awk 'NF' to remove empty lines before processing with sed
+      past_block=$(echo "$current_block" | awk 'NF' | sed "0,/^| N\/A\$/s#^| N/A\$#${support_matrix_cell}#")
+    else
+      # Fallback if the old version couldn't be parsed, but still remove empty lines.
+      past_block=$(echo "$current_block" | awk 'NF')
+    fi
+    past_block="${past_block}"$'\n'
+  fi
+
+  # Create the new current version entry.
+  local new_current_block
+  new_current_block=$(cat <<EOF
+| ${version}
+| ${rn_link}
+| N/A
+| ${new_prime_mark}
+| ${new_community_mark}
+
+EOF
+)
+
+  # Atomically update the file: insert past version and replace current version.
+  local ex_cmd
+  # Only add the past block if it's not empty
+  if [[ -n "$past_block" ]]; then
+    ex_cmd=$(cat <<EOF
+/\/\/.*${past_marker}\./a
+${past_block}
+.
+/\/\/.*${current_marker}\./+1,/\/\/.*${current_end_marker}\./-1d
+/\/\/.*${current_marker}\./a
+${new_current_block}
+.
+x
+EOF
+)
+  else
+    # If there's no past block to add, just update the current version block.
+    ex_cmd=$(cat <<EOF
+/\/\/.*${current_marker}\./+1,/\/\/.*${current_end_marker}\./-1d
+/\/\/.*${current_marker}\./a
+${new_current_block}
+.
+x
+EOF
+)
+  fi
+  run_cmd "$file" "$ex_cmd"
+}
+
 # Update the release-notes.adoc file.
 update_release_notes() {
   local file="$1"
@@ -160,58 +246,13 @@ update_release_notes() {
 
   echo "-> Updating release notes in $file"
 
-  # 1. Capture the content of the current version block using specific markers.
-  local current_block
-  current_block=$(awk '/\/\/.*CURRENT VERSION END\./{p=0} /\/\/.*CURRENT VERSION\./{p=1; next} p' "$file")
-  if [[ -z "$current_block" ]]; then
-    echo "Error: Could not find 'CURRENT VERSION' block in $file" >&2
-    exit 1
-  fi
+  # Update Product block
+  update_release_notes_block "$file" "$version" "$new_prime_mark" "$new_community_mark" \
+    "CURRENT VERSION" "CURRENT VERSION END" "PAST VERSIONS" "xref:release-notes/${version}.adoc[View]"
 
-  # 2. Create the new past version entry by modifying the captured current block.
-  local old_version
-  old_version=$(echo "$current_block" | head -n 1 | cut -d '|' -f 2 | tr -d ' ')
-
-  local past_block
-  if [[ -n "$old_version" ]]; then
-    # When moving a version to "Past", update its support matrix link from "N/A" to a URL.
-    local url_version_part="rancher-$(echo "$old_version" | tr '.' '-')"
-    local support_matrix_url="https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/${url_version_part}/"
-    local support_matrix_cell="| ${support_matrix_url}[View]"
-    # Replace the "| N/A" line for the support matrix with the generated URL.
-    past_block=$(echo "${current_block}" | sed "0,/^| N\/A\$/s#^| N/A\$#${support_matrix_cell}#")
-  else
-    # Fallback if the old version couldn't be parsed.
-    past_block="${current_block}"
-  fi
-  past_block="${past_block}"$'\n'
-
-  # 3. Create the new current version entry.
-  local new_current_block
-  new_current_block=$(cat <<EOF
-| ${version}
-| xref:release-notes/${version}.adoc[View]
-| N/A
-| ${new_prime_mark}
-| ${new_community_mark}
-
-EOF
-)
-
-  # 4. Atomically update the file: insert past version and replace current version.
-  local ex_cmd
-  ex_cmd=$(cat <<EOF
-/\/\/.*PAST VERSIONS\./a
-${past_block}
-.
-/\/\/.*CURRENT VERSION\./+1,/\/\/.*CURRENT VERSION END\./-1d
-/\/\/.*CURRENT VERSION\./a
-${new_current_block}
-.
-x
-EOF
-)
-  run_cmd "$file" "$ex_cmd"
+  # Update Community block
+  update_release_notes_block "$file" "$version" "$new_prime_mark" "$new_community_mark" \
+    "CURRENT COMMUNITY VERSION" "CURRENT COMMUNITY VERSION END" "PAST COMMUNITY VERSIONS" "https://github.com/rancher/rancher/releases/tag/${version}[GitHub Release]"
 }
 
 # Update a simple compatibility matrix file.
