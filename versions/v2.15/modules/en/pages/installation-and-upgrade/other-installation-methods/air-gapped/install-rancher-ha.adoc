@@ -11,6 +11,7 @@ ifeval::["{build-type}" != "community"]
 :xref-install-upgrade-troubleshooting: xref:installation-and-upgrade/troubleshooting/troubleshooting.adoc
 :xref-helm-reqs: xref:installation-and-upgrade/requirements/helm-version-requirements.adoc
 :xref-rancher-extensions: xref:integrations/rancher-extensions.adoc
+:xref-authenticated-private-registries: xref:rancher-admin/global-configuration/authenticated-private-registries.adoc
 endif::[]
 ifeval::["{build-type}" == "community"]
 :xref-helm-chart-options: xref:getting-started/installation-and-upgrade/installation-references/helm-chart-options.adoc
@@ -19,6 +20,7 @@ ifeval::["{build-type}" == "community"]
 :xref-install-upgrade-troubleshooting: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/troubleshooting.adoc
 :xref-helm-reqs: xref:getting-started/installation-and-upgrade/resources/helm-version-requirements.adoc
 :xref-rancher-extensions: xref:integrations-in-rancher/rancher-extensions.adoc
+:xref-authenticated-private-registries: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authenticated-private-registries.adoc
 endif::[]
 
 
@@ -119,7 +121,7 @@ When Rancher is installed on an air gapped Kubernetes cluster, there are two rec
 [NOTE]
 ====
 
-If you want terminate SSL/TLS externally, see {xref-helm-chart-options}#_external_tls_termination[TLS termination on an External Load Balancer].
+If you want to terminate SSL/TLS externally, see {xref-helm-chart-options}#_external_tls_termination[TLS termination on an External Load Balancer].
 ====
 
 
@@ -154,6 +156,10 @@ When setting up the Rancher Helm template, there are several options in the Helm
 | `systemDefaultRegistry`
 | `<REGISTRY.YOURDOMAIN.COM:PORT>`
 | Configure Rancher server to always pull from your private registry when provisioning clusters.
+
+| `systemRegistryInheritsPullSecrets`
+| `<boolean>`
+| Sets the default value of the `system-default-registry-pull-secrets` global setting to the same image pull secrets used for the Rancher installation. This can be used when node-level registry configuration is not possible, and when these credentials should be propagated to all downstream clusters by default.
 
 | `useBundledSystemChart`
 | `true`
@@ -445,6 +451,53 @@ If you are using a Private CA signed cert, add `--set privateCA=true` following 
 ----
 
 The installation is complete.
+
+[#_optional_install_rancher_with_an_authenticated_default_registry]
+=== Optional: Install Rancher with an Authenticated Default Registry
+
+Starting with `v2.15.0`, Rancher is able to leverage an authenticated `systemDefaultRegistry` using Kubernetes image pull secrets. This configuration differs from the top level `imagePullSecrets` and associated `image.repository` values offered, which only impact the primary Rancher deployment. For more detailed information on how Rancher works with authenticated global registries and pull secrets at both the global and cluster levels, refer to {xref-authenticated-private-registries}[this page]
+
+[#_using_an_authenticated_global_registry_with_pull_secrets]
+==== Using an Authenticated Global Registry with Pull Secrets
+
+If your private registry requires authentication, and you cannot configure credentials at the node level, or want to automatically distribute credentials to downstream clusters by default, you can configure both the `system-default-registry` and `system-default-registry-pull-secrets` settings. This configuration will result in the local cluster, and all downstream clusters by default, being configured to pull from the authenticated registry.
+
+There are two main approaches to configure default pull secrets this when installing Rancher using Helm:
+
+**Configuration 1: Using the `systemRegistryInheritsPullSecrets` Helm option**
+
+When set to `true`, Rancher sets the default value of the `system-default-registry-pull-secrets` global setting to the same image pull secrets used for the Rancher installation itself. The setting remains editable post-install via **Global Settings** in the Rancher UI.
+
+[,plain]
+----
+helm install rancher ./rancher-<VERSION>.tgz \
+  --namespace cattle-system \
+  --set hostname=<RANCHER.YOURDOMAIN.COM> \
+  --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+  --set systemRegistryInheritsPullSecrets=true \
+  --set useBundledSystemChart=true
+----
+
+**Configuration 2: Using the `CATTLE_BASE_REGISTRY_PULL_SECRETS` environment variable**
+
+This environment variable can be used to set the default value of the `system-default-registry-pull-secrets` global setting to arbitrary pull secret(s) located in the `cattle-system` namespace. The setting remains editable post-install via **Global Settings** in the Rancher UI.
+
+[,plain]
+----
+helm install rancher ./rancher-<VERSION>.tgz \
+  --namespace cattle-system \
+  --set hostname=<RANCHER.YOURDOMAIN.COM> \
+  --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+  --set extraEnv[0].name=CATTLE_BASE_REGISTRY_PULL_SECRETS \
+  --set extraEnv[0].value='<SECRET1>,<SECRET2>' \
+  --set useBundledSystemChart=true
+----
+
+[NOTE]
+====
+The above configurations set the _default_ values for the `system-default-registry` and `system-default-registry-pull-secrets` settings. Before these settings can be reset to an empty value, the associated helm value (e.g. `systemDefaultRegistry`) or environment variable (e.g. `CATTLE_BASE_REGISTRY_PULL_SECRETS`) must be removed from the Helm installation.
+====
+
 
 [#_additional_resources]
 == Additional Resources

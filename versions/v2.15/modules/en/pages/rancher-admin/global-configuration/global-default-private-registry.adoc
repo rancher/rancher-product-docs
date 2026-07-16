@@ -6,9 +6,11 @@
 :product-path: rancher-admin/global-configuration/global-default-private-registry.adoc
 ifeval::["{build-type}" != "community"]
 :xref-air-gap: xref:installation-and-upgrade/other-installation-methods/air-gapped/air-gapped.adoc
+:xref-authenticated-private-registries: xref:rancher-admin/global-configuration/authenticated-private-registries.adoc
 endif::[]
 ifeval::["{build-type}" == "community"]
 :xref-air-gap: xref:getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/index.adoc
+:xref-authenticated-private-registries: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/authenticated-private-registries.adoc
 endif::[]
 
 [NOTE]
@@ -18,15 +20,16 @@ This page describes how to configure a global default private registry from the 
 For instructions on how to set up a private registry during Rancher installation, refer to the {xref-air-gap}[air-gapped installation guide].
 ====
 
-
-A private registry is a private, consistent, and centralized source of truth for the container images in your clusters. You can use a private container image registry to share custom base images within your organization.
+A private registry is a private, consistent, and centralized source of truth for the container images in your clusters. You can use a private container image registry to share custom images within your organization, or to prevent rate limiting issues encountered when pulling images from public registries.
 
 There are two main ways to set up a private registry in Rancher:
 
-* Set up a global default registry through the *Settings* tab in the global view.
-* Set up a private registry in the advanced options under cluster-level settings.
+* Set up a _global_ system default registry through the **Settings** tab in the global view.
+* Set up a _cluster level_ system default private registry in the advanced options when provisioning or updating a downstream cluster.
 
-The global default registry is intended to be used in air-gapped setups, for registries that don't require credentials. The cluster-level private registry is intended to be used in setups where the private registry requires credentials.
+The global system default registry is intended to be used in air-gapped setups, or other environments where all clusters should share the same default registry host. Rancher will use this registry to pull core images required for system-components, and will configure downstream clusters to do the same by default.
+
+Cluster level default registries are intended to be used in scenarios where a specific downstream environment should access a different registry than the global default, or to access the same registry using different credentials.
 
 [#_set_a_private_registry_with_no_credentials_as_the_default_registry]
 == Set a Private Registry with No Credentials as the Default Registry
@@ -37,6 +40,60 @@ The global default registry is intended to be used in air-gapped setups, for reg
 . Enter your registry's hostname and port (e.g. `registry.yourdomain.com:port`). Do not prefix the text with `http://` or `https://`.
 
 *Result:* Rancher pulls system images from your private registry.
+
+[#_set_an_authenticated_private_registry_as_the_default_registry]
+== Set an Authenticated Private Registry as the Default Registry
+
+If the desired registry requires authentication (i.e. `.dockerconfigjson`),
+
+. Log into Rancher and configure the default administrator password.
+. Using `kubectl`, `terraform`, or the Rancher UI, create a new registry secret in the `cattle-system` namespace
+. If the secret is created outside of the Rancher UI, ensure that the appropriate xref:#_working_with_private_registry_credentials[backup labels are set]
+. Select **☰ > Global Settings**.
+. Go to `system-default-registry-pull-secrets` and choose **⋮ > Edit Setting**.
+. Enter the name of the registry pull secret within the `cattle-system` namespace created in step 2 (e.g. `my-reg-cred`).
+. Go to `system-default-registry` and choose **⋮ > Edit Setting**.
+. Enter your registry's hostname and port (e.g. `registry.yourdomain.com:port`). Do not prefix the text with `http://` or `https://`.
+
+**Result:** Rancher propagates the configured pull secret into the required rancher-managed namespaces in the local cluster, and configures rancher-managed workloads to use that secret. Newly created and existing downstream clusters are automatically configured to point to the configured registry. All Rancher system images across all clusters are then pulled from your registry.
+
+[NOTE]
+====
+For more detailed information on how Rancher works with *authenticated* default registries, view {xref-authenticated-private-registries}[this page]
+====
+
+[IMPORTANT]
+====
+Reconfiguring registry details at the global level may result in the redeployment of system components in the local cluster, and all downstream clusters which do not define their own cluster-level registry configurations. This may temporarily prevent access to downstream clusters via the Rancher UI.
+====
+
+[#_configure_a_cluster_level_private_registry]
+== Configure a Cluster Level Private Registry
+
+In addition to configuring a private registry at the global level, Rancher also supports defining cluster scoped registry configurations. To do so, you'll have to define the registry information in the advanced cluster options when you create a new cluster or update an existing cluster.
+
+[IMPORTANT]
+====
+Reconfiguring registry details on an existing cluster may result in the redeployment of system-components in that cluster. This may temporarily prevent access to the cluster via the Rancher UI.
+====
+
+
+[#_using_a_cluster_level_private_registry_with_provisioned_clusters]
+=== Using a Cluster Level Private Registry with Provisioned Clusters
+
+. Select **☰ > Cluster Management**.
+. On the **Clusters** page, click **Create**.
+. Choose a cluster type.
+. In the **Cluster Configuration** go to the **Registries** tab.
+. Check the box next to **Enable cluster scoped container registry for Rancher system container images**.
+. Enter the registry hostname.
+. Optional: Configure Credentials for the Cluster-Level Registry
+. Under **Authentication** select **Create a HTTP Basic Auth Secret** and fill in the credential fields.
+. Click **Create**.
+
+**Result:** The new cluster pulls images from the private registry.
+
+This same process can also be followed when later updating the cluster configuration.
 
 [#_namespaced_private_registry_with_rke2_product_name_downstream_clusters]
 === Namespaced Private Registry with {rke2-product-name} Downstream Clusters
@@ -56,10 +113,6 @@ However, you'll need to do some additional steps if you're trying to set a names
 [#_configure_a_private_registry_with_credentials_when_creating_a_cluster]
 == Configure a Private Registry with Credentials when Creating a Cluster
 
-There is no global way to set up a private registry with authorization for every Rancher-provisioned cluster. Therefore, if you want a Rancher-provisioned cluster to pull images from a private registry that requires credentials, you'll have to pass the registry credentials through the advanced cluster options every time you create a new cluster.
-
-Since the private registry cannot be configured after the cluster is created, you'll need to perform these steps during initial cluster setup.
-
 . Select *☰ > Cluster Management*.
 . On the *Clusters* page, click *Create*.
 . Choose a cluster type.
@@ -69,10 +122,22 @@ Since the private registry cannot be configured after the cluster is created, yo
 . Under *Authentication* select *Create a HTTP Basic Auth Secret* and fill in the credential fields.
 . Click *Create*.
 
-*Result:* The new cluster pulls images from the private registry.
+*Result:* The new cluster pulls images from the private registry. This can be changed later by editing the cluster configuration.
+
+[#_configure_a_cluster_level_private_registry_when_importing_clusters]
+== Configure a Private Registry with Credentials when Importing a Cluster
+
+. Select **☰ > Cluster Management**.
+. On the **Clusters** page, click **Import Existing**.
+. Choose a cluster type.
+. Go to the **Registries** tab.
+. Check the box next to **Enable cluster scoped container registry for Rancher system container images**.
+. Enter the registry hostname.
+. Optional: Select an optional image pull secret to authenticate with the registry
+. Click **Create**.
 
 [#_working_with_private_registry_credentials]
-=== Working with Private Registry Credentials
+== Working with Private Registry Credentials
 
 When working with private registries, it is important to ensure that any secrets created for these registries are properly backed up. When you add a private registry credential secret through the Rancher GUI and select *Create a HTTP Basic Auth Secret*, the secret is included in backup operations using Rancher Backups.
 
