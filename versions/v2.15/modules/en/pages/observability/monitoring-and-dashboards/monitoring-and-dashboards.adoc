@@ -45,28 +45,65 @@ ifeval::["{build-type}" == "community"]
 endif::[]
 
 [#_monitoring_dashboards]
-== Monitoring Dashboards
+== Rancher Monitoring Dashboards
 
-The Monitoring Dashboards chart provides standalone dashboard functionality for `rancher-monitoring`:
+[IMPORTANT]
+====
+Starting in Rancher v2.15.0, fresh monitoring installations use the decoupled `rancher-monitoring-dashboards` chart. The legacy `rancher-monitoring` chart is hidden for new installs and is maintained solely to support upgrades for existing deployments.
+====
 
-* *No Bundled Runtime*: Operates without depending on Rancher's shipped `kube-prometheus-stack` images or components.
+The `rancher-monitoring-dashboards` chart provides standalone dashboard functionality for `rancher-monitoring`:
+
+* *No Bundled Runtime*: Operates without depending on Rancher's shipped `kube-prometheus-stack` images or components. The `rancher-monitoring-dashboards` chart installs a dashboard-only version of `rancher-monitoring`.
 * *Prerequisite*: Requires an existing Prometheus infrastructure to already be in place. While several configurations are possible, installing `kube-prometheus-stack` is the simplest method. 
 
-=== Monitoring Dashboards Installation
+[#_migrating_from_rancher-monitoring_to_rancher_monitoring_dashboards]
+=== Migrating from `rancher-monitoring` to `rancher-monitoring-dashboards`
 
-This section guides you through installing the `monitoring-dashboards` chart and integrating it with your Prometheus stack.
+Follow these steps to migrate to `rancher-monitoring-dashboards`: 
 
-Before installing the `monitoring-dashboards` chart, you must first set up the underlying monitoring infrastructure using the https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack[`kube-prometheus-stack`] chart:
+. Uninstall the `rancher-monitoring` chart. See {xref-monitoring-uninstall}[].
+. Install your own `kube-prometheus-stack`. See <<_install_kube_prometheus_stack_chart>>.
+. Install `rancher-monitoring-dashboards`. See <<_install_rancher_monitoring_dashboards_chart>>.
+
+If you need to preserve or migrate existing data, refer to the official Grafana and Prometheus documentation:
+
+* https://grafana.com/docs/grafana/latest/administration/back-up-grafana/[Grafana | Back up Grafana]
+* https://prometheus.io/docs/prometheus/latest/querying/api/#snapshot[Prometheus | TSDB Admin APIs - Snapshot]
+* https://prometheus.io/docs/prometheus/latest/storage/[Prometheus | Storage]
+
+[#_rancher_monitoring_dashboards_installation]
+=== Rancher Monitoring Dashboards Installation
+
+This section guides you through installing the `rancher-monitoring-dashboards` chart and integrating it with your Prometheus stack.
+
+[#_install_kube_prometheus_stack_chart]
+==== Install `kube-prometheus-stack` chat
+
+Before installing the `rancher-monitoring-dashboards` chart, you must first set up the underlying monitoring infrastructure using the https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack[`kube-prometheus-stack`] chart:
 
 . Add the https://github.com/prometheus-community/helm-charts[prometheus-community] Helm repository to access the `kube-prometheus-stack` chart. You can do this through the Rancher UI or using the Helm CLI with the following command.
 +
+[tabs,sync-group-id=UIorCLI]
+======
+Helm::
++
+--
 [,shell]
 ----
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 ----
+--
 
-. Create the `kube-prometheus-stack` `values.yaml` file. Configure the file with the following required settings to ensure `kube-prometheus-stack` integrates properly and supports embedded dashboards in `monitoring-dashboards`.
+UI::
++
+--
+// Add UI steps
+--
+======
+
+. Create the `kube-prometheus-stack` `values.yaml` file. Configure the file with the following required settings to ensure `kube-prometheus-stack` integrates properly and supports embedded dashboards in `rancher-monitoring-dashboards`.
 +
 [,yaml]
 ----
@@ -107,8 +144,13 @@ kubeProxy:
 By default, the monitoring-dashboards chart does not enable metric scraping for `kubeEtcd`, `kubeControllerManager`, `kubeScheduler`, or `kubeProxy`. To export metrics from these components, you must configure https://github.com/prometheus-community/PushProx[PushProx].
 ====
 
-. Install the `kube-prometheus-stack` chart in the `cattle-monitoring-system` namespace via the Rancher UI or Helm CLI, applying the `values.yaml` file from the previous step:
+. Install the `kube-prometheus-stack` chart in the `cattle-monitoring-system` namespace via the Helm CLI or Rancher UI, applying the `values.yaml` file from the previous step:
 +
+[tabs,sync-group-id=UIorCLI]
+======
+Helm::
++
+--
 [,shell]
 ----
 helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
@@ -118,11 +160,30 @@ helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
   --wait \
   -f values.yaml
 ----
+--
+
+UI::
++
+--
+// Add UI steps
+--
+======
+
+[#_install_rancher_monitoring_dashboards_chart]
+==== Install `rancher-monitoring-dashboards` chart
 
 . With the monitoring infrastructure installed, you can now deploy the `rancher-monitoring-dashboards` chart from the Apps tab in the Rancher UI.
 
+[#_customization_and_overrides]
 === Customization and Overrides
 
+Use the configuration settings in this section to customize the `rancher-monitoring-dashboards` chart for your environment. 
+
+* Override default proxy images. See <<_monitoring_proxy_image_customization>>.
+* Align upstream service names with your Prometheus stack and disable unused K3s components. See <<_service_name_overrides>>.
+* Set custom images for project-level monitoring. See <<_project_monitoring_container_image_customization>>.
+
+[#_monitoring_proxy_image_customization]
 ==== Monitoring Proxy Image Customization
 
 A single NGINX pod (`monitoringProxy`) acts as a proxy for Grafana, Prometheus, and Alertmanager, ensuring the Kubernetes API server’s service proxy (used by the Rancher UI) can reach them reliably. You can customize the NGINX image using the following configuration:
@@ -135,6 +196,7 @@ monitoringProxy:
     tag: <version>
 ----
 
+[#_service_name_overrides]
 ==== Service Name Overrides
 
 The default `values.yaml` assumes standard service naming conventions (for example, kube-prometheus-stack-<application>), as shown below:
@@ -176,6 +238,7 @@ k3sServer:
 ----
 ====
 
+[#_project_monitoring_container_image_customization]
 ==== Project Monitoring Container Image Customization
 
 To use custom container images for Prometheus, Alertmanager, or Grafana with `prometheus-federator`, apply the following overrides in your `helmProjectOperator` configuration:
@@ -200,18 +263,42 @@ helmProjectOperator:
         tag: <custom_tag>
 ----
 
-=== Migrating from `rancher-monitoring` to `rancher-monitoring-dashboards`
+[#_faq]
+=== FAQ
 
-// Update formatting 
+*Q*: What is the new chart being introduced? +
 
-To migrate to `rancher-monitoring-dashboards`, uninstall the `rancher-monitoring` chart, deploy your own `kube-prometheus-stack` (see the installation guide above), and then install `rancher-monitoring-dashboards`. If you need to preserve or migrate existing data, refer to the official Grafana and Prometheus documentation:
+*A*: The `rancher-monitoring-dashboards` chart ships exclusively with dashboard artifacts and Rancher UI integration metadata—it no longer includes Prometheus, Grafana, Alertmanager, exporters, or PushProx. To deploy a full monitoring runtime, install `kube-prometheus-stack` separately from the Prometheus Community Helm repository.
 
-* https://grafana.com/docs/grafana/latest/administration/back-up-grafana/[Grafana | Back up Grafana]
-* https://prometheus.io/docs/prometheus/latest/querying/api/#snapshot[Prometheus | TSDB Admin APIs - Snapshot]
-* https://prometheus.io/docs/prometheus/latest/storage/[Prometheus | Storage]
+*Q*: Will the old `rancher-monitoring` chart still be available? +
+
+*A*: Yes, for now. The v2.14 version of the chart will still be available in v2.15, but it won't be directly installable. A new monitoring version for v2.15 is also being shipped but will likely be hidden in the UI -- available only for upgrades, not fresh installs.
+
+*Q*: What happens to existing installs when upgrading to 2.15? +
+
+*A*: Existing installs will be able to upgrade to the new monitoring rebase being shipped for 2.15. If users want to fully migrate to the new dashboards-only chart, they will need to follow the standard upstream migration path for Prometheus and Grafana.
+
+*Q*: How will Rancher UI know where to find Grafana/Prometheus? +
+
+*A*: Due to time constraints, monitoring service URLs (e.g., rancher-monitoring-<service>) will remain hardcoded in the UI for this release. Configurable/user-provided URLs are planned for the next release, though that is not yet finalized.
+
+*Q*: Will the Rancher UI monitoring install flow change? +
+
+*A*: The current Dashboard UX for installing rancher-monitoring could be reused to install kube-prometheus-stack instead, since most install options (runtime config) will move to that upstream chart. The smaller rancher-monitoring-dashboards chart will only expose values for Rancher UI integration and dashboards.
+
+*Q*: What about Project Monitoring / prometheus-federator? +
+
+*A*: The project monitoring path is more complex. POCs exist for:
+Updating prometheus-federator to use external chart sources (instead of embedded charts)
+Updating rancher-project-monitoring to use the cluster's Grafana/Prometheus instead of deploying its own
 
 [#_rancher_monitoring]
 == Rancher Monitoring
+
+[IMPORTANT]
+====
+The `rancher-monitoring` chart is no longer available in the UI for new installs, but it remains fully supported to upgrade existing `rancher-monitoring` deployments.
+====
 
 The `rancher-monitoring` application can quickly deploy leading open-source monitoring and alerting solutions onto your cluster.
 
