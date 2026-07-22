@@ -5,6 +5,7 @@
 :release-version: v2.15.0
 :rn-component-version: v2.15
 ifeval::["{build-type}" == "community"]
+:rn-fleet-webhook: https://fleet.rancher.io/next/how-tos-for-users/webhook#_3_optional_configure_a_webhook_secret
 :rn-private-registry: https://docs.k3s.io/installation/private-registry
 :rn-installation-requirements: https://ranchermanager.docs.rancher.com/{rn-component-version}/getting-started/installation-and-upgrade/installation-requirements
 :rn-aggregation-layer-is-required: https://ranchermanager.docs.rancher.com/{rn-component-version}/api/extension-apiserver#aggregation-layer-is-required
@@ -15,6 +16,7 @@ ifeval::["{build-type}" == "community"]
 :rn-install-rancher: https://ranchermanager.docs.rancher.com/{rn-component-version}/getting-started/installation-and-upgrade/other-installation-methods/rancher-behind-an-http-proxy/install-rancher
 endif::[]
 ifeval::["{build-type}" != "community"]
+:rn-fleet-webhook: https://documentation.suse.com/cloudnative/continuous-delivery/latest/en/how-tos-for-users/webhook.html#_3_optional_configure_a_webhook_secret
 :rn-private-registry: https://documentation.suse.com/cloudnative/k3s/latest/en/installation/private-registry.html
 :rn-installation-requirements: xref:installation-and-upgrade/requirements/requirements.adoc
 :rn-aggregation-layer-is-required: xref:api/extension-apiserver.adoc#_aggregation_layer_is_required
@@ -43,6 +45,8 @@ endif::[]
 === Features and Enhancements
 
 * Rancher now supports Kubernetes v1.36. See https://github.com/rancher/rancher/issues/54303[#54303] for information on Rancher support for Kubernetes v1.36. You can view the https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-1.36.md[upstream Kubernetes changelog] for v1.36 for a complete list of changes.
+* Added a cap on the maximum number of public endpoint annotations (`field.cattle.io/publicEndpoints`) written for Ingress objects. This prevents workloads with extensive custom domain lists from exceeding Kubernetes’ 256 KB metadata annotation size limit and triggering API validation errors. See https://github.com/rancher/rancher/issues/42058[#42058].
+* Optimized `rancher-images.txt` to include only the latest patch release per Kubernetes minor version compatible with the target Rancher release. RC pre-releases and superseded patch/minor versions are now filtered out, significantly reducing the size of air-gapped image tarballs while ensuring `system-agent-installer` and auxiliary images remain fully up to date. See https://github.com/rancher/rancher/issues/46174[#46174].
 
 [#_behavior_changes]
 === Behavior Changes
@@ -73,10 +77,85 @@ endif::[]
 
 * Fixed an issue when Stack Preference was set to `IPv6` and **Enable Dual-Stack** was checked, the UI modal would not include the Stack Preference warning, giving users the impression that `IPv6` is a valid stack preference for a Dual-Stack cluster when they must set it as `Dual`. See https://github.com/rancher/dashboard/issues/16788[#16788].
 
+[#_authentication]
+== Authentication
+
+[#_features_and_enhancements_2]
+=== Features and Enhancements
+
+* Azure AD SSO Logout: Rancher now supports Single Logout (SLO) for the Azure AD auth provider. When enabled, logging out of Rancher also terminates the user's Azure AD session by redirecting to Azure AD's end-session endpoint. A `LogoutEndpoint` override field is available for sovereign-cloud deployments (Azure US Government, China). An optional `LogoutAllForced` flag can prevent users from bypassing SSO logout. See https://github.com/rancher/rancher/issues/54566[#54566].
+* Added the `hide-local-auth-provider` feature flag (disabled by default) to restrict local authentication usage once an External Authentication Provider (EAP) is active. When enabled, the flag hides the local login interface and removes the ability to create, edit, or delete local users from the UI. Note that password rotation for required administrative local accounts remains allowed to support emergency fallback workflows. See https://github.com/rancher/rancher/issues/46078[#46078].
+
+[#_cluster_provisioning]
+== Cluster Provisioning
+
+[#_features_and_enhancements_3]
+=== Features and Enhancements
+
+* Rancher v2.15 adds support for Cluster API (CAPI) v1.13.2. See https://github.com/rancher/rancher/issues/54304[#54304].
+* Users with the `clusters-create` role can now view the CAPIprovider resource. See https://github.com/rancher/rancher/issues/55167[#55167].
+
+[#_k3s_and_rke2_provisioning]
+== K3s and RKE2 Provisioning
+
+[#_features_and_enhancements_4]
+=== Features and Enhancements
+
+* **General Availability**: Promoted support for native Cluster API (CAPI) infrastructure providers within Rancher’s V2 provisioning framework (v2prov) from Tech Preview to General Availability (GA). This provides full production support and enhanced reliability when using native CAPI infrastructure providers (e.g., CAPA, CAPZ, CAPG) for cluster lifecycle management. See https://github.com/rancher/rancher/issues/53777[#53777].
+
+[#_known_issues]
+=== Known Issues
+
+* A known issue exists related to CAPI infrastructure providers within Rancher’s V2 provisioning framework. Editing machine pools or experiencing provisioning failures on CAPI Plug-and-Play (PnP) clusters (such as CAPA/AWS) can leave unused, orphaned infrastructure templates (e.g., `AWSMachineTemplate` or `AWSCluster`) in the management cluster. These dangling resources are no longer referenced by active `MachineDeployments` and can be safely cleaned up manually if needed. See https://github.com/rancher/rancher/issues/55752[#55752].
+
+[#_continuous_delivery_fleet]
+== Continuous Delivery (Fleet)
+
+[#_behavior_changes_2]
+=== Behavior Changes
+
+* **Deprecation**: Fleet will be deprecating support for `GitRepoRestriction` in a future release, making the use of the Policy resource for configuring multi-tenant environments the only option. See https://github.com/rancher/rancher/issues/55652[#55652].
+* **Deprecation**: Fleet support for unauthenticated webhook calls will be deprecated in a future release, making the setup of a {rn-fleet-webhook}[webhook secret] the only option. See https://github.com/rancher/rancher/issues/55633[#55633].
+
+[#_role_based_access_control_rbac]
+== Role-Based Access Control (RBAC)
+
+[#_features_and_enhancements_5]
+=== Features and Enhancements
+
+* Rancher introduces a new `inheritedNamespacedRules` field for GlobalRoles, allowing administrators to automatically grant users RBAC permissions to specific namespaces across all downstream clusters (for example, shared monitoring or logging namespaces). Rules defined in `inheritedNamespacedRules` automatically propagate to all downstream clusters managed by Rancher. If the namespace doesn't exist on a cluster no rules are added, however, if the namespace does not exist but gets created, the controller triggers and creates the rules. Please note that these inherited rules apply exclusively to downstream clusters and do not affect the local management cluster.
+** Configuring `inheritedNamespacedRules` currently requires editing the GlobalRole YAML directly or via the API, as direct UI inputs for this specific map are not yet available. Example YAML configuration for a GlobalRole with `inheritedNamespacedRules`:
++
+[source,yaml]
+----
+apiVersion: management.cattle.io/v3
+kind: GlobalRole
+metadata:
+namespace: default
+name: test-gr-1
+rules:
+- apiGroups:
+- catalog.cattle.io
+resources:
+- apps
+verbs:
+- create
+inheritedNamespacedRules:
+shared-namespace:
+    - apiGroups:
+    - catalog.cattle.io
+    resources:
+    - apps
+    verbs:
+    - edit
+----
++
+See https://github.com/rancher/rancher/issues/50663[#50663] for more information.
+
 [#_virtualization_management_harvester]
 == Virtualization Management (Harvester)
 
-[#_features_and_enhancements_2]
+[#_features_and_enhancements_6]
 === Features and Enhancements
 
 * This release adds support for the `harvester-baremetal-container-workload` feature flag, disabled by default, within Rancher's Fleet continuous delivery targeting mechanism. When enabled, the UI stops filtering out Harvester clusters, allowing Fleet bundles and applications to target and deploy container workloads directly to them. After enabling the `harvester-baremetal-container-workload` feature flag, please validate existing Fleet Bundles to ensure they now select, or don't select, the required clusters. When disabled, the UI maintains the default behavior and excludes Harvester clusters from Fleet targets. See https://github.com/rancher/dashboard/issues/12518[#12518].
