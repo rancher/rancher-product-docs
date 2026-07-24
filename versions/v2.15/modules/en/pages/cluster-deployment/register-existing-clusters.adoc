@@ -1,6 +1,6 @@
 = Registering Existing Clusters
 :page-languages: [en, de, es, fr, ja, pt, zh]
-:revdate: 2026-07-15
+:revdate: 2026-07-24
 :page-revdate: {revdate}
 :community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc 
 :product-path: cluster-deployment/register-existing-clusters.adoc
@@ -225,6 +225,112 @@ When you create an EKS cluster in Rancher and then delete it, Rancher destroys t
 endif::[]
 
 See {xref-cluster-deployment}[Cluster Management Capabilities by Cluster Type] for more information about what features are available for managing registered clusters.
+
+== Day 2 Operations for Imported RKE2 and K3s Clusters
+
+Rancher allows you to perform essential Day 2 operations, such as encryption key rotation and etcd snapshot management on imported RKE2 and K3s clusters directly from the Rancher UI or API without re-provisioning the cluster. The functionality is available for imported clusters that have the `imported-day-2-ops` feature flag enabled and is disabled by default.
+
+Imported RKE2 and K3s clusters are initially registered with Rancher Manager for workload monitoring and management. Enabling Day 2 operations extends Rancher's lifecycle control over the underlying infrastructure, allowing administrators to centrally perform critical maintenance such as encryption key rotation and etcd snapshot/restore operations, directly from the UI. This eliminates the need for direct SSH node access, automates multi-node execution to prevent human error, and ensures consistent governance and disaster recovery across all managed clusters.
+
+=== Prerequisites
+
+Before attempting Day 2 operations on an imported RKE2 or K3s cluster, ensure the following requirements are met:
+
+* *Rancher Version:* Rancher v2.15 or later.
+* *Feature Flag:* The `imported-day-2-ops` feature flag must be **enabled**. Configuration can be managed globally once enabled via *Global Settings* > *Settings* and setting `imported-cluster-day2-ops-enabled` to true for all new clusters created or overridden per cluster using the `field.cattle.io/ops-enabled` annotation.
+* *Permissions:* Your user account in Rancher must have *Cluster Owner* or *Manage Clusters* permissions.
+
+=== Enabling the `imported-day-2-ops` Feature Flag
+
+The `imported-day-2-ops` feature flag is **disabled by default**. You can enable it using either the Rancher UI or via Helm values during installation or upgrade.
+
+==== Enabling via the Rancher UI
+
+. Log in to Rancher Manager as an administrator.
+. Navigate to *Global Settings* > *Feature Flags*.
+. Locate *`imported-day-2-ops`* in the list.
+. Click *⋮ > Activate*.
+. Confirm the action when prompted.
+
+==== Enabling via Helm Configuration
+
+If you manage Rancher Manager using Helm, update your `values.yaml` or pass the flag during upgrade:
+
+[source,bash]
+----
+helm upgrade rancher rancher-latest/rancher \
+  --namespace cattle-system \
+  --set extraEnv[0].name=CATTLE_FEATURES \
+  --set extraEnv[0].value="imported-day-2-ops=true"
+----
+
+=== Encryption Key Rotation
+
+For imported RKE2 and K3s clusters with secrets encryption enabled at the distribution level, Rancher provides an automated workflow to rotate the underlying encryption keys across all control plane nodes.
+
+==== Steps to Rotate Encryption Keys
+
+[IMPORTANT]
+====
+An existing etcd backup of the cluster must exist before proceeding.
+====
+
+. In the Rancher UI, navigate to *Cluster Management*.
+. Locate your imported RKE2 or K3s cluster in the list.
+. Click *⋮ > Rotate Encryption Keys* (or open the cluster details page and select *Rotate Encryption Keys* in the top-right action menu).
+. Review the confirmation prompt indicating that an existing etcd backup of the cluster must exist before proceeding.
+. Click *Rotate*.
+
+[WARNING]
+====
+Monitor the cluster status during key rotation. Avoid making simultaneous cluster configuration changes until the cluster state returns to *Active*.
+====
+
+=== Managing etcd Snapshots and Restores
+
+==== Taking an etcd Snapshot
+
+. Go to *Cluster Management* and select your imported cluster.
+. Navigate to the *Snapshots* tab or click *⋮ > Take Snapshot*.
+. (Optional) Provide a descriptive name or tag for the snapshot.
+. Click *Create*.
+. Verify that the snapshot appears in the list view with status as *Successful*, this may take a few moments.
+
+==== Viewing Existing Snapshots
+
+To inspect all available etcd snapshots for an imported cluster:
+
+. Navigate to *Cluster Management*.
+. Click the name of your imported RKE2 or K3s cluster to open its details view.
+. Select the *Snapshots* tab.
+. The table displays all local and target S3/remote snapshots associated with the cluster, including details such as:
+
+* *State:* Displays snapshot creation state.
+* *Name:* The snapshot identifier or filename.
+* *Size:* File size of the snapshot archive.
+* *Age:* Timestamp when the snapshot was generated.
+
+==== Restoring an etcd Snapshot
+
+[IMPORTANT]
+====
+An existing etcd backup of the cluster must exist before proceeding.
+====
+
+. In *Cluster Management*, click on your imported cluster name.
+. Navigate to the *Snapshots* tab.
+. Locate the target snapshot you want to restore and click *⋮ > Restore*.
+. Click *Restore*.
+. Verify successful restoration by monitoring the cluster status.
+
+==== Deleting an etcd Snapshot
+
+Deleting unused or obsolete snapshots helps reclaim storage space on downstream control plane nodes or S3 targets.
+
+. In *Cluster Management*, select your imported cluster name and click the *Snapshots* tab.
+. Locate the snapshot you want to remove.
+. Click *⋮ > Delete*.
+. Confirm the deletion when prompted.
 
 [#_configuring_version_management_for_rke2_and_k3s_clusters]
 == Configuring Version Management for {rke2-product-name} and {k3s-product-name} Clusters
