@@ -13,94 +13,91 @@ endif::[]
 
 [CAUTION]
 ====
-Changing global registry settings has the potential to redeploy downstream cluster components, such as the `cattle-cluster-agent`. It is highly recommended to evaluate this feature and its impacts on existing resources before making changes to production environments.
+Changing global registry settings can redeploy downstream cluster components, such as the `cattle-cluster-agent`. Evaluate this feature and its impact on existing resources before updating production environments.
 ====
 
 [NOTE]
 ====
-This page provides a deeper explanation of the behavior and configuration options offered when working with authenticated private registries in the local and downstream clusters. If you're looking for straight forward steps on how to use a private registry, refer to *{xref-private-registries}[this page].*
+This page explains how authenticated private registries behave and are configured in local and downstream clusters. For instructions on setting up a private registry, see *{xref-private-registries}[configuring a global default private registry].*
 ====
 
-Starting with Rancher `v2.15.0`, authenticated private registries can be leveraged at both the global and cluster levels. This is useful when an environment only has access to an authenticated registry, when meeting compliance requirements, or when accessing registries on the open internet that require credentials.
+Starting in Rancher v2.15.0, you can configure authenticated private registries at the global or cluster level. This configuration is useful when your environment requires authenticated access to an internal registry, meets specific compliance requirements, or pulls images from credential-protected public registries.
 
-There are two main ways to leverage an authenticated registry in Rancher:
+You can use an authenticated registry in Rancher in two ways:
 
-* Set one or more image pull secrets at the _global-level_, by configuring both the `system-default-registry-pull-secrets` and `system-default-registry` Rancher settings.
-** This will configure both the local cluster and, by default, all downstream clusters to pull from this registry
-* Set up a _cluster-level_ system default private registry for specific downstream clusters.
-** When provisioning or importing a cluster in the Rancher UI, you can configure registry credentials in the **Advanced Options** or dedicated **Registries** section, depending on the cluster type.
+* *Global-level configuration*: Set image pull secrets globally by configuring the `system-default-registry` and `system-default-registry-pull-secrets` settings. This configures both the local cluster and, by default, all downstream clusters to pull from this registry.
+* *Cluster-level configuration*: Set a private registry for specific downstream clusters. When provisioning or importing a cluster in the Rancher UI, configure credentials in the *Advanced Options* or *Registries* section, depending on the cluster type.
 
 [NOTE]
 ====
-Partial registry inheritance is not supported. A cluster that defines any cluster-level registry configuration will not inherit any global settings, it must redefine its own registry hostname and pull secrets independently.
+Partial registry inheritance is not supported. A cluster that defines any cluster-level registry configuration does not inherit any global settings. It must define its own registry hostname and pull secrets independently.
 ====
 
 [#_registry_behavior_by_cluster_type]
 == Registry Behavior by Cluster Type
 
-Because Ranchers level of information and control varies across downstream environments, how it applies registry credentials depends on the specific cluster type. Understanding this behavior can help you better plan future deployments or troubleshoot existing setups.
+Because Rancher's control varies across downstream environments, how it applies registry credentials depends on the cluster type. Understanding this behavior helps you plan deployments and troubleshoot existing configurations.
 
 [#_provisioned_clusters_rke2_k3s]
 === Provisioned Clusters (RKE2/K3s)
 
-For provisioned RKE2 and K3s clusters, Rancher directly writes registry credentials into the container runtime (containerd) configuration on each node. Because authentication is handled at the node level, all workloads on the cluster, including user workloads, automatically benefit from registry authentication without needing image pull secrets defined on individual pods or deployments.
+For provisioned RKE2 and K3s clusters, Rancher writes registry credentials directly into the container runtime (`containerd`) configuration on each node. Because authentication occurs at the node level, all workloads automatically inherit registry authentication. You do not need to define image pull secrets on individual pods or deployments.
 
-When multiple pull secrets are configured globally using the `system-default-registry-pull-secrets` setting, only the first secret that contains credentials matching the configured registry host is used when generating the containerd configuration. Any additional secrets will not be sent downstream.
+If you configure multiple pull secrets globally using the `system-default-registry-pull-secrets` setting, Rancher uses only the first secret matching the registry host when generating the `containerd` configuration. Additional secrets are not sent downstream.
 
 [#_hosted_and_imported_clusters_and_management_cluster]
-=== Hosted (AKS, EKS, GKE, etc.) and Imported Clusters, and the Management Cluster
+=== Hosted (AKS, EKS, GKE, etc.), Imported Clusters and the Management Cluster
 
-For all other types of clusters, Rancher does not have a way to reliably configure the underlying container runtime. Instead, Kubernetes image pull secrets are propagated into Rancher-managed namespaces by the management cluster. These secrets will be propagated into the namespaces which belonging to the default `system` project and utilized by Rancher-managed components deployed into those namespaces.
+For all other cluster types, Rancher cannot directly configure the underlying container runtime. Instead, the management cluster propagates Kubernetes image pull secrets into Rancher-managed namespaces. Rancher propagates these secrets into namespaces in the default `system` project, where Rancher-managed components use them.
 
-Rancher owns the full life cycle of these propagated secrets, and any changes made to them will be reverted by Rancher upon cluster reconciliation. Changes to the registry configuration should always be done at the cluster or global levels using the Rancher UI, or by modifying the relevant `cluster.managment.cattle.io` object using `kubectl`.
+Rancher manages the full lifecycle of these propagated secrets and reverts manual changes during cluster reconciliation. Always modify registry configurations at the cluster or global level using the Rancher UI or by editing the relevant `clusters.management.cattle.io` object with `kubectl`.
 
 [NOTE]
 ====
-When manually specifying registry credentials on `clusters.management.cattle.io` objects, those credentials must be created within the `fleet-default` namespace. Only secrets of type `basic-auth`, `rke-auth`, or `.dockerconfigjson` are supported.
+When manually defining registry credentials on `clusters.management.cattle.io` objects, create those credentials in the `fleet-default` namespace. Rancher supports only secret types of `basic-auth`, `rke-auth`, or `.dockerconfigjson`.
 ====
 
-Since Rancher isn't able to configure the underlying container runtime, user workloads will _not_ automatically receive registry authentication. Pull secrets must be created and configured independently when deploying the workload.
+Because Rancher cannot configure the container runtime for these clusters, user workloads do not automatically receive registry authentication. You must create and configure pull secrets independently when deploying workloads.
 
 [#_considerations_when_using_authenticated_registries]
-== Considerations When Using Authenticated Registries
+== Considerations when using Authenticated Registries
 
 [#_rancher_managed_charts_and_pull_secret_injection]
 === Rancher Managed Charts and Pull Secret Injection
 
-When an imported or hosted (AKS, EKS, GKE, etc.) cluster is configured to use an authenticated registry, Rancher will automatically inject the configured pull secrets into the Helm values of charts offered through the built-in **rancher-charts** cluster repository. This allows those charts to pull images from the authenticated registry without any additional configuration during installation.
+When you configure an imported or hosted cluster (such as AKS, EKS, or GKE) to use an authenticated registry, Rancher automatically injects configured pull secrets into the Helm values of charts from the built-in `rancher-charts` repository. This allows these charts to pull images from the registry without additional configuration.
 
-The credentials injected are determined by the cluster's registry configuration: if the cluster inherits the global registry settings, the global pull secrets are used. If the cluster has a cluster-level registry override configured, those cluster-specific secrets are used instead. This behavior will not occur if pull secrets are manually specified when installing the charts through the Rancher UI, or if the "skip pull secrets" option is selected when installing the chart.
-
-[NOTE]
-====
-This behavior is specific to charts installed via the built-in **rancher-charts** repository. Pull secret injection does not apply to custom repositories added by users and is not user-configurable.
-====
+The injected credentials depend on the cluster configuration. If the cluster inherits global registry settings, Rancher uses global pull secrets. If the cluster uses a cluster-level override, Rancher uses those cluster-specific secrets. Rancher skips secret injection if you manually specify pull secrets during installation or select the *skip pull secrets* option.
 
 [NOTE]
 ====
-Unlike pull secrets propagated into the `system` namespace, chart specific pull secrets will only be updated during chart upgrades.
+Pull secret injection applies only to charts installed from the built-in `rancher-charts` repository. It does not apply to custom repositories and cannot be customized.
+====
+
+[NOTE]
+====
+Unlike pull secrets propagated into the `system` namespace, chart-specific pull secrets update only during chart upgrades.
 ====
 
 [CAUTION]
 ====
-Charts from **rancher-charts** may be installed into public namespaces. The pull secrets injected during installation will exist in those namespaces. Unlike system namespaces, public namespaces may not have RBAC policies that restrict who can read secrets. Review your cluster's RBAC configuration to ensure pull secret visibility is appropriately controlled.
+Charts from `rancher-charts` can be installed into public namespaces, placing the injected pull secrets in those namespaces. Unlike system namespaces, public namespaces might lack RBAC policies that restrict secret access. Review your cluster's RBAC configuration to ensure credentials remain secure.
 ====
 
 [#_updating_the_global_configuration]
 === Updating the Global Configuration
 
-Changes to either `system-default-registry` or `system-default-registry-pull-secrets` affect all downstream clusters that inherit the global configuration, including triggering redeployments of Rancher-managed workloads such as the `cattle-cluster-agent` in those clusters.
+Updating `system-default-registry` or `system-default-registry-pull-secrets` affects all downstream clusters inheriting the global configuration. This includes redeploying Rancher-managed workloads, such as `cattle-cluster-agent`, across those clusters.
 
-If registry credentials or the registry hostname are likely to change over time, configuring registry details at the cluster level rather than relying on global settings is recommended. This limits the impact of configuration changes to individual clusters and avoids unintended redeployments across your downstream environments.
+If registry credentials or hostnames change frequently, configure registry settings at the cluster level rather than globally. This limits configuration changes to specific clusters and prevents unintended redeployments across your downstream environments.
 
 [#_use_read_only_registry_credentials]
 === Use Read Only Registry Credentials
 
-Registry credentials configured for use with Rancher should follow the principle of least privilege:
+Registry credentials used with Rancher must follow the principle of least privilege:
 
-- Grant **read-only** (pull) access only. Rancher and the charts it deploys do not require write access to the registry.
-- Scope credentials to only the images or repositories that the cluster needs to access.
-- Avoid reusing the same credentials across environments with different trust boundaries.
+* Grant **read-only** (pull) access. Rancher and deployed charts do not require write access.
+* Scope credentials to only the images or repositories the cluster needs to access.
+* Avoid reusing credentials across environments with different trust boundaries.
 
-Limiting credential scope reduces the impact if a secret is read by an unauthorized workload or user.
-
+Limiting credential scope reduces the security impact if an unauthorized user or workload accesses a secret.
