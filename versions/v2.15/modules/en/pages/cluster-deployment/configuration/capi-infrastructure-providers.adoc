@@ -1,5 +1,5 @@
 = Configuring Native CAPI Infrastructure Providers to Provision RKE2 Clusters
-:revdate: 2026-07-23
+:revdate: 2026-07-24
 :page-revdate: {revdate}
 :community-path: how-to-guides/advanced-user-guides/capi-infrastructure-providers.adoc
 :product-path: cluster-deployment/configuration/capi-infrastructure-providers.adoc 
@@ -25,7 +25,9 @@ Rancher can provision RKE2 clusters using native CAPI infrastructure providers, 
 
 Standard RKE2 provisioning relies on Rancher's internal bootstrap and control plane providers alongside Rancher Node Drivers (via `rancher/machine`) as the infrastructure provider. This new mode allows you to substitute Rancher Node Drivers with native CAPI infrastructure providers while retaining Rancher’s bootstrap and control plane logic.
 
-This guide provides simple examples for this provisioning mode using CAPA and CAPV. {url-CAPI-docs}[{turtles-product-name}] is the supported method for installing CAPA and CAPV. Refer to the documentation of each provider for more details on available options and adapt these examples to your needs.
+You can provision and manage native CAPI clusters either directly through the Rancher UI or manually using `kubectl`.
+
+This guide provides steps for provisioning through the Rancher UI as well as example manifests for manual provisioning using CAPA and CAPV. {url-CAPI-docs}[{turtles-product-name}] is the supported method for installing CAPA and CAPV. Refer to the documentation of each provider for more details on available options and adapt these examples to your needs.
 
 [NOTE]
 ====
@@ -37,11 +39,6 @@ Provisioning with a native CAPI infrastructure provider and Rancher as a bootstr
 By default, the `Standard User` and `Create Clusters` {xref-global-permissions}[global permissions] allow creating and then updating CAPI infrastructure objects in the `fleet-default` namespace.
 
 Manually created infrastructure provider identity objects, such as `AWSClusterStaticIdentity` or `VSphereClusterIdentity`, that target the `fleet-default` namespace can be used through CAPI infrastructure objects such as `AWSCluster` or `VsphereCluster`.
-====
-
-[CAUTION]
-====
-These examples are meant to be applied manually, e.g. with kubectl. You can view and explore clusters created in this way in the UI, but editing their configuration through the UI is not supported.
 ====
 
 [#_limitations_and_requirements]
@@ -59,11 +56,9 @@ For both CAPA and CAPV, the general steps are as follows:
 . Install Rancher.
 . Install a CAPI infrastructure provider, either CAPA or CAPV.
 . Set-up an identity resource for the provider, or use an identity resource mirrored from a cloud credential. Automatic mirroring is currently supported only for CAPA's `AWSClusterStaticIdentity`.
-. Create a CAPI infrastructure cluster resource.
-. Create one or more CAPI infrastructure machine template resources.
-. Create a Rancher `clusters.provisioning.cattle.io` resource that references the identity, infrastructure cluster and infrastructure machine template resources.
+. Create the downstream cluster and infrastructure resources either through the **Rancher UI** or by applying manifests via **`kubectl`**.
 
-After applying the `clusters.provisioning.cattle.io` resource, the cluster appears in the Rancher Cluster Management list (click on **☰ > Cluster Management**).
+After provisioning, the cluster appears in the Rancher Cluster Management list (click **☰ > Cluster Management**).
 
 To view the progress of the provisioning process and troubleshoot, refer to the status of the various CAPI and Rancher provisioning resources in the local cluster:
 
@@ -78,8 +73,41 @@ The logs for the infrastructure provider deployment (e.g. `capa-controller-manag
 
 Rancher allows installing the required infrastructure provider through {turtles-product-name}. Refer to the {url-CAPI-docs}[documentation] to install the CAPA or CAPV provider.
 
-[#_provisioning_a_cluster]
-== Provisioning a cluster
+[#_provisioning_a_cluster_via_the_rancher_ui]
+== Provisioning a cluster via the Rancher UI
+
+Rancher provides native UI workflows to provision RKE2 clusters using CAPI infrastructure providers without requiring manual YAML creation.
+
+=== Prerequisites
+
+* Ensure the desired CAPI provider (e.g., CAPA) is installed and active in the local cluster via {turtles-product-name}. Providers can also be installed in the UI via YAML by navigating to the **Providers > Cluster API Providers** view and clicking **Create from YAML**.
+* Set up the infrastructure provider credentials/identity (e.g., create an AWS Cloud Credential to mirror an `AWSClusterStaticIdentity`).
+* Install the UI extension required for the provider (e.g., `SUSE CAPI CAPA UI` for CAPA) in order to provision via UI.
+
+=== CAPI Cluster creation steps
+
+. Navigate to **☰ > Cluster Management**.
+. Click **Create**.
+. Under the **Create a cluster using Cluster API** section select your desired CAPI provider after the respective UI extension is installed (e.g., **CAPI AWS** for CAPA).
+. **Cluster Options**:
+   * Enter a **Cluster Name**.
+   * Select the target **Kubernetes Version** (RKE2).
+   * Choose or configure the **Infrastructure Identity / Cloud Credential** for the provider.
+   * Note that there are certain preconfigured defaults for the cluster:
+   ** **Cluster Provider**: This is set to `external` for provisioning with a native CAPI infrastructure provider.
+   ** **Additional Manifest**: An additional manifest is used to install Helm charts necessary for cluster provisioning (e.g. `aws-cloud-controller-manager ` for CAPA).
+   ** **machineSelectorConfig**: Currently not supported in the UI form, however the YAML editor can be used for full configuration.
+   * **Machine Pools**:
+   ** Add one or more machine pools and assign node roles (**Control Plane**, **etcd**, **Worker**).
+   ** Configure the infrastructure pool parameters (e.g. subnet, IAM instance profile name, machine image).
+   * **Advanced Configuration**:
+   ** Configure CNI, security groups, or custom cloud-init user data as required by your environment.
+. Click **Create** to deploy the cluster.
+
+Once the cluster is provisioned, it appears in the Rancher Cluster Management list (click **☰ > Cluster Management**). Most cluster fields will be editable via **Edit Config**, however the **Cluster Name**, **Region**, and **VPC** fields are immutable after creation. Note that for CAPI AWS clusters, users will not be able to SSH into the CAPA machine pools.
+
+[#_provisioning_a_cluster_via_kubectl]
+== Provisioning a cluster via `kubectl`
 
 These examples use a single machine pool with all roles (control plane, etcd and worker) for simplicity.
 
