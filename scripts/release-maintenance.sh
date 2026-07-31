@@ -246,9 +246,14 @@ update_release_notes() {
 
   echo "-> Updating release notes in $file"
 
+  local product_rn_link="xref:release-notes/${version}.adoc[View]"
+  if [[ "$version" == *.0 ]]; then
+    product_rn_link="https://github.com/rancher/rancher/releases/tag/${version}[GitHub Release]"
+  fi
+
   # Update Product block
   update_release_notes_block "$file" "$version" "$new_prime_mark" "$new_community_mark" \
-    "CURRENT VERSION" "CURRENT VERSION END" "PAST VERSIONS" "xref:release-notes/${version}.adoc[View]"
+    "CURRENT VERSION" "CURRENT VERSION END" "PAST VERSIONS" "$product_rn_link"
 
   # Update Community block
   update_release_notes_block "$file" "$version" "$new_prime_mark" "$new_community_mark" \
