@@ -287,64 +287,66 @@ To prevent issues when upgrading, the https://kubernetes.io/docs/tasks/administe
 
 == Authorized Cluster Endpoint Support for {rke2-product-name} and {k3s-product-name} Clusters
 
-Rancher supports Authorized Cluster Endpoints (ACE) for registered RKE2 and K3s clusters. This support includes manual steps you will perform on the downstream cluster to enable the ACE. For additional information on the authorized cluster endpoint, click {xref-kubeconfig-file}[here].
+Rancher supports Authorized Cluster Endpoints (ACE) for registered RKE2 and K3s clusters. Enabling ACE requires manual configuration on the downstream cluster. For more information, see {xref-kubeconfig-file}[Authorized Cluster Endpoints].
 
 [NOTE]
 ====
-
-* These steps only need to be performed on the control plane nodes of the downstream cluster. You must configure each control plane node individually.
-* The following steps will work on both RKE2 and K3s clusters registered in v2.6.x as well as those registered (or imported) from a previous version of Rancher with an upgrade to v2.6.x.
-* These steps will alter the configuration of the downstream RKE2 and K3s clusters and deploy the `kube-api-authn-webhook`. If a future implementation of the ACE requires an update to the `kube-api-authn-webhook`, then this would also have to be done manually. For more information on this webhook, click {xref-kubeconfig-file}#_about_the_kube_api_auth_authentication_webhook[here].
+* Perform these steps on each downstream control plane node individually.
+* These steps apply to RKE2 and K3s clusters registered in Rancher v2.6.x, as well as clusters imported from earlier versions and upgraded to v2.6.x.
+* This procedure modifies the downstream cluster configuration and deploys `kube-api-authn-webhook`. If a future ACE release updates `kube-api-authn-webhook`, you must update it manually. For details, see {xref-kubeconfig-file}#_about_the_kube_api_auth_authentication_webhook[About the Authentication Webhook].
 ====
 
+To enable ACE, complete the following steps on each downstream control plane node:
 
-[discrete]
-====== *Manual steps to be taken on the control plane of each downstream cluster to enable ACE:*
-
-. Create a file at `/var/lib/rancher/{rke2,k3s}/kube-api-authn-webhook.yaml` with the following contents:
+. Create `/var/lib/rancher/{rke2,k3s}/kube-api-authn-webhook.yaml` with the following content:
 +
 [,yaml]
 ----
- apiVersion: v1
- kind: Config
- clusters:
- ** name: Default
-cluster:
-  insecure-skip-tls-verify: true
-  server: http://127.0.0.1:6440/v1/authenticate
- users:
- ** name: Default
-user:
-  insecure-skip-tls-verify: true
- current-context: webhook
- contexts:
- ** name: webhook
-context:
-  user: Default
-  cluster: Default
+apiVersion: v1
+kind: Config
+clusters:
+- name: Default
+  cluster:
+    insecure-skip-tls-verify: true
+    server: http://127.0.0.1:6440/v1/authenticate
+users:
+- name: Default
+  user:
+    insecure-skip-tls-verify: true
+current-context: webhook
+contexts:
+- name: webhook
+  context:
+    user: Default
+    cluster: Default
 ----
 
-. Add the following to the config file (or create one if it doesn't exist); note that the default location is `/etc/rancher/{rke2,k3s}/config.yaml`:
+. Add the following content to `/etc/rancher/{rke2,k3s}/config.yaml` (create the file if it does not exist):
 +
 [,yaml]
 ----
- kube-apiserver-arg:
-     - authentication-token-webhook-config-file=/var/lib/rancher/{rke2,k3s}/kube-api-authn-webhook.yaml
+kube-apiserver-arg:
+  - authentication-token-webhook-config-file=/var/lib/rancher/{rke2,k3s}/kube-api-authn-webhook.yaml
 ----
 
-. Run the following commands:
+. Restart the service:
++
+[,sh]
+----
+sudo systemctl restart {rke2,k3s}-server
+----
 
-  sudo systemctl stop {rke2,k3s}-server
-  sudo systemctl start {rke2,k3s}-server
-
-. Finally, you *must* go back to the Rancher UI and edit the imported cluster there to complete the ACE enablement. Click on *⋮ > Edit Config*, then click the *Networking* tab under Cluster Configuration. Finally, click the *Enabled* button for *Authorized Endpoint*. Once the ACE is enabled, you then have the option of entering a fully qualified domain name (FQDN) and certificate information.
-
+. Complete ACE enablement in the Rancher UI:
+.. Navigate to the imported cluster and select *⋮* > *Edit Config*.
+.. Under *Cluster Configuration*, select the *Networking* tab.
+.. Select *Enabled* for *Authorized Endpoint*.
+.. Optional: Enter a fully qualified domain name (FQDN) or certificate details.
++
 [NOTE]
 ====
-
-The *FQDN* field is optional, and if one is entered, it should point to the downstream cluster. Certificate information is only needed if there is a load balancer in front of the downstream cluster that is using an untrusted certificate. If you have a valid certificate, then nothing needs to be added to the *CA Certificates* field.
+* If specified, the *FQDN* must point to the downstream cluster.
+* Provide certificate information only if a load balancer in front of the downstream cluster uses an untrusted certificate. If the certificate is valid, leave *CA Certificates* blank.
 ====
-
 
 == Annotating Registered Clusters
 
