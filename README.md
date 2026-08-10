@@ -220,6 +220,36 @@ xref:#_my_anchor[My Anchor]
 > ```
 > For more information, refer to the [Antora Xref documentation](https://docs.antora.org/antora/latest/page/xref/).
 
+#### Conditionalizing Cross-References (xrefs)
+
+When single-sourcing content across build targets, cross-references (xref:) may point to pages whose file paths differ between builds (such as community vs. product) or exist in only one build type.
+
+Always use relative xref cross-references instead of hardcoding absolute domain URLs (such as [https://documentation.suse.com/](https://documentation.suse.com/) or [https://ranchermanager.docs.rancher.com/](https://ranchermanager.docs.rancher.com/)). Hardcoding URLs causes domain leakage across site builds and bypasses Antora's broken-link validation. Because target file paths differ across builds, you must conditionalize xref paths to prevent build errors. For example, referencing [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) without conditionalizing would mean this product docs URL would also be shown in the community docs.
+
+##### Attribute-Based Path Substitution for Inline Links
+
+1. Set a file path attribute near the top of the .adoc file based on the build type:
+
+    ```markdown
+    ifeval::["{build-type}" == "community"]
+    :concepts-page: reference-guides/kubernetes-concepts.adoc
+    endif::[]
+
+    ifeval::["{build-type}" == "product"]
+    :concepts-page: about-rancher/concepts.adoc
+    endif::[]
+    ```
+
+1. Reference the file path attribute in the text `xref:{attribute-name}[custom link text]`. For example:
+
+    ```markdown
+    Refer to the xref:{concepts-page}[Kubernetes Concepts] guide for details.
+    ```
+
+    :::tip
+    To find the community file path of a product docs file, go to the header block of the product docs file and find the `:community-path:` attribute.
+    :::
+
 #### Updating Navigation
 
 When adding a new documentation page, or renaming or removing an existing one, you must update the navigation file (`nav.adoc`) for the respective version (and locale). This ensures that the site's sidebar menu accurately reflects the available content.
