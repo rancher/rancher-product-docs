@@ -220,11 +220,17 @@ xref:#_my_anchor[My Anchor]
 > ```
 > For more information, refer to the [Antora Xref documentation](https://docs.antora.org/antora/latest/page/xref/).
 
-#### Conditionalizing Cross-References (xrefs)
+#### Cross-References (xrefs)
 
-When single-sourcing content across build targets, cross-references (xref:) may point to pages whose file paths differ between builds (such as community vs. product) or exist in only one build type.
+When referencing content across build targets, cross-references (xref) may point to pages whose file paths differ between builds (such as community vs. product) or exist in only one build type.
 
-Always use relative xref cross-references instead of hardcoding absolute domain URLs (such as [https://documentation.suse.com/](https://documentation.suse.com/) or [https://ranchermanager.docs.rancher.com/](https://ranchermanager.docs.rancher.com/)). Hardcoding URLs causes domain leakage across site builds and bypasses Antora's broken-link validation. Because target file paths differ across builds, you must conditionalize xref paths to prevent build errors. For example, referencing [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) without conditionalizing would mean this product docs URL would also be shown in the community docs.
+Always use a xref instead of hardcoding absolute domain URLs (such as [https://documentation.suse.com/](https://documentation.suse.com/) or [https://ranchermanager.docs.rancher.com/](https://ranchermanager.docs.rancher.com/)). Hardcoding URLs causes domain leakage across site builds and bypasses Antora's broken-link validation. Because target file paths differ across builds, you must conditionalize xref paths to prevent build errors. For example, referencing [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) without conditionalizing would mean this product docs page would be shown in the community docs.
+
+The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an Antora resource ID (relative to the `pages` directory) specifying a publishable page. For example, the resource ID for [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) is `installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc`.
+
+:::tip
+To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
+:::
 
 ##### Attribute-Based Path Substitution for Inline Links
 
@@ -245,10 +251,6 @@ Always use relative xref cross-references instead of hardcoding absolute domain 
     ```asciidoc
     Refer to the {concepts-page}[Kubernetes Concepts] guide for details.
     ```
-
-    :::tip
-    To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
-    :::
 
 #### Updating Navigation
 
