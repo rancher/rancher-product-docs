@@ -220,6 +220,37 @@ xref:#_my_anchor[My Anchor]
 > ```
 > For more information, refer to the [Antora Xref documentation](https://docs.antora.org/antora/latest/page/xref/).
 
+#### Cross-References (xrefs)
+
+When referencing content across build targets, cross-references (xref) may point to pages whose file paths differ between builds (such as community vs. product) or exist in only one build type.
+
+Always use a xref instead of hardcoding absolute domain URLs (such as [https://documentation.suse.com/](https://documentation.suse.com/) or [https://ranchermanager.docs.rancher.com/](https://ranchermanager.docs.rancher.com/)). Hardcoding URLs causes domain leakage across site builds and bypasses Antora's broken-link validation. Because target file paths differ across builds, you must conditionalize xref paths to prevent build errors. For example, referencing [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) without conditionalizing would mean this product docs page would be shown in the community docs.
+
+The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an Antora resource ID (relative to the `pages` directory) specifying a publishable page. For example, the resource ID for [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) is `installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc`.
+
+> [!TIP]
+> To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
+
+##### Attribute-Based Path Substitution for Inline Links
+
+1. Set a file path attribute near the top of the .adoc file based on the build type:
+
+    ```asciidoc
+    ifeval::["{build-type}" != "community"]
+    :xref-tuning-rancher-at-scale: xref:installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc
+    endif::[]
+
+    ifeval::["{build-type}" == "community"]
+    :xref-tuning-rancher-at-scale: xref:reference-guides/best-practices/rancher-server/tuning-and-best-practices-for-rancher-at-scale.adoc
+    endif::[]
+    ```
+
+1. Reference the file path attribute in the text `{attribute-name}[custom link text]`. For example:
+
+    ```asciidoc
+    Refer to the {xref-tuning-rancher-at-scale}[Tuning and Best Practices for at Scale] guide for details.
+    ```
+
 #### Updating Navigation
 
 When adding a new documentation page, or renaming or removing an existing one, you must update the navigation file (`nav.adoc`) for the respective version (and locale). This ensures that the site's sidebar menu accurately reflects the available content.
