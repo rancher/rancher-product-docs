@@ -228,9 +228,8 @@ Always use a xref instead of hardcoding absolute domain URLs (such as [https://d
 
 The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an Antora resource ID (relative to the `pages` directory) specifying a publishable page. For example, the resource ID for [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) is `installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc`.
 
-:::tip
-To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
-:::
+> [!TIP]
+> To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
 
 ##### Attribute-Based Path Substitution for Inline Links
 
