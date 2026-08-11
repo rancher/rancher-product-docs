@@ -230,24 +230,24 @@ Always use relative xref cross-references instead of hardcoding absolute domain 
 
 1. Set a file path attribute near the top of the .adoc file based on the build type:
 
-    ```markdown
-    ifeval::["{build-type}" == "community"]
-    :concepts-page: reference-guides/kubernetes-concepts.adoc
+    ```asciidoc
+    ifeval::["{build-type}" != "community"]
+    :xref-concepts-page: xref:about-rancher/concepts.adoc
     endif::[]
 
-    ifeval::["{build-type}" == "product"]
-    :concepts-page: about-rancher/concepts.adoc
+    ifeval::["{build-type}" == "community"]
+    :xref-concepts-page: xref:reference-guides/kubernetes-concepts.adoc
     endif::[]
     ```
 
-1. Reference the file path attribute in the text `xref:{attribute-name}[custom link text]`. For example:
+1. Reference the file path attribute in the text `{attribute-name}[custom link text]`. For example:
 
-    ```markdown
-    Refer to the xref:{concepts-page}[Kubernetes Concepts] guide for details.
+    ```asciidoc
+    Refer to the {concepts-page}[Kubernetes Concepts] guide for details.
     ```
 
     :::tip
-    To find the community file path of a product docs file, go to the header block of the product docs file and find the `:community-path:` attribute.
+    To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
     :::
 
 #### Updating Navigation
