@@ -238,18 +238,18 @@ To find the product or community file path of a file, go to the header block of 
 
     ```asciidoc
     ifeval::["{build-type}" != "community"]
-    :xref-concepts-page: xref:about-rancher/concepts.adoc
+    :xref-tuning-rancher-at-scale: xref:installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc
     endif::[]
 
     ifeval::["{build-type}" == "community"]
-    :xref-concepts-page: xref:reference-guides/kubernetes-concepts.adoc
+    :xref-tuning-rancher-at-scale: xref:reference-guides/best-practices/rancher-server/tuning-and-best-practices-for-rancher-at-scale.adoc
     endif::[]
     ```
 
 1. Reference the file path attribute in the text `{attribute-name}[custom link text]`. For example:
 
     ```asciidoc
-    Refer to the {concepts-page}[Kubernetes Concepts] guide for details.
+    Refer to the {xref-tuning-rancher-at-scale}[Tuning and Best Practices for at Scale] guide for details.
     ```
 
 #### Updating Navigation
