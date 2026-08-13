@@ -1,5 +1,5 @@
 ---
-applyTo: "**/*.adoc"
+applyTo: "**/release-notes/*.adoc"
 ---
 @copilot
 

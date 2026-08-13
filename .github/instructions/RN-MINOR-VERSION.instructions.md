@@ -1,5 +1,5 @@
 ---
-applyTo: "**/*.0.adoc,**/*.1.adoc"
+applyTo: "**/release-notes/*.0.adoc,**/release-notes/*.1.adoc"
 ---
 @copilot
 
