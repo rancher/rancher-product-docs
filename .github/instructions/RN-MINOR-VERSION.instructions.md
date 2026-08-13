@@ -1,5 +1,5 @@
 ---
-applyTo: "app/models/**/*.0.adoc"
+applyTo: "**/*.0.adoc,**/*.1.adoc"
 ---
 @copilot
 

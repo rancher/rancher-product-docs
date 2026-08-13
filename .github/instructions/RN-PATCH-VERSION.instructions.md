@@ -1,9 +1,10 @@
 ---
-applyTo: "app/models/**/*.adoc"
+applyTo: "**/*.adoc"
 ---
 @copilot
 
 * First, clean up the `__VERSION__.adoc` files in this PR:
+  * Remove the entire `What's New - SUSE Rancher Prime` section if found.
   * Remove the entire `Security Fixes for Vulnerabilities` section if found.
   * Remove any bug fix release notes listed under `Major Bug Fixes` sections.
   * Remove any feature enhancements release notes listed under `Features and Enhancements` sections.
