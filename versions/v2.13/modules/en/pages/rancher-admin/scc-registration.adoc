@@ -2,10 +2,14 @@
 ifeval::["{build-type}" != "srfa"]
 :page-languages: [en, zh]
 endif::[]
-:revdate: 2026-06-17
+:revdate: 2026-08-18
 :page-revdate: {revdate}
 
-Since Rancher v2.12.1, SUSE Rancher Prime customers can now register Rancher Manager with https://scc.suse.com/home[SUSE Customer Center (SCC)]. This registration helps you track the use of your organization's subscriptions and deployed Rancher Manager instances.
+SUSE Rancher Prime customers can register Rancher Manager with https://scc.suse.com/home[SUSE Customer Center (SCC)].
+
+While registering your instance is required by SUSE subscription terms to validate entitlements, it is not enforced by application software. If you choose not to register, Rancher Manager and all managed downstream clusters will continue to function with full capabilities and without operational lockouts or disruptions.
+
+When logging in to SCC, you may see multiple registration codes listed under your organization. Ensure you select a code corresponding to an https://scc.suse.com/docs/userguide#UG-Activating-and-Managing-Subscriptions[active SUSE Rancher Prime subscription]. Note there is no limit on the number of Rancher instances that can be registered using the same registration code and each instance is registered independently.
 
 == Prerequisites
 
@@ -78,7 +82,7 @@ helm install rancher rancher-prime/rancher \
   --values values.yaml
 ----
 
-. To verify that the registration was successful using the manually created secret, check the logs of the SCC-Operator or the status of the registration in the Rancher UI under *Global Setting* > *Registration*.
+. To verify that the registration was successful using the manually created secret, check the logs of the SCC-Operator or the status of the registration in the Rancher UI under *Global Settings* > *Registration*.
 
 ===== Helm Parameters 
 
@@ -143,18 +147,18 @@ registration:
 ----
 
 . Run the Helm install command `helm install rancher rancher-prime/rancher` and verify installation is successful. 
-. Before proceeding, use the following Bash command to check that the SCC-Operator has successfully created a secret in the `cattle-scc-system` namespace. After the secret is created, it outputs  `Secret created!`.
+. Before proceeding, use the following Bash command to check that the SCC-Operator has successfully created a secret in the `cattle-scc-system` namespace. After the secret is created, it outputs `Secret created!`.
 +
 [,bash]
 ----
 for i in {1..100}; do kubectl wait --for=create secret/scc-registration -n cattle-scc-system --timeout=3s &> /dev/null && echo "Secret created!" && break || { echo "Not ready yet..."; sleep 3; }; done
 ----
 
-. Using `kubectl`, retrieve the registration request file and save it locally.
+. Using `kubectl`, retrieve the registration request file and save it locally.
 +
 [,bash]
 ----
-kubectl get secrets -n  cattle-scc-system \
+kubectl get secrets -n cattle-scc-system \
 -l scc.cattle.io/secret-role=offline-request,scc.cattle.io/scc-hash=$(kubectl get secrets \
 -n cattle-scc-system scc-registration -o yaml|yq '.metadata.labels["scc.cattle.io/scc-hash"]') \
 -o yaml | yq '.items[0].data.request' > offline.base64
@@ -170,7 +174,7 @@ kubectl get secrets -n  cattle-scc-system \
 +
 [,bash]
 ----
-kubectl patch secret -n cattle-scc-system scc-registration  \
+kubectl patch secret -n cattle-scc-system scc-registration \
 --type='merge' -p "{\"data\": {\"certificate\": \"$(cat <your Offline Cert file> )\"}}"
 ----
 * *Helm:*
@@ -182,12 +186,62 @@ Add your registration certificate using the `certificate` value field, and then 
 certificate: {}
 ----
 
+[#_post_registration]
+== Post-Registration
+
+After registering your Rancher Manager instance with SCC, several updates occur across both the local Rancher instance and the central SUSE Customer Center.
+
+[#_rancher_application]
+=== Rancher Application
+
+* Status Update: Under *Global Settings* > *Registration*, the subscription status updates to **Active**, displaying your Product Name, Expiration Date, and Registration Mode.
+* Background Telemetry Sync: The embedded `scc-operator` begins transmitting technical metrics such as downstream cluster counts, vCPU counts, node capacity, and the server URL to SCC at regular intervals over HTTPS.
+
+[CAUTION]
+====
+**Known Limitation:** After completing registration, the registration prompt banner in the Notification Center (bell icon) may continue to ask you to register. This is a known cosmetic issue. You can safely dismiss or ignore this notification.
+====
+
+[#_viewing_registered_instances_in_scc]
+=== Viewing Registered Instances in SCC
+
+Centralized management and tracking of your organization's deployed Rancher Manager instances takes place directly in the SUSE Customer Center.
+
+To view registered Rancher instances in SCC:
+
+. Log in to https://scc.suse.com[scc.suse.com] and select your organization.
+. Click on **Systems** in the top navigation menu.
+. Locate your relevant Rancher Manager instance in the system list and click on the instance name to open a detailed overview.
+
+Alternatively, you can navigate to the **Subscriptions** view in the top navigation menu, select your **SUSE Rancher Prime** subscription, and view the **Registered Systems** to see all instances under that specific subscription.
+
+[#_deregister_from_suse_customer_center]
 == Deregister from SUSE Customer Center
 
-If you need to remove or update your registration, you can deregister your Rancher Manager instance from SCC. 
+[IMPORTANT]
+====
+If you deregister a system that is behind a registration proxy (RMT or SUSE Manager), you will also need to remove it from the registration proxy itself. Otherwise, active systems will reappear in the SCC portal.
+====
+
+Organization admins can deregister Rancher Manager instances from SCC. Deleting or deregistering a system removes it from its subscriptions and frees the associated entitlement.
+
+[#_online_deregistration_steps]
+=== Online Deregistration Steps
 
 . Go to *Global Settings* > *Registration*.
 . Find your Product Registration under *Online Registration* or *Offline Registration* and click *Deregister*.
+
+[#_offline_deregistration_steps]
+=== Offline Deregistration Steps
+
+. Log in to https://scc.suse.com[scc.suse.com] and your Rancher application.
+. From the Rancher UI *Cluster Management* view click on your local cluster.
+. Find the Registration object using the *Magnifying Glass* search on your local cluster to search for "Registration".
+. View the Registration objects YAML to identify the SCC System ID (`.status.sccSystemID`).
+. From the SCC portal, find the matching Rancher instance via the *Systems* tab containing the relevant SCC System ID.
+. Click the *Deregister* button in SCC to first remove the system from the SCC.
+. Go back to your Rancher application and navigate to the *Registration Settings* page.
+. Click the *Deregister* button to remove the registration from Rancher.
 
 [#_telemetry]
 == Telemetry
