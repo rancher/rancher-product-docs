@@ -48,7 +48,7 @@ To install the Rancher management server on a high-availability K3s cluster, set
 [#_k3s_why_three_nodes]
 === Why Three Nodes?
 
-In a high-availability K3s cluster using an embedded etcd datastore, Rancher server data is stored in etcd across all three nodes.
+In a high-availability RKE2 cluster using an embedded etcd datastore, Rancher server data is stored in etcd across all three nodes.
 
 An etcd cluster requires an odd number of nodes to maintain quorum and elect a leader. If etcd loses quorum, a split-brain condition occurs, which can require restoring the cluster from a backup. In a three-node setup, if one node fails, the remaining two nodes retain a majority and continue operating without service disruption.
 
@@ -93,14 +93,13 @@ For load balancer configuration examples, see:
 * {xref-nginx-load-balancer}[NGINX Load Balancer Setup]
 * {xref-amazon-elb}[Amazon ELB Load Balancer Setup]
 
-[IMPORTANT]
+[CAUTION]
 ====
 Do not use the `local` cluster load balancer or Ingress for applications other than Rancher. Sharing this Ingress with other workloads can cause WebSocket errors during configuration reloads. Dedicate the `local` cluster exclusively to Rancher.
 ====
 
 [#_k3s_4_set_up_the_dns_record]
 === 4. Set up the DNS Record
-
 
 After setting up the load balancer, create a DNS record to route traffic to it. Depending on your environment, create either a record pointing to the load balancer IP address or a CNAME record pointing to the load balancer hostname. Ensure that this record matches the exact hostname intended for the Rancher server.
 
@@ -122,84 +121,78 @@ To deploy a new private registry, see the documentation for your container runti
 * https://docs.docker.com/registry/deploying/[Docker Registry Deployment Guide]
 --
 
-RKE::
+RKE2::
 +
 --
-To install the Rancher management server on a high-availability RKE cluster, we recommend setting up the following infrastructure:
+To install the Rancher management server on a high-availability RKE2 cluster, set up the following infrastructure:
 
-- **Three Linux nodes,** typically virtual machines, in an infrastructure provider such as Amazon's EC2, Google Compute Engine, or vSphere.
-- **A load balancer** to direct front-end traffic to the three nodes.
-- **A DNS record** to map a URL to the load balancer. This will become the Rancher server URL, and downstream Kubernetes clusters will need to reach it.
-- **A private image registry** to distribute container images to your machines.
+* **Linux nodes:** Three Linux nodes, typically virtual machines hosted by an infrastructure provider such as Amazon EC2, Google Compute Engine, or VMware vSphere.
+* **Load balancer:** Directs incoming traffic across all three nodes.
+* **DNS record:** Maps an FQDN to the load balancer. Downstream Kubernetes clusters must be able to reach this Rancher server URL.
+* **Private image registry:** Distributes container images to your nodes.
 
-These nodes must be in the same region/data center. You may place these servers in separate availability zones.
+Deploy all nodes in the same region or data center. Nodes can be distributed across separate availability zones within that region.
 
-[#_why_three_nodes]
-[pass]
-<h3><a class="anchor" id="_why_three_nodes" href="#_why_three_nodes"></a>Why Three Nodes?</h3>
+[#_rke2_why_three_nodes]
+=== Why Three Nodes?
 
-In an RKE cluster, Rancher server data is stored on etcd. This etcd database runs on all three nodes.
+In a high-availability RKE2 cluster, Rancher server data is stored in etcd across all three nodes.
 
-The etcd database requires an odd number of nodes so that it can always elect a leader with a majority of the etcd cluster. If the etcd database cannot elect a leader, etcd can suffer from https://www.quora.com/What-is-split-brain-in-distributed-systems[split brain], requiring the cluster to be restored from backup. If one of the three etcd nodes fails, the two remaining nodes can elect a leader because they have the majority of the total number of etcd nodes.
+An etcd cluster requires an odd number of nodes to maintain quorum and elect a leader. If etcd loses quorum, a split-brain condition occurs, which can require restoring the cluster from a backup. In a three-node setup, if one node fails, the remaining two nodes retain a majority and continue operating without service disruption.
 
-[#_rke_1_set_up_linux_nodes]
-[pass]
-<h3><a class="anchor" id="_rke_1_set_up_linux_nodes" href="#_rke_1_set_up_linux_nodes"></a>1. Set up Linux Nodes</h3>
+[#_rke2_1_set_up_linux_nodes]
+=== 1. Set up Linux Nodes
 
-These hosts will be disconnected from the internet, but require being able to connect with your private registry.
+These nodes are disconnected from the Internet, but must be able to access your private registry.
 
-Make sure that your nodes fulfill the general installation requirements for {xref-install-reqs}[OS, container runtime, hardware, and networking].
+Ensure that your nodes meet the general installation requirements for {xref-install-reqs}[operating systems, container runtimes, hardware, and networking].
 
-For an example of one way to set up Linux nodes, refer to this {xref-setup-ec2-nodes}[tutorial] for setting up nodes as instances in Amazon EC2.
+For an example of setting up Linux nodes as Amazon EC2 instances, see {xref-setup-ec2-nodes}[Setting Up Nodes in Amazon EC2].
 
-[#_rke_2_set_up_the_load_balancer]
-[pass]
-<h3><a class="anchor" id="_rke_2_set_up_the_load_balancer" href="#_rke_2_set_up_the_load_balancer"></a> 2. Set up the Load Balancer</h3>
+[#_rke2_2_set_up_the_load_balancer]
+=== 2. Set up the Load Balancer
 
-You will also need to set up a load balancer to direct traffic to the Rancher replica on both nodes. That will prevent an outage of any single node from taking down communications to the Rancher management server.
+Set up a load balancer to distribute traffic to the Rancher replicas across all three nodes. This prevents a single node outage from interrupting access to the Rancher management server.
 
-When Kubernetes gets set up in a later step, the RKE tool will deploy an NGINX Ingress controller. This controller will listen on ports 80 and 443 of the worker nodes, answering traffic destined for specific hostnames.
+During cluster setup, RKE2 deploys an NGINX Ingress controller that listens on ports 80 and 443 of the worker nodes for incoming host-based traffic.
 
-When Rancher is installed (also in a later step), the Rancher system creates an Ingress resource. That Ingress tells the NGINX Ingress controller to listen for traffic destined for the Rancher hostname. The NGINX Ingress controller, when receiving traffic destined for the Rancher hostname, will forward that traffic to the running Rancher pods in the cluster.
+When you install Rancher, the installer creates an Ingress resource instructing the NGINX Ingress controller to route requests for the Rancher hostname directly to the Rancher pods in the cluster.
 
-For your implementation, consider if you want or need to use a Layer-4 or Layer-7 load balancer:
+Determine whether to use a Layer 4 or Layer 7 load balancer for your deployment:
 
-- **A layer-4 load balancer** is the simpler of the two choices, in which you are forwarding TCP traffic to your nodes. We recommend configuring your load balancer as a Layer 4 balancer, forwarding traffic to ports TCP/80 and TCP/443 to the Rancher management cluster nodes. The Ingress controller on the cluster will redirect HTTP traffic to HTTPS and terminate SSL/TLS on port TCP/443. The Ingress controller will forward traffic to port TCP/80 to the Ingress pod in the Rancher deployment.
-- **A layer-7 load balancer** is a bit more complicated but can offer features that you may want. For instance, a layer-7 load balancer is capable of handling TLS termination at the load balancer, as opposed to Rancher doing TLS termination itself. This can be beneficial if you want to centralize your TLS termination in your infrastructure. Layer-7 load balancing also offers the capability for your load balancer to make decisions based on HTTP attributes such as cookies, etc. that a layer-4 load balancer is not able to concern itself with. If you decide to terminate the SSL/TLS traffic on a layer-7 load balancer, you will need to use the `--set tls=external` option when installing Rancher in a later step. For more information, refer to the {xref-helm-chart-options}#_external_tls_termination[Rancher Helm chart options].
+* **Layer 4 load balancer:** Forwards raw TCP traffic to your nodes. Layer 4 load balancing is recommended. Configure the load balancer to forward traffic to ports TCP/80 and TCP/443 on the Rancher management cluster nodes. The cluster Ingress controller redirects HTTP traffic to HTTPS, terminates TLS on port TCP/443, and forwards HTTP traffic on port TCP/80 to the Rancher Ingress pod.
+* **Layer 7 load balancer:** Provides advanced routing features, such as centralizing TLS termination at the load balancer or making routing decisions based on HTTP attributes. If terminating TLS at a Layer 7 load balancer, use the `--set tls=external` option during Rancher installation. For details, see {xref-helm-chart-options}#_external_tls_termination[Rancher Helm Chart Options].
 
-For an example showing how to set up an NGINX load balancer, refer to {xref-nginx-load-balancer}[this page].
+For load balancer configuration examples, see:
 
-For a how-to guide for setting up an Amazon ELB Network Load Balancer, refer to {xref-amazon-elb}[this page].
+* {xref-nginx-load-balancer}[NGINX Load Balancer Setup]
+* {xref-amazon-elb}[Amazon ELB Load Balancer Setup]
 
 [CAUTION]
 ====
-Do not use this load balancer (i.e, the `local` cluster Ingress) to load balance applications other than Rancher following installation. Sharing this Ingress with other applications may result in websocket errors to Rancher following Ingress configuration reloads for other apps. We recommend dedicating the `local` cluster to Rancher and no other applications.
+Do not use the `local` cluster load balancer or Ingress for applications other than Rancher. Sharing this Ingress with other workloads can cause WebSocket errors during configuration reloads. Dedicate the `local` cluster exclusively to Rancher.
 ====
 
-[#_rke_3_set_up_the_dns_record]
-[pass]
-<h3><a class="anchor" id="_rke_3_set_up_the_dns_record" href="#_rke_3_set_up_the_dns_record"></a>3. Set up the DNS Record</h3>
+[#_rke2_3_set_up_the_dns_record]
+=== 3. Set up the DNS Record
 
-Once you have set up your load balancer, you will need to create a DNS record to send traffic to this load balancer.
+After setting up the load balancer, create a DNS record to route traffic to it. Depending on your environment, create either an A record pointing to the load balancer IP address or a CNAME record pointing to the load balancer hostname. Ensure that this record matches the exact hostname intended for the Rancher server.
 
-Depending on your environment, this may be an A record pointing to the LB IP, or it may be a CNAME pointing to the load balancer hostname. In either case, make sure this record is the hostname that you intend Rancher to respond on.
+Specify this hostname during Rancher installation. This hostname cannot be changed after installation.
 
-You will need to specify this hostname in a later step when you install Rancher, and it is not possible to change it later. Make sure that your decision is a final one.
+For instructions on routing domain traffic to an Amazon ELB load balancer, see the https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[AWS Route 53 Documentation].
 
-For a how-to guide for setting up a DNS record to route domain traffic to an Amazon ELB load balancer, refer to the https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-to-elb-load-balancer[official AWS documentation].
+[#_rke2_4_set_up_a_private_image_registry]
+=== 4. Set up a Private Image Registry
 
-[#_rke_4_set_up_a_private_image_registry]
-[pass]
-<h3><a class="anchor" id="_rke_4_set_up_a_private_image_registry" href="#_rke_4_set_up_a_private_image_registry"></a>4. Set up a Private Image Registry</h3>
+Rancher supports air-gapped installations using a private registry. Ensure that you have a private registry or an alternative mechanism to distribute container images to your nodes.
 
-Rancher supports air gap installs using a secure private registry. You must have your own private registry or other means of distributing container images to your machines.
+During RKE2 cluster setup, create a https://docs.rke2.io/install/containerd_registry_configuration[private registry configuration file] containing your registry details.
 
-In a later step, when you set up your RKE Kubernetes cluster, you will create a https://rke.docs.rancher.com/config-options/private-registries[private registries configuration file] with details from this registry.
+To deploy a new private registry, see the documentation for your container runtime:
 
-If you need to create a private registry, refer to the documentation pages for your respective runtime:
-
-* https://github.com/containerd/containerd/blob/main/docs/cri/config.md#registry-configuration[Containerd]
-** https://github.com/containerd/nerdctl/blob/main/docs/registry.md[Nerdctl commands and managed registry services] 
-* https://docs.docker.com/registry/deploying/[Docker]
+* https://github.com/containerd/containerd/blob/main/docs/cri/config.md#registry-configuration[Containerd CRI Registry Configuration]
+** https://github.com/containerd/nerdctl/blob/main/docs/registry.md[nerdctl Registry Documentation]
+* https://docs.docker.com/registry/deploying/[Docker Registry Deployment Guide]
 --
 ======
