@@ -1,0 +1,89 @@
+= 架构建议
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-22
+:page-revdate: {revdate}
+:community-path: reference-guides/rancher-manager-architecture/architecture-recommendations.adoc 
+:product-path: about-rancher/architecture/recommendations.adoc
+ifeval::["{build-type}" != "community"]
+:xref-user-api-keys: rancher-admin/users/settings/api-keys.adoc
+:xref-arch-com-ds-cluster: xref:about-rancher/architecture/communicating-with-downstream-clusters.adoc
+:xref-access-cluster-kubectl: xref:cluster-admin/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-cluster-deployment: xref:cluster-deployment/cluster-deployment.adoc
+:xref-register-clusters: xref:cluster-deployment/register-existing-clusters.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-user-api-keys: xref:reference-guides/user-settings/api-keys.adoc
+:xref-arch-com-ds-cluster: xref:reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters.adoc
+:xref-access-cluster-kubectl: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/use-kubectl-and-kubeconfig.adoc
+:xref-cluster-deployment: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/index.adoc
+:xref-register-clusters: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc
+endif::[]
+
+如果您在单节点上安装Rancher，适用于您安装的主要架构建议是运行Rancher的节点应该与下游集群<<_separation_of_rancher_and_user_clusters,分开。>>
+
+[#_separation_of_rancher_and_user_clusters]
+== Rancher与用户集群的分离
+
+用户集群是一个下游Kubernetes集群，运行您的应用程序和服务。
+
+如果您有Rancher的Docker安装，运行Rancher服务器的节点应该与您的下游集群分开。
+
+如果Rancher旨在管理下游Kubernetes集群，则运行Rancher服务器的Kubernetes集群也应该与下游用户集群分开。
+
+image::rancher-architecture-separation-of-rancher-server.svg[Rancher服务器与用户集群的分离]
+
+[#_why_ha_is_better_for_rancher_in_production]
+== 为什么高可用性对生产中的Rancher更好
+
+我们建议在高可用性Kubernetes集群上安装Rancher服务器，主要是因为它保护Rancher服务器的数据。在高可用性安装中，负载均衡器作为客户端的单一接触点，分配网络流量到集群中的多个服务器，并帮助防止任何一台服务器成为故障点。
+
+我们不建议在单个Docker容器中安装Rancher，因为如果节点出现故障，其他节点上没有可用的集群数据副本，您可能会丢失Rancher服务器上的数据。
+
+[#__k3s_product_name_kubernetes_cluster_installations]
+=== {k3s-product-name} Kubernetes集群安装
+
+底层Kubernetes集群的一个选项是使用K3s Kubernetes。K3s是Rancher的CNCF认证Kubernetes发行版。它易于安装，使用的内存仅为Kubernetes的一半，所有内容都在小于100 MB的二进制文件中。K3s的另一个优点是，它允许外部数据存储保存集群数据，从而使K3s服务器节点可以被视为临时节点。
+
+.运行Rancher管理服务器的K3s Kubernetes集群的架构
+image::k3s-server-storage.svg[运行Rancher管理服务器的K3s Kubernetes集群的架构]
+
+[#_recommended_load_balancer_configuration_for_kubernetes_installations]
+== Kubernetes安装的推荐负载均衡器配置
+
+我们建议以下负载均衡器和Ingress控制器的配置：
+
+* Rancher的DNS应该解析到一个4层负载均衡器（TCP）。
+* 负载均衡器应该将 TCP/80 和 TCP/443 端口转发到 Kubernetes 集群中的所有 3 个节点。
+* Ingress 控制器将 HTTP 重定向到 HTTPS，并在 TCP/443 端口终止 SSL/TLS。
+* Ingress 控制器将流量转发到 Rancher 部署中的 pod 的 TCP/80 端口。
+
+.在Kubernetes集群上安装Rancher，并配合4层负载均衡器，展示了在Ingress控制器处进行SSL终止。
+image::ha/rancher2ha.svg[Rancher HA]
+
+[#_environment_for_kubernetes_installations]
+== Kubernetes安装环境
+
+强烈建议在托管基础设施上（如亚马逊EC2或谷歌云计算引擎）上的Kubernetes集群中安装Rancher。
+
+为了获得最佳性能和更高的安全性，我们建议为Rancher管理服务器使用专用的Kubernetes集群。不建议在此集群上运行用户工作负载。部署 Rancher 后，您可以 {xref-cluster-deployment}[创建或导入集群] 来运行您的工作负载。
+
+[#_recommended_node_roles_for_kubernetes_installations]
+== Kubernetes 安装的推荐节点角色
+
+以下建议适用于在 K3s Kubernetes 集群上安装 Rancher 的情况。
+
+[#__k3s_product_name_cluster_roles]
+=== {k3s-product-name} 集群角色
+
+在 K3s 集群中，有两种类型的节点：服务器节点和代理节点。服务器和代理都可以调度工作负载。服务器节点运行 Kubernetes 主控。
+
+对于运行 Rancher 管理服务器的集群，我们建议使用两个服务器节点。不需要代理节点。
+
+[#_architecture_for_an_authorized_cluster_endpoint_ace]
+== 授权集群端点 (ACE) 的架构
+
+如果您使用 {xref-arch-com-ds-cluster}#_4_authorized_cluster_endpoint[授权集群端点 (ACE)，] 我们建议创建一个指向负载均衡器的 FQDN，该负载均衡器在我们的节点之间平衡流量，并具有 `controlplane` 角色。
+
+如果您在负载均衡器上使用私有 CA 签名证书，您必须提供 CA 证书，该证书将包含在生成的 kubeconfig 文件中以验证证书链。有关更多信息，请参见 {xref-access-cluster-kubectl}[kubeconfig 文件] 和 {xref-user-api-keys}#_creating_an_api_key[API 密钥] 的文档。
+
+已注册的 RKE2 和 K3s 集群可获得 ACE 支持。要查看在下游集群上执行的手动步骤以启用 ACE，请点击 {xref-register-clusters}#_authorized_cluster_endpoint_support_for_rke2_and_k3s_clusters[此处]。

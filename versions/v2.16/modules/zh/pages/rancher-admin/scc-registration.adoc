@@ -1,0 +1,200 @@
+= SUSE Customer Center 注册
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+
+自 Rancher v2.12.1 起，SUSE Rancher Prime 客户，现在可以使用 https://scc.suse.com/home[SUSE Customer Center (SCC)] 注册 Rancher Manager。此注册帮助您跟踪您组织的订阅和已部署的 Rancher Manager 实例的使用情况。
+
+[#_prerequisites]
+== 先决条件
+
+* 将您的 Rancher Manager 实例注册到 SCC 需要一个 SUSE 账户。如果您还没有 SUSE 账户， https://www.suse.com/account/create/[请创建一个]。
+* 您必须能够访问您的组织。请向您组织的管理员请求将您添加到账户中。有关详细信息，请参见 https://scc.suse.com/docs/userguide#UG-Requesting-Access-to-an-Organizations-Account[SCC 文档] 和 https://scc.suse.com/docs/help#how-to-add-user[SCC 常见问题解答]。如果您知道您组织的注册代码，请在提示时输入。
+
+[#_register_with_suse_customer_center]
+== 向 SUSE Customer Center 注册
+
+在 Rancher UI 中，转到 *全局设置* > *注册*。您还可以检查右上角的通知中心（铃铛图标），查看 "Rancher Prime 注册" 通知，并点击 *立即注册*。这将您重定向到 *注册* 页面，位于 *全局设置* 下。
+
+您可以选择通过 SCC <<#_online_registration,在线>> 或 <<#_offline_registration,离线>> 注册您的 Rancher Manager 实例。
+
+[#_online_registration]
+=== 在线注册
+
+您可以通过 Rancher UI 或使用 Helm 在线注册。
+
+[#_obtain_registration_code]
+==== 获取注册代码
+
+在继续之前，您必须在 SCC 上获取您的 Rancher Manager 订阅的注册代码。要获取注册代码：
+
+. 登录到 SCC。
+. 导航到 **我的组织** 并点击拥有您 Rancher Manager 订阅的组织。
+. 在 *组织* > *订阅* > *订阅信息* 下找到您的注册代码。
+
+[#_rancher_ui]
+==== Rancher UI
+
+. 在 Rancher UI 中，将注册代码复制到 *注册代码* 字段，然后点击 *注册*。如果成功，*状态* 将变为 *激活*，并显示 *产品名称*、*到期日期* 和 *注册模式*。
++
+image::online-scc-registration.png[使用在线方式注册 SCC]
+
+[#_helm]
+==== Helm
+
+在您从 SCC 获得注册代码后，可以通过 Helm 注册您的 Rancher Manager 实例。
+
+[#_entrypoint_secret]
+===== 入口点密钥
+
+为了在生产或 GitOps 环境中遵循安全最佳实践，请避免以明文存储注册代码。相反，在安装之前手动创建一个入口点密钥，以便 SCC 操作员能够自动检测和使用注册数据。
+
+. 创建 SCC 系统名称空间。SCC 操作员期望注册数据位于 `cattle-scc-system` 名称空间中。
++
+[,shell]
+----
+kubectl create namespace cattle-scc-system
+----
+
+. 创建一个名为 `scc-registration` 的密钥，包含您的注册代码。此密钥可以通过外部密钥管理器进行管理，以保持其在 Git 中加密。
++
+[,shell]
+----
+kubectl create secret generic scc-registration \
+  --namespace cattle-scc-system \
+  --from-literal=regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+. 在您的 `values.yaml` 中启用注册，但将 `regCode` 字段留空。当 `registration.enabled` 为 `true` 且在值中未提供代码时，操作员会在 `cattle-scc-system` 名称空间中查找现有的 `scc-registration` 密钥。
++
+[,yaml]
+----
+registration:
+  enabled: true
+  regCode: ""
+----
+
+. 使用您更新的 `values.yaml` 部署 Rancher：
++
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --values values.yaml
+----
+
+. 要验证使用手动创建的密钥是否成功注册，请检查 SCC-Operator 的日志或在 Rancher UI 中查看 *全局设置* > *注册* 的状态。
+
+[#_helm_parameters]
+===== Helm 参数 
+
+对于测试或非生产环境，您可以在 Helm 安装命令中直接传递注册代码：
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher \
+  --namespace cattle-system \
+  --set registration.enabled=true \
+  --set registration.regCode=<REGISTRATION-CODE-FROM-SCC>
+----
+
+或者，您可以更新 `values.yaml` 以启用注册并添加您的注册代码。
+
+[,yaml]
+----
+registration:
+  enabled: true
+  regCode: "<REGISTRATION-CODE>"
+----
+
+然后，使用更新的值文件部署 Rancher：
+
+[,shell]
+----
+helm install rancher rancher-prime/rancher 
+  --namespace cattle-system 
+  --values values.yaml
+----
+
+[#_offline_registration]
+=== 离线注册
+
+如果您在隔离的环境中使用 Rancher，可以通过 Rancher UI 或 Helm 进行离线注册。
+
+[#_rancher_ui_1]
+==== Rancher UI
+
+[IMPORTANT]
+====
+SCC组织管理员必须获取您的注册证书，因为普通用户无法访问。
+====
+
+. 在Rancher UI中，点击*下载注册请求*以下载注册请求文件。
+. 点击*访问SCC*以使用SCC离线注册工具并获取注册证书。
+.. 上传注册请求文件。
+.. 选择您的*组织*和*订阅*。
+.. 点击*下载离线证书*并保存注册证书文件。
+. 返回 Rancher UI，点击 *上传证书并注册*，以上传注册证书。如果成功，*状态*变为*激活*，并显示*产品名称*、*到期日期*和*注册模式*。
++
+image::offline-scc-registration.png[使用离线方法注册 SCC]
+
+[#_helm_1]
+==== Helm
+
+. 在`values.yaml`中，启用注册，注释掉`regCode`并将`mode`设置为`offline`。
++
+[,yaml]
+----
+registration:
+  enabled: true
+  # regCode: ""
+  mode: offline
+----
+
+. 运行 Helm 安装命令 `helm install rancher rancher-prime/rancher`，并验证安装是否成功。
+. 在继续之前，使用以下Bash命令检查SCC-Operator是否已在`cattle-scc-system`名称空间中成功创建了一个密钥。密钥创建后，它输出 `Secret created!`。
++
+[,bash]
+----
+for i in {1..100}; do kubectl wait --for=create secret/scc-registration -n cattle-scc-system --timeout=3s &> /dev/null && echo "Secret created!" && break || { echo "Not ready yet..."; sleep 3; }; done
+----
+
+. 使用`kubectl`，检索注册请求文件并将其保存在本地。
++
+[,bash]
+----
+kubectl get secrets -n  cattle-scc-system \
+-l scc.cattle.io/secret-role=offline-request,scc.cattle.io/scc-hash=$(kubectl get secrets \
+-n cattle-scc-system scc-registration -o yaml|yq '.metadata.labels["scc.cattle.io/scc-hash"]') \
+-o yaml | yq '.items[0].data.request' > offline.base64
+----
++
+. 点击*访问SCC*以使用SCC离线注册工具。
+.. 上传注册请求文件。
+.. 选择您的*组织*和*订阅*。
+.. 点击*下载离线证书*并保存注册证书文件。
+. 使用`kubectl`或Helm将注册证书文件上传到您的Rancher Manager实例。
+
+* *`kubectl`:*
++
+[,bash]
+----
+kubectl patch secret -n cattle-scc-system scc-registration  \
+--type='merge' -p "{\"data\": {\"certificate\": \"$(cat <your Offline Cert file> )\"}}"
+----
+* *Helm:*
++
+使用 `certificate` 值字段添加您的注册证书，然后 `helm upgrade` Rancher。
++
+[,yaml]
+----
+certificate: {}
+----
+
+[#_deregister_from_suse_customer_center]
+== 从 SUSE 客户中心注销。
+
+如果您需要去除或更新注册，可以从 SCC 注销您的 Rancher Manager 实例。
+
+. 前往 *全局设置* > *注册*。
+. 在 *在线注册* 或 *离线注册* 下找到您的产品注册并点击 *注销*。
