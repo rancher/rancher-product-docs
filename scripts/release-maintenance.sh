@@ -182,13 +182,18 @@ update_release_notes_block() {
     old_version=$(echo "$current_block" | awk 'NF' | head -n 1 | cut -d '|' -f 2 | tr -d ' ')
 
     if [[ -n "$old_version" ]]; then
-      # When moving a version to "Past", update its support matrix link from "N/A" to a URL.
-      local url_version_part="rancher-$(echo "$old_version" | tr '.' '-')"
-      local support_matrix_url="https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/${url_version_part}/"
-      local support_matrix_cell="| ${support_matrix_url}[View]"
-      # Replace the "| N/A" line for the support matrix with the generated URL.
-      # awk 'NF' to remove empty lines before processing with sed
-      past_block=$(echo "$current_block" | awk 'NF' | sed "0,/^| N\/A\$/s#^| N/A\$#${support_matrix_cell}#")
+      if [[ "$old_version" == *.0 ]]; then
+        # Skip updating the support matrix link if the old version is a x.y.0 release.
+        past_block=$(echo "$current_block" | awk 'NF')
+      else
+        # When moving a version to "Past", update its support matrix link from "N/A" to a URL.
+        local url_version_part="rancher-$(echo "$old_version" | tr '.' '-')"
+        local support_matrix_url="https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/${url_version_part}/"
+        local support_matrix_cell="| ${support_matrix_url}[View]"
+        # Replace the "| N/A" line for the support matrix with the generated URL.
+        # awk 'NF' to remove empty lines before processing with sed
+        past_block=$(echo "$current_block" | awk 'NF' | sed "0,/^| N\/A\$/s#^| N/A\$#${support_matrix_cell}#")
+      fi
     else
       # Fallback if the old version couldn't be parsed, but still remove empty lines.
       past_block=$(echo "$current_block" | awk 'NF')
