@@ -301,11 +301,21 @@ update_antora_attr() {
   local value="$3"
   echo "-> Updating $attr in $file"
   local ex_cmd
-  ex_cmd=$(cat <<EOF
+  if grep -q "^\s*${attr}:" "$file"; then
+    ex_cmd=$(cat <<EOF
 %s/^\(\s*\)${attr}: .*/\1${attr}: ${value}/
 x
 EOF
 )
+  else
+    ex_cmd=$(cat <<EOF
+/^\s*attributes:/a
+    ${attr}: ${value}
+.
+x
+EOF
+)
+  fi
   run_cmd "$file" "$ex_cmd"
 }
 
@@ -409,6 +419,7 @@ main() {
   # Define file paths
   local antora_file_versions="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/antora.yml"
   local antora_file_community="${DOCS_REPO_PATH}/community-docs/${minor_version_with_v}/antora.yml"
+  local antora_file_community_latest="${DOCS_REPO_PATH}/community-docs/latest/antora.yml"
   local antora_file_srfa="${DOCS_REPO_PATH}/versions/${minor_version_with_v}/antora-yml/antora-srfa.yml"
 
   # Define path to the modules directory where locales are stored
@@ -494,6 +505,45 @@ main() {
     fi
     if [[ -f "$antora_file_srfa" ]]; then
       update_antora_attr "$antora_file_srfa" "current-patch-version" "$current_patch_version"
+    fi
+  fi
+
+  # Update page-target-edit-version in community-docs/${minor_version_with_v}/antora.yml
+  if [[ -f "$antora_file_community" ]]; then
+    update_antora_attr "$antora_file_community" "page-target-edit-version" "\"${minor_version_with_v}\""
+  fi
+
+  # Determine latest non-prerelease minor version under community-docs/ and update community-docs/latest/antora.yml
+  local comm_dirs=()
+  for dir in "${DOCS_REPO_PATH}/community-docs"/v[0-9]*.[0-9]*; do
+    if [[ -d "$dir" ]]; then
+      comm_dirs+=("$(basename "$dir")")
+    fi
+  done
+
+  if [[ ${#comm_dirs[@]} -gt 0 ]]; then
+    local sorted_dirs
+    sorted_dirs=$(printf '%s\n' "${comm_dirs[@]}" | sort -V -r)
+    local latest_community_minor=""
+    for v in $sorted_dirs; do
+      local antora_f="${DOCS_REPO_PATH}/community-docs/${v}/antora.yml"
+      if [[ -f "$antora_f" ]]; then
+        # Check if version is pre-release: (Unreleased)
+        if ! grep -q "^prerelease:\s*(Unreleased)" "$antora_f"; then
+          latest_community_minor="$v"
+          break
+        fi
+      fi
+    done
+
+    if [[ -n "$latest_community_minor" ]] && [[ -f "$antora_file_community_latest" ]]; then
+      update_antora_attr "$antora_file_community_latest" "page-target-edit-version" "\"${latest_community_minor}\""
+
+      local latest_patch_ver
+      latest_patch_ver=$(awk '/^\s*current-patch-version:/ {print $2}' "${DOCS_REPO_PATH}/community-docs/${latest_community_minor}/antora.yml" | tr -d '[:space:]')
+      if [[ -n "$latest_patch_ver" ]]; then
+        update_antora_attr "$antora_file_community_latest" "current-patch-version" "$latest_patch_ver"
+      fi
     fi
   fi
 
