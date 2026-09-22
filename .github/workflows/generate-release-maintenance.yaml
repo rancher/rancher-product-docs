@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'The release version (e.g., v2.14.1)'
-        required: true
+        description: 'The release version (e.g., v2.14.1). If left blank, current branch or tag is used'
+        required: false
+        default: ''
       release_date:
         description: 'The release date (e.g., 2026-05-27)'
         required: true
@@ -38,10 +39,33 @@ jobs:
       TAG: ${{ inputs.release_tag }}
       VERSION: ${{ inputs.version }}
     steps:
-      - name: Determine base branch
+      - name: Determine version and base branch
         run: |
+          # Determine VERSION
+          if [[ -z "$VERSION" ]]; then
+            if [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              VERSION="${{ github.ref_name }}"
+              echo "Used version from branch name: $VERSION"
+            elif [[ -n "$TAG" ]]; then
+              VERSION="${TAG%%-*}"
+              echo "Used version from release tag: $VERSION"
+            fi
+          fi
+
+          if [[ -z "$VERSION" ]]; then
+            echo "Error: Version could not be determined. Please provide the 'version' input or run from a release branch (vX.Y.Z)." >&2
+            exit 1
+          fi
+
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          # Determine BASE_BRANCH
           if git ls-remote https://github.com/rancher/rancher-product-docs "$VERSION" | grep -q "$VERSION"; then
             echo "BASE_BRANCH=$VERSION" >> $GITHUB_ENV
+          elif [[ "${{ github.ref_name }}" != "HEAD" ]] && git ls-remote https://github.com/rancher/rancher-product-docs "${{ github.ref_name }}" | grep -q "${{ github.ref_name }}"; then
+            echo "BASE_BRANCH=${{ github.ref_name }}" >> $GITHUB_ENV
+          else
+            echo "BASE_BRANCH=main" >> $GITHUB_ENV
           fi
 
       - name: Checkout code
