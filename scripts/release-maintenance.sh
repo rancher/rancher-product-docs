@@ -3,9 +3,6 @@
 # A script to automate release maintenance for Rancher docs.
 #
 # This script updates multiple AsciiDoc files with new version information.
-# It supports two modes:
-#   1. Interactive: Prompts the user for all necessary information.
-#   2. Non-interactive: Takes all information as command-line arguments.
 
 set -o errexit
 set -o nounset
@@ -19,7 +16,6 @@ DOCS_REPO_PATH=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pw
 DOCS_REPO_PATH=${DOCS_REPO_PATH%/scripts}
 
 # --- Global Variables ---
-INTERACTIVE=false
 VERSION=""
 TAG_VERSION=""
 RELEASE_DATE=""
@@ -39,57 +35,31 @@ Usage: $(basename "$0") [OPTIONS]
 
 This script automates the process of release maintenance for Rancher docs.
 
-Modes of Operation:
-  Interactive (default):
-    Run the script without any arguments to be prompted for all required values.
-    $ ./scripts/$(basename "$0")
+Examples:
+  Provide a version to automatically fetch component versions from the release branch:
+    $ ./scripts/$(basename "$0") -v v2.14.1 -d "2026-05-27"
 
-  Non-interactive:
-    Provide a git tag to derive the version and fetch component versions automatically.
-    $ ./scripts/$(basename "$0") -t v2.13.2-alpha3 -d "2026-05-27"
+  Or, provide a git tag to derive the version and fetch component versions from the tag:
+    $ ./scripts/$(basename "$0") -t v2.14.1-rc1 -d "2026-05-27"
 
-    Or, provide the version and component versions manually:
-    $ ./scripts/$(basename "$0") -v v2.13.2 -d "2026-05-27" -a v107.0.1+up8.0.0 -w v0.9.2 -T 108.0.4+up0.25.4-rc.1 -F 108.0.2+up0.14.2
+  Or, provide the version and component versions manually:
+    $ ./scripts/$(basename "$0") -v v2.14.1 -d "2026-05-27" -a v107.0.1+up8.0.0 -w v0.9.2 -T 108.0.4+up0.25.4-rc.1 -F 108.0.2+up0.14.2
 
 Options:
-  -v <version>          The new Rancher version (e.g., v2.13.2). (Required if -t is not used)
+  -v <version>          The new Rancher version (e.g., v2.14.1). (Required if -t is not used)
   -d <date>             The release date (e.g., "2026-05-27"). (Required)
-  -t <tag>              A git tag from rancher/rancher repository (e.g., v2.13.1-alpha4).
-                        If used, the version is derived from the tag, and -a and -w are fetched from GitHub.
-  -a <adapter_version>  The corresponding CSP adapter version. (Required if -t is not used)
-  -w <webhook_version>  The corresponding webhook version. (Required if -t is not used)
-  -T <turtles_version>  The corresponding Turtles version. (Required if -t is not used)
-  -F <fleet_version>    The corresponding Fleet version. (Required if -t is not used)
+  -t <tag>              A git tag from rancher/rancher repository (e.g., v2.14.1-rc1).
+                        If used, the version is derived from the tag, and component versions are fetched from GitHub.
+  -a <adapter_version>  The corresponding CSP adapter version. (Required for manual mode)
+  -w <webhook_version>  The corresponding webhook version. (Required for manual mode)
+  -T <turtles_version>  The corresponding Turtles version. (Required for manual mode)
+  -F <fleet_version>    The corresponding Fleet version. (Required for manual mode)
 
   --prime [y/n]         Is this version available in Prime? (Default: y)
   --community [y/n]     Is this version available in Community? (Default: y)
   -h, --help            Display this help message and exit.
 EOF
-  exit 1
-}
-
-# Prompt user for inputs in interactive mode.
-get_inputs_interactive() {
-  echo "Running in interactive mode. Please provide the release details."
-  read -rp "Enter a git tag (e.g., v2.13.1-alpha4), or leave blank to enter version manually: " TAG_VERSION
-  read -rp "Enter the release date (e.g., 2026-05-27): " RELEASE_DATE
-
-  if [[ -n "$TAG_VERSION" ]]; then
-    VERSION=${TAG_VERSION%%-*}
-    echo "  -> Derived version: ${VERSION}"
-  else
-    read -rp "Enter the new Rancher version (e.g., v2.13.2): " VERSION
-    read -rp "Enter the CSP adapter version: " ADAPTER_VERSION
-    read -rp "Enter the webhook version: " WEBHOOK_VERSION
-    read -rp "Enter the Turtles version: " TURTLES_VERSION
-    read -rp "Enter the Fleet version: " FLEET_VERSION
-  fi
-
-  read -rp "Is this version available in Prime? [Y/n]: " NEW_CURRENT_PRIME_AVAIL
-  NEW_CURRENT_PRIME_AVAIL=${NEW_CURRENT_PRIME_AVAIL:-y}
-  read -rp "Is this version available in Community? [Y/n]: " NEW_CURRENT_COMMUNITY_AVAIL
-  NEW_CURRENT_COMMUNITY_AVAIL=${NEW_CURRENT_COMMUNITY_AVAIL:-y}
-  echo
+  exit "${1:-1}"
 }
 
 # Parse command-line arguments.
@@ -105,30 +75,71 @@ parse_args() {
       -F) FLEET_VERSION="$2"; shift 2 ;;
       --prime) NEW_CURRENT_PRIME_AVAIL="$2"; shift 2 ;;
       --community) NEW_CURRENT_COMMUNITY_AVAIL="$2"; shift 2 ;;
-      -h|--help) usage ;;
-      *) echo "Unknown option: $1"; usage ;;
+      -h|--help) usage 0 ;;
+      *) echo "Unknown option: $1"; usage 1 ;;
     esac
   done
 }
 
-# Validate that all required inputs have been provided and are in the correct format.
+# Validate that required inputs have been provided and are in the correct format.
 validate_inputs() {
   local valid=true
   if [[ -z "$VERSION" ]]; then echo "Error: Version is required. Use -v or -t."; valid=false; fi
   if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "Error: Version format must be vX.Y.Z."; valid=false; fi
   if [[ -z "$RELEASE_DATE" ]]; then echo "Error: Release date is required."; valid=false; fi
   if ! date -d "$RELEASE_DATE" >/dev/null 2>&1; then echo "Error: Invalid date format for '$RELEASE_DATE'."; valid=false; fi
-  
-  if [[ -z "$TAG_VERSION" ]]; then
-    if [[ -z "$ADAPTER_VERSION" ]]; then echo "Error: Adapter version is required when not using -t."; valid=false; fi
-    if [[ -z "$WEBHOOK_VERSION" ]]; then echo "Error: Webhook version is required when not using -t."; valid=false; fi
-    if [[ -z "$TURTLES_VERSION" ]]; then echo "Error: Turtles version is required when not using -t."; valid=false; fi
-    if [[ -z "$FLEET_VERSION" ]]; then echo "Error: Fleet version is required when not using -t."; valid=false; fi
-  fi
 
   if ! "$valid"; then
     echo
-    usage
+    usage 1
+  fi
+}
+
+# Validate that all component versions are provided in manual mode.
+validate_manual_inputs() {
+  local valid=true
+  if [[ -z "$ADAPTER_VERSION" ]]; then echo "Error: Adapter version is required when not fetching from GitHub."; valid=false; fi
+  if [[ -z "$WEBHOOK_VERSION" ]]; then echo "Error: Webhook version is required when not fetching from GitHub."; valid=false; fi
+  if [[ -z "$TURTLES_VERSION" ]]; then echo "Error: Turtles version is required when not fetching from GitHub."; valid=false; fi
+  if [[ -z "$FLEET_VERSION" ]]; then echo "Error: Fleet version is required when not fetching from GitHub."; valid=false; fi
+
+  if ! "$valid"; then
+    echo
+    usage 1
+  fi
+}
+
+# Fetch and parse build.yaml from GitHub.
+fetch_build_yaml() {
+  local build_yaml_url="$1"
+  local source_desc="$2"
+
+  echo "-> Fetching versions from GitHub ${source_desc}..."
+  local build_yaml_content
+  # Use curl to fetch the content. -sS for silent with errors, -f for fail-fast, -L to follow redirects.
+  build_yaml_content=$(curl -sSfL "$build_yaml_url")
+  if [[ $? -ne 0 ]] || [[ -z "$build_yaml_content" ]]; then
+      echo "Error: Failed to fetch or empty content from $build_yaml_url" >&2
+      exit 1
+  fi
+
+  # Parse YAML content using grep and awk. This is simple and avoids extra dependencies.
+  WEBHOOK_VERSION=$(echo "$build_yaml_content" | awk '/^webhookVersion:/ {print $2}')
+  ADAPTER_VERSION=$(echo "$build_yaml_content" | awk '/^cspAdapterMinVersion:/ {print $2}')
+  TURTLES_VERSION=$(echo "$build_yaml_content" | awk '/^turtlesVersion:/ {print $2}')
+  FLEET_VERSION=$(echo "$build_yaml_content" | awk '/^fleetVersion:/ {print $2}')
+
+  if [[ -z "$WEBHOOK_VERSION" ]] || [[ -z "$ADAPTER_VERSION" ]]; then
+      echo "Error: Could not parse webhookVersion or cspAdapterMinVersion from build.yaml" >&2
+      exit 1
+  fi
+  echo "  - Found Webhook Version: ${WEBHOOK_VERSION}"
+  echo "  - Found Adapter Version: ${ADAPTER_VERSION}"
+  if [[ -n "$TURTLES_VERSION" ]]; then
+    echo "  - Found Turtles Version: ${TURTLES_VERSION}"
+  fi
+  if [[ -n "$FLEET_VERSION" ]]; then
+    echo "  - Found Fleet Version: ${FLEET_VERSION}"
   fi
 }
 
@@ -301,15 +312,15 @@ EOF
 # --- Main Logic ---
 main() {
   if [[ $# -eq 0 ]]; then
-    INTERACTIVE=true
-    get_inputs_interactive
-  else
-    parse_args "$@"
-    # If a tag is provided without an explicit version, derive the version from the tag.
-    if [[ -n "$TAG_VERSION" ]] && [[ -z "$VERSION" ]]; then
-      VERSION=${TAG_VERSION%%-*}
-      echo "-> Derived version from tag: ${VERSION}"
-    fi
+    usage 1
+  fi
+
+  parse_args "$@"
+
+  # If a tag is provided without an explicit version, derive the version from the tag.
+  if [[ -n "$TAG_VERSION" ]] && [[ -z "$VERSION" ]]; then
+    VERSION=${TAG_VERSION%%-*}
+    echo "-> Derived version from tag: ${VERSION}"
   fi
 
   # Sync webhook availability with new version availability. This simplifies input
@@ -319,38 +330,6 @@ main() {
 
   validate_inputs
 
-  # If a tag is provided, fetch versions from GitHub.
-  if [[ -n "$TAG_VERSION" ]]; then
-    echo "-> Fetching versions from GitHub tag: ${TAG_VERSION}..."
-    local build_yaml_url="https://raw.githubusercontent.com/rancher/rancher/refs/tags/${TAG_VERSION}/build.yaml"
-    local build_yaml_content
-    # Use curl to fetch the content. -sS for silent with errors, -f for fail-fast, -L to follow redirects.
-    build_yaml_content=$(curl -sSfL "$build_yaml_url")
-    if [[ $? -ne 0 ]] || [[ -z "$build_yaml_content" ]]; then
-        echo "Error: Failed to fetch or empty content from $build_yaml_url" >&2
-        exit 1
-    fi
-
-    # Parse YAML content using grep and awk. This is simple and avoids extra dependencies.
-    WEBHOOK_VERSION=$(echo "$build_yaml_content" | awk '/^webhookVersion:/ {print $2}')
-    ADAPTER_VERSION=$(echo "$build_yaml_content" | awk '/^cspAdapterMinVersion:/ {print $2}')
-    TURTLES_VERSION=$(echo "$build_yaml_content" | awk '/^turtlesVersion:/ {print $2}')
-    FLEET_VERSION=$(echo "$build_yaml_content" | awk '/^fleetVersion:/ {print $2}')
-
-    if [[ -z "$WEBHOOK_VERSION" ]] || [[ -z "$ADAPTER_VERSION" ]]; then
-        echo "Error: Could not parse webhookVersion or cspAdapterMinVersion from build.yaml" >&2
-        exit 1
-    fi
-    echo "  - Found Webhook Version: ${WEBHOOK_VERSION}"
-    echo "  - Found Adapter Version: ${ADAPTER_VERSION}"
-    if [[ -n "$TURTLES_VERSION" ]]; then
-      echo "  - Found Turtles Version: ${TURTLES_VERSION}"
-    fi
-    if [[ -n "$FLEET_VERSION" ]]; then
-      echo "  - Found Fleet Version: ${FLEET_VERSION}"
-    fi
-  fi
-
   # Prepare variables
   local iso_date
   iso_date=$(date -d "$RELEASE_DATE" "+%Y-%m-%d")
@@ -358,6 +337,19 @@ main() {
   local minor_version_no_v
   minor_version_no_v=$(echo "$version_no_v" | cut -d. -f1,2)
   local minor_version_with_v="v${minor_version_no_v}"
+
+  # Fetch versions from GitHub tag or release branch, or use manual inputs
+  if [[ -n "$TAG_VERSION" ]]; then
+    local build_yaml_url="https://raw.githubusercontent.com/rancher/rancher/refs/tags/${TAG_VERSION}/build.yaml"
+    fetch_build_yaml "$build_yaml_url" "tag: ${TAG_VERSION}"
+  elif [[ -z "$ADAPTER_VERSION" ]] && [[ -z "$WEBHOOK_VERSION" ]]; then
+    local release_branch="release/${minor_version_with_v}"
+    local build_yaml_url="https://raw.githubusercontent.com/rancher/rancher/refs/heads/${release_branch}/build.yaml"
+    fetch_build_yaml "$build_yaml_url" "release branch: ${release_branch}"
+  else
+    echo "-> Using manually provided component versions..."
+    validate_manual_inputs
+  fi
 
   # Calculate final turtles version
   local final_turtles_version=""
