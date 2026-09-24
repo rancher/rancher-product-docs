@@ -490,6 +490,11 @@ main() {
   fi
 
   local current_patch_version="${VERSION#v}"
+  local existing_community_patch=""
+  if [[ -f "$antora_file_community" ]]; then
+    existing_community_patch=$(awk '/^\s*current-patch-version:/ {print $2}' "$antora_file_community" | tr -d '[:space:]')
+  fi
+
   if [[ "$NEW_CURRENT_PRIME_AVAIL" == "y" && "$NEW_CURRENT_COMMUNITY_AVAIL" == "n" ]]; then
     # Strip 'v' prefix
     if [[ -f "$antora_file_versions" ]]; then
@@ -536,14 +541,27 @@ main() {
       fi
     done
 
-    if [[ -n "$latest_community_minor" ]] && [[ -f "$antora_file_community_latest" ]]; then
-      update_antora_attr "$antora_file_community_latest" "page-target-edit-version" "\"${latest_community_minor}\""
-
-      local latest_patch_ver
-      latest_patch_ver=$(awk '/^\s*current-patch-version:/ {print $2}' "${DOCS_REPO_PATH}/community-docs/${latest_community_minor}/antora.yml" | tr -d '[:space:]')
-      if [[ -n "$latest_patch_ver" ]]; then
-        update_antora_attr "$antora_file_community_latest" "current-patch-version" "$latest_patch_ver"
+    # Only synchronize community-docs/latest/antora.yml when the version:
+    # 1. is available in Community
+    # 2. belongs to the latest non-prerelease minor
+    # 3. is greater than or equal to the existing patch version in that minor stream
+    local is_latest_patch=false
+    if [[ "${NEW_CURRENT_COMMUNITY_AVAIL,,}" == "y" ]] && [[ -n "$latest_community_minor" ]] && [[ "$minor_version_with_v" == "$latest_community_minor" ]]; then
+      if [[ -z "$existing_community_patch" ]]; then
+        is_latest_patch=true
+      else
+        local lowest_patch
+        lowest_patch=$(printf '%s\n%s\n' "$current_patch_version" "$existing_community_patch" | sort -V | head -n1)
+        if [[ "$lowest_patch" == "$existing_community_patch" ]]; then
+          is_latest_patch=true
+        fi
       fi
+    fi
+
+    if "$is_latest_patch" && [[ -f "$antora_file_community_latest" ]]; then
+      echo "-> Synchronizing community-docs/latest to ${latest_community_minor} (${current_patch_version})..."
+      update_antora_attr "$antora_file_community_latest" "page-target-edit-version" "\"${latest_community_minor}\""
+      update_antora_attr "$antora_file_community_latest" "current-patch-version" "$current_patch_version"
     fi
   fi
 
