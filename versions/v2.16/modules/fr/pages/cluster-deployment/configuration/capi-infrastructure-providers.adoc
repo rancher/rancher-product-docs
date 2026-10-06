@@ -1,0 +1,496 @@
+= Configuration de fournisseurs d'infrastructure CAPI natifs pour provisionner des clusters RKE2
+:revdate: 2026-04-03
+:page-revdate: {revdate}
+:community-path: how-to-guides/advanced-user-guides/capi-infrastructure-providers.adoc
+:product-path: cluster-deployment/configuration/capi-infrastructure-providers.adoc 
+ifeval::["{build-type}" != "community"]
+:url-CAPI-docs: https://documentation.suse.com/cloudnative/cluster-api/latest/en/index.html
+:url-CAPIProvider: https://documentation.suse.com/cloudnative/cluster-api/{turtles-docs-version}/en/reference/capiprovider.html
+:xref-enable-experimental-features: xref:rancher-admin/experimental-features/experimental-features.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-CAPI-docs: https://turtles.docs.rancher.com/turtles/stable/en/index.html
+:url-CAPIProvider: https://turtles.docs.rancher.com/turtles/stable/en/reference/capiprovider.html
+:xref-enable-experimental-features: xref:how-to-guides/advanced-user-guides/enable-experimental-features/index.adoc
+endif::[]
+
+[CAUTION]
+====
+**Ceci est une préversion technologique et l'utilisation de fournisseurs d'infrastructure CAPI natifs est une fonctionnalité expérimentale introduite dans Rancher 2.14.** Le but de ce guide est l'évaluation et **ne doit pas** être utilisé sur des clusters de production{nbsp}; notez que certains champs de configuration sont susceptibles de changer. Les futures versions de cette fonctionnalité peuvent être incompatibles avec cette version.
+====
+
+[#_overview]
+== Présentation
+
+Rancher 2.14 peut provisionner des clusters RKE2 en utilisant des fournisseurs d'infrastructure CAPI natifs, tels que https://cluster-api-aws.sigs.k8s.io/[CAPA] (Cluster API Provider AWS) et https://github.com/kubernetes-sigs/cluster-api-provider-vsphere[CAPV] (Cluster API Provider vSphere).
+
+Le provisionnement standard de RKE2 repose sur les fournisseurs internes de démarrage et de plan de contrôle de Rancher, ainsi que sur les pilotes de nœuds Rancher (via `rancher/machine`) en tant que fournisseur d'infrastructure. Ce nouveau mode vous permet de substituer les pilotes de nœuds Rancher par des fournisseurs d'infrastructure CAPI natifs tout en conservant la logique de démarrage et de plan de contrôle de Rancher.
+
+Ce guide fournit des exemples simples pour évaluer ce mode de provisionnement en utilisant CAPA et CAPV. Référez-vous à la documentation de chaque fournisseur pour plus de détails sur les options disponibles et adaptez ces exemples à vos besoins.
+
+[NOTE]
+====
+Le provisionnement avec un fournisseur d'infrastructure CAPI natif et Rancher en tant que fournisseur de bootstrap et de plan de contrôle est distinct de l'utilisation de {url-CAPI-docs}[{turtles-product-name}] et du https://caprke2.docs.rancher.com/[CAPRKE2] pour provisionner un cluster RKE2 et ensuite l'importer dans Rancher.
+====
+
+[#_limitations_and_requirements]
+=== Limitations et exigences
+
+* Configurations non prises en charge{nbsp}: Les nœuds de travail Windows et IPv6 ne sont actuellement pas pris en charge.
+* Contraintes de l'interface utilisateur{nbsp}: La gestion détaillée des clusters via l'interface utilisateur est désactivée{nbsp}; les clusters doivent être créés et modifiés en appliquant des objets Kubernetes au cluster local. Cependant, l'explorateur de clusters reste accessible.
+* Exigences du fournisseur de cloud Kubernetes{nbsp}: Un fournisseur Kubernetes spécifique au cloud pour l'infrastructure où le cluster en aval s'exécute est requis (par exemple, le https://cloud-provider-aws.sigs.k8s.io/[fournisseur de cloud Kubernetes AWS] pour CAPA ou le `rancher-vsphere-cpi` chart pour CAPV).
+
+[#_general_steps]
+== Étapes générales
+
+Pour CAPA et CAPV, les étapes générales sont les suivantes{nbsp}:
+
+. Installer Rancher.
+. Installer un fournisseur d'infrastructure CAPI, soit CAPA soit CAPV.
+. Configurer une ressource d'identité pour le fournisseur.
+. Créer une ressource de cluster d'infrastructure CAPI.
+. Créer une ou plusieurs ressources de modèle de machine d'infrastructure CAPI.
+. Créer une ressource Rancher `clusters.provisioning.cattle.io` qui référence les ressources d'identité, de cluster d'infrastructure et de modèle de machine d'infrastructure.
+
+Après avoir appliqué la ressource `clusters.provisioning.cattle.io`, le cluster apparaît dans la liste de gestion des clusters de Rancher (cliquez sur **☰ > Gestion des clusters**), cependant, la vue détaillée pour ce type de cluster n'est actuellement pas disponible.
+
+Pour voir l'avancement du processus de provisionnement et résoudre les problèmes, consultez l'état des différentes ressources de provisionnement CAPI et Rancher dans le cluster local{nbsp}:
+
+. Cliquez sur **☰**, puis cliquez sur l'icône de votre grappe locale.
+. Utilisez le menu déroulant en haut pour filtrer par **Tous les espaces de noms**.
+. Dans la barre latérale, sélectionnez **Plus de ressources > Provisionnement de cluster**.
+
+Les journaux pour le déploiement du fournisseur d'infrastructure (par exemple, `capa-controller-manager`) montrent également des informations utiles.
+
+[#_installing_the_infrastructure_provider]
+== Installation du fournisseur d'infrastructure
+
+Rancher permet d'installer le fournisseur d'infrastructure de manière déclarative en créant la ressource Rancher Turtles {url-CAPIProvider}[`CAPIProvider`].
+
+[#_examples]
+=== Exemples
+
+CAPA{nbsp}:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capa-system
+---
+apiVersion: turtles-capi.cattle.io/v1alpha1
+kind: CAPIProvider
+metadata:
+  name: aws
+  namespace: capa-system
+spec:
+  type: infrastructure
+  variables:
+    # Global credentials for the provider are not needed
+    # as these examples define credentials for the AWSCluster.
+    AWS_B64ENCODED_CREDENTIALS: ""
+----
+
+CAPV{nbsp}:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capv-system
+---
+apiVersion: turtles-capi.cattle.io/v1alpha1
+kind: CAPIProvider
+metadata:
+  name: vsphere
+  namespace: capv-system
+spec:
+  type: infrastructure
+  variables:
+    # Global credentials for the provider are not needed
+    # as these examples define credentials for the VsphereCluster.
+    VSPHERE_USERNAME: ""
+    VSPHERE_PASSWORD: ""
+----
+
+[#_provisioning_a_cluster]
+== Provisionnement d'un cluster
+
+Pour ces exemples, un seul pool de machines avec tous les rôles (plan de contrôle, etcd et travailleur) est utilisé, mais les exemples peuvent être adaptés en spécifiant plusieurs pools de machines et des rôles séparés.
+
+Créez les ressources dans votre cluster en amont et remplacez les valeurs dans les crochets `<>`.
+
+[CAUTION]
+====
+Chaque pool de machines défini dans la ressource `clusters.provisioning.cattle.io` doit référencer un modèle de machine différent.
+====
+
+[#_capa]
+=== CAPA
+
+Tout d'abord, configurez IAM comme l'exige CAPA. Ces rôles sont assumés par les nœuds en aval utilisant des profils d'instance pour activer le fournisseur de cloud Kubernetes AWS.
+
+Pour ce faire, CAPA fournit l'outil `clusterawsadm` pour générer et appliquer les objets requis. Reportez-vous au manuel de CAPA pour plus de https://cluster-api-aws.sigs.k8s.io/topics/using-clusterawsadm-to-fulfill-prerequisites[détails].
+
+Ensuite, configurez l'identité du fournisseur dans le cluster en amont afin que le fournisseur CAPA puisse créer des ressources sur AWS. Consultez le manuel pour toutes les https://cluster-api-aws.sigs.k8s.io/topics/multitenancy[options].
+
+Dans cet exemple, nous utiliserons `AWSClusterStaticIdentity`.
+
+Créez un secret avec vos identifiants{nbsp}:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: capa-lab-credentials
+  namespace: capa-system
+type: Opaque
+stringData:
+  AccessKeyID: <access key id>
+  SecretAccessKey: <secret access key>
+  # You might have a session token depending on your credential type.
+  # SessionToken: <session token>
+----
+
+Ensuite, créez l'objet d'identité qui référence le secret{nbsp}:
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSClusterStaticIdentity
+metadata:
+  name: capa-lab-identity
+spec:
+  secretRef: capa-lab-credentials
+  allowedNamespaces:
+    # The namespace of the AWSCluster resource that points
+    # to this identity for provisioning.
+    list:
+      - fleet-default
+----
+
+Maintenant, créez la `AWSCluster` https://cluster-api-aws.sigs.k8s.io/crd/#infrastructure.cluster.x-k8s.io%2fv1beta2[ressource]. Cet objet définit la configuration de l'infrastructure commune à tous les pools de machines.
+
+CAPA crée des VPC, des sous-réseaux, des groupes de sécurité et un équilibreur de charge dans sa configuration par défaut, mais des règles supplémentaires doivent être configurées pour permettre les ports nécessaires à Rancher et RKE2. Pour simplifier, cet exemple définit des règles de groupe de sécurité supplémentaires qui permettent tout le trafic entre les nœuds, mais des règles plus restrictives peuvent être configurées à la place.
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSCluster
+metadata:
+  name: capa-lab
+  namespace: fleet-default
+spec:
+  identityRef:
+    kind: AWSClusterStaticIdentity
+    name: capa-lab-identity
+
+  controlPlaneLoadBalancer:
+    healthCheckProtocol: TCP
+    loadBalancerType: nlb
+
+  region: <e.g. us-east-1>
+
+  # These two additional rules allow all incoming traffic
+  # from other nodes.
+  network:
+    additionalControlPlaneIngressRules:
+      - protocol: "-1"
+        sourceSecurityGroupRoles:
+          - controlplane
+          - node
+    additionalNodeIngressRules:
+      - protocol: "-1"
+        sourceSecurityGroupRoles:
+          - controlplane
+          - node
+----
+
+Ensuite, créez un modèle de machine pour le pool de machines du plan de contrôle. Créez des modèles supplémentaires pour chaque pool de machines défini dans la ressource `clusters.provisioning.cattle.io`.
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSMachineTemplate
+metadata:
+  name: capa-lab-control-plane
+  namespace: fleet-default
+spec:
+  template:
+    spec:
+      ami:
+        # The ami requires cloud-init.
+        id: <your ami>
+      # This should correspond to the profile created through clusterawsadm.
+      # Worker or etcd-only nodes should use nodes.cluster-api-provider-aws.sigs.k8s.io.
+      iamInstanceProfile: control-plane.cluster-api-provider-aws.sigs.k8s.io
+      instanceType: t3.medium
+      # This refers to the name of an EC2 key pair.
+      sshKeyName: <your ssh key>
+      rootVolume:
+        size: 16
+      cloudInit:
+        insecureSkipSecretsManager: true
+----
+
+[CAUTION]
+====
+L'option `insecureSkipSecretsManager` est définie sur true pour contourner le gestionnaire de secrets AWS en tant que source de userdata pour les instances provisionnées. Cette source restreint la visibilité de la userdata mais nécessite une source de données cloud-init personnalisée qui n'est actuellement pas compatible avec la userdata générée par Rancher. Pour plus d'informations, consultez la https://cluster-api-aws.sigs.k8s.io/topics/userdata-privacy[documentation CAPA].
+====
+
+Enfin, créez la ressource Rancher `clusters.provisioning.cattle.io` et pointez vers le cluster CAPA et le modèle de machine qui viennent d'être créés.
+
+[source,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: capa-lab
+  namespace: fleet-default
+spec:
+  kubernetesVersion: v1.35.1+rke2r1
+  rkeConfig:
+    # This is the ref to the infra cluster defined above.
+    infrastructureRef:
+      kind: AWSCluster
+      name: capa-lab
+      namespace: fleet-default
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    machinePools:
+      - name: ctrl
+        controlPlaneRole: true
+        etcdRole: true
+        workerRole: true
+        quantity: 3
+        machineConfigRef:
+          kind: AWSMachineTemplate
+          name: capa-lab-control-plane
+          namespace: fleet-default
+          apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    machineGlobalConfig:
+      cni: calico
+      disable-kube-proxy: false
+      etcd-expose-metrics: false
+      ingress-controller: traefik
+      protect-kernel-defaults: false
+      cloud-provider-name: external
+      node-name-from-cloud-provider-metadata: true
+    # The AWS cloud controller definition. The controller uses the IAM instance profile for its AWS credentials.
+    additionalManifest: |-
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: aws-cloud-controller-manager
+        namespace: kube-system
+      spec:
+        chart: aws-cloud-controller-manager
+        repo: https://kubernetes.github.io/cloud-provider-aws
+        targetNamespace: kube-system
+        bootstrap: true
+        valuesContent: |-
+          hostNetworking: true
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          args:
+            - --configure-cloud-routes=false
+            - --v=5
+            - --cloud-provider=aws
+----
+
+[#_capv]
+=== CAPV
+
+Tout d'abord, configurez l'identité du fournisseur dans le cluster en amont afin que le fournisseur CAPV puisse créer des ressources sur votre serveur vSphere. Reportez-vous au manuel pour toutes les https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/v1.15.2/docs/identity_management.md[options] d'identité, et pour les exigences générales de vSphere https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/v1.15.2/docs/getting_started.md[exigences].
+
+Dans cet exemple, nous utiliserons `VSphereClusterIdentity`.
+
+Créez un secret avec vos identifiants{nbsp}:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: Secret
+metadata:
+  name: capv-lab-credentials
+  namespace: capv-system
+type: Opaque
+stringData:
+  username: <your vSphere username>
+  password: <your vSphere password>
+----
+
+Ensuite, créez l'objet d'identité qui référence le secret{nbsp}:
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: VSphereClusterIdentity
+metadata:
+  name: capv-lab-identity
+spec:
+  secretName: capv-lab-credentials
+  allowedNamespaces:
+    selector:
+      # The namespace of the VSphereCluster for which this identity
+      # is used when provisioning.
+      matchLabels:
+        kubernetes.io/metadata.name: fleet-default
+----
+
+Comme pour CAPA, il est également nécessaire d'installer le https://github.com/kubernetes/cloud-provider-vsphere[fournisseur de cloud pour vSphere] dans le cluster en aval.
+
+Pour transférer en toute sécurité les informations d'identification pour le graphique CPI, vous pouvez activer la fonctionnalité de démarrage préalable dans Rancher. Cela peut être fait en {xref-enable-experimental-features}[activant] le `provisioningprebootstrap` drapeau de fonctionnalité, ce qui entraîne le redémarrage de Rancher.
+
+Maintenant, créez le secret qui est envoyé au cluster en aval. Si vous utilisez un nom différent pour créer la ressource `clusters.provisioning.cattle.io`, assurez-vous de mettre à jour l'annotation `rke.cattle.io/object-authorized-for-clusters` ci-dessous.
+
+[source,yaml]
+----
+# Credential secret synced to the downstream cluster for the vsphere CPI chart.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vsphere-cpi-creds
+  namespace: fleet-default
+  annotations:
+    # Can be a comma-separated list for multiple clusters, with no spaces.
+    rke.cattle.io/object-authorized-for-clusters: capv-lab
+    provisioning.cattle.io/sync-bootstrap: "true"
+    provisioning.cattle.io/sync-target-namespace: kube-system
+type: Opaque
+stringData:
+  # Change the prefix of the key to match your vCenter host.
+  <vsphere host>.username: <your vSphere username>
+  <vsphere host>.password: <your vSphere password>
+----
+
+Maintenant, créez la ressource `VSphereCluster`. Cette ressource définit la configuration de l'infrastructure commune à tous les pools de machines. Reportez-vous à la documentation de CAPV pour plus d'options de configuration.
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: VSphereCluster
+metadata:
+  name: capv-lab
+  namespace: fleet-default
+spec:
+  identityRef:
+    kind: VSphereClusterIdentity
+    name: capv-lab-identity
+  server: <vsphere fqdn>
+----
+
+Ensuite, créez un modèle de machine pour le pool de machines du plan de contrôle. Créez des modèles supplémentaires pour chaque pool de machines défini dans la ressource `clusters.provisioning.cattle.io`.
+
+[source,yaml]
+----
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: VSphereMachineTemplate
+metadata:
+  name: capv-lab-control-plane
+  namespace: fleet-default
+spec:
+  template:
+    spec:
+      datacenter: <datacenter>
+      datastore: <datastore>
+      diskGiB: 20
+      folder: <your folder>
+      memoryMiB: 4096
+      network:
+        devices:
+        - dhcp4: true
+          networkName: <your network>
+      numCPUs: 2
+      os: Linux
+      resourcePool: <your resource pool>
+      template: <your VM template>
+----
+
+Enfin, créez la ressource Rancher `clusters.provisioning.cattle.io` et pointez vers le cluster CAPV et le modèle de machine qui viennent d'être créés. Notez que cet exemple désactive le graphique CSI pour des raisons de simplicité. Le graphique CPI est requis.
+
+[source,yaml]
+----
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: capv-lab
+  namespace: fleet-default
+spec:
+  kubernetesVersion: v1.35.1+rke2r1
+  rkeConfig:
+    infrastructureRef:
+      kind: VSphereCluster
+      name: capv-lab
+      namespace: fleet-default
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    machinePools:
+      - name: ctrl
+        controlPlaneRole: true
+        etcdRole: true
+        workerRole: true
+        quantity: 3
+        machineConfigRef:
+          kind: VSphereMachineTemplate
+          name: capv-lab-control-plane
+          namespace: fleet-default
+          apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    machineGlobalConfig:
+      cni: calico
+      disable-kube-proxy: false
+      etcd-expose-metrics: false
+      ingress-controller: traefik
+      protect-kernel-defaults: false
+      disable:
+        - rancher-vsphere-csi
+      cloud-provider-name: rancher-vsphere
+    chartValues:
+      rancher-vsphere-cpi:
+        vCenter:
+          datacenters: <your datacenter>
+          host: <vsphere fqdn>
+          # The credential secret is transferred by the prebootstrap mechanism,
+          # and the cpi chart expects the default name (vsphere-cpi-creds).
+          credentialsSecret:
+            generate: false
+----
+
+[#_changing_machine_templates]
+=== Changement de modèles de machines
+
+Les modèles de machines pour les fournisseurs d'infrastructure CAPI, tels que `AWSMachineTemplate` et `VSphereMachineTemplate`, sont généralement immuables. Pour modifier la configuration des instances dans un pool de machines, créez un nouveau modèle avec un nom différent, puis éditez le pool de machines dans `clusters.provisioning.cattle.io` pour pointer vers ce nouveau modèle. Cela entraîne la recréation de toutes les machines dans ce pool avec la nouvelle configuration.
+
+[#_customizing_userdata]
+=== Personnalisation des données utilisateur
+
+Des données utilisateur personnalisées peuvent être définies pour chaque pool de machines dans la ressource `clusters.provisioning.cattle.io`. Pour ce faire, utilisez le `.spec.rkeConfig.machinePools.userdata.inlineUserdata` comme une chaîne yaml en ligne dans le format cloud-config brut. Le contenu de ce champ est fusionné avec les données utilisateur générées par Rancher pour initialiser les nœuds du cluster.
+
+[CAUTION]
+====
+N'incluez pas de données sensibles dans ce champ, car il fait partie d'une ressource autre qu'un Secret.
+
+Ce champ est expérimental et susceptible de changer. Il n'est valide que pour les fournisseurs CAPI natifs décrits dans ce document et n'a aucun effet sur les clusters provisionnés par Rancher par la méthode standard avec des pilotes de nœuds.
+====
+
+Modifier le champ userdata entraîne la recréation de toutes les machines dans le pool.
+
+[source,yaml]
+----
+# Only some fields of the provisioning cluster resource are shown here.
+apiVersion: provisioning.cattle.io/v1
+kind: Cluster
+metadata:
+  name: capv-lab
+  namespace: fleet-default
+spec:
+  kubernetesVersion: v1.35.1+rke2r1
+  rkeConfig:
+    machinePools:
+      - name: ctrl
+        userdata:
+          inlineUserdata: |
+            runcmd:
+              - ["echo", "Hello!"]
+----

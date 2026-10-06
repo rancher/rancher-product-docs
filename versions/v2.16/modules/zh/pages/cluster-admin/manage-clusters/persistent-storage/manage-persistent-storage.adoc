@@ -1,0 +1,124 @@
+= 创建 Kubernetes 持久卷和存储类
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-05-05
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/index.adoc 
+:product-path: cluster-admin/manage-clusters/persistent-storage/manage-persistent-storage.adoc
+:description: 了解在 Kubernetes 中创建持久存储的两种方式：持久卷和存储类
+ifeval::["{build-type}" != "community"]
+:url-k3s-hostpath: https://documentation.suse.com/cloudnative/k3s/latest/en/add-ons/storage.html#_setting_up_the_local_storage_provider
+:url-rke2-hostpath: https://documentation.suse.com/cloudnative/rke2/latest/en/advanced.html#_extra_control_plane_component_volume_mounts
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-launch-k8s-with-rancher: xref:cluster-deployment/launch-kubernetes-with-rancher.adoc
+:xref-longhorn: xref:integrations/longhorn/longhorn.adoc
+:xref-set-up-cloud-providers: xref:cluster-deployment/set-up-cloud-providers/set-up-cloud-providers.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:cluster-deployment/set-up-cloud-providers/configure-out-of-tree-vsphere.adoc
+:xref-vsphere-storage-example: xref:cluster-admin/manage-clusters/persistent-storage/examples/vsphere-storage.adoc
+:xref-existing-storage-setup: xref:cluster-admin/manage-clusters/persistent-storage/set-up-existing-storage.adoc
+:xref-amazon-ebs-storage: xref:cluster-admin/manage-clusters/persistent-storage/examples/persistent-storage-in-amazon-ebs.adoc
+:xref-nfs-storage: xref:cluster-admin/manage-clusters/persistent-storage/examples/nfs-storage.adoc
+:xref-about-persistent-storage: xref:cluster-admin/manage-clusters/persistent-storage/about-persistent-storage.adoc
+:xref-dynamically-provision-new-storage: xref:cluster-admin/manage-clusters/persistent-storage/dynamically-provision-new-storage.adoc
+:xref-glusterfs-storage: xref:cluster-admin/manage-clusters/persistent-storage/about-glusterfs-volumes.adoc
+:xref-iscsi-storage: xref:cluster-admin/manage-clusters/persistent-storage/install-iscsi-volumes.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:url-k3s-hostpath: https://docs.k3s.io/add-ons/storage#setting-up-the-local-storage-provider
+:url-rke2-hostpath: https://docs.rke2.io/advanced#extra-control-plane-component-volume-mounts
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-launch-k8s-with-rancher: xref:how-to-guides/new-user-guides/launch-kubernetes-with-rancher/index.adoc
+:xref-longhorn: xref:integrations-in-rancher/longhorn/index.adoc
+:xref-set-up-cloud-providers: xref:how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/set-up-cloud-providers/index.adoc
+:xref-cloud-provider-vsphere-out-of-tree: xref:如何指南/新用户指南/在Rancher中设置Kubernetes集群/设置云提供商/configure-out-of-tree-vsphere.adoc
+:xref-vsphere-storage-example: xref:how-to-guides/new-user-guides/manage-clusters/provisioning-storage-examples/vsphere-storage.adoc
+:xref-existing-storage-setup: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/set-up-existing-storage.adoc
+:xref-amazon-ebs-storage: xref:how-to-guides/new-user-guides/manage-clusters/provisioning-storage-examples/persistent-storage-in-amazon-ebs.adoc
+:xref-nfs-storage: xref:how-to-guides/new-user-guides/manage-clusters/provisioning-storage-examples/nfs-storage.adoc
+:xref-about-persistent-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/about-persistent-storage.adoc
+:xref-dynamically-provision-new-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/dynamically-provision-new-storage.adoc
+:xref-glusterfs-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/about-glusterfs-volumes.adoc
+:xref-iscsi-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/manage-persistent-storage/install-iscsi-volumes.adoc
+endif::[]
+
+当部署需要保留数据的应用程序时，您需要创建持久化存储。持久化存储允许您将应用程序数据存储在运行应用程序的 Pod 之外。这种存储实践使您能够维护应用程序数据，即使应用程序的 Pod 失败。
+
+本节中的文档假设您理解 Kubernetes 的持久卷、持久卷声明和存储类的概念。有关更多信息，请参阅{xref-about-persistent-storage}[存储工作原理]部分。
+
+[#_prerequisites]
+== 先决条件
+
+要设置持久存储，需要`Manage Volumes` {xref-cluster-project-roles}#_project_role_reference[角色]。
+
+如果您为托管在云中的集群配置存储，则存储和集群主机必须具有相同的云提供商。
+
+要使用 Rancher 配置新的存储，必须启用云提供商。有关启用云提供商的详细信息，请参阅{xref-set-up-cloud-providers}[此页面。]
+
+要将现有的持久存储附加到集群，云提供商不需要启用。
+
+[#_setting_up_existing_storage]
+== 设置现有存储
+
+设置现有存储的整体工作流程如下：
+
+. 设置您的持久存储。这可以是基础设施提供商中的存储，也可以是您自己的存储。
+. 添加一个引用持久存储的持久卷 (PV)。
+. 添加一个引用 PV 的持久卷声明 (PVC)。
+. 将 PVC 挂载为工作负载中的一个卷。
+
+有关详细信息和先决条件，请参阅 {xref-existing-storage-setup}[此页面。]
+
+[#_dynamically_provisioning_new_storage_in_rancher]
+== 在 Rancher 中动态配置新的存储
+
+新存储的整体工作流程如下：
+
+. 添加一个 StorageClass 并配置它以使用您的存储提供商。StorageClass 可以指基础设施提供商的存储，也可以指您自己的存储。
+. 添加一个引用存储类的持久卷声明 (PVC)。
+. 将 PVC 挂载为您的工作负载的卷。
+
+有关详细信息和先决条件，请参阅 {xref-dynamically-provision-new-storage}[此页面。]
+
+[#__longhorn_product_name_storage]
+== {longhorn-product-name} 存储
+
+https://documentation.suse.com/cloudnative/storage/{longhorn-docs-version}/en/longhorn-documentation.html[{longhorn-product-name}] 是适用于 Kubernetes 的轻量级、可靠且易于使用的分布式块存储系统。
+
+Longhorn 是免费的开源软件。最初由 Rancher Labs 开发，现在作为云原生计算基金会的沙箱项目进行开发。可以通过 Helm、kubectl 或 Rancher UI 在任何 Kubernetes 集群上安装。
+
+如果您有一个块存储池，Longhorn 可以帮助您为 Kubernetes 集群提供持久存储，而无需依赖云提供商。有关 Longhorn 功能的更多信息，请参阅 https://documentation.suse.com/cloudnative/storage/{longhorn-docs-version}/en/introduction/introduction.html[文档。]
+
+Rancher v2.5 简化了在 Rancher 管理的集群上安装 Longhorn 的过程。有关更多信息，请参见{xref-longhorn}[使用Longhorn的云原生存储]。
+
+[#_provisioning_storage_examples]
+== 配置存储示例
+
+我们提供了如何使用 {xref-nfs-storage}[NFS,] {xref-vsphere-storage-example}[vSphere,] 和 {xref-amazon-ebs-storage}[Amazon 的 EBS.] 配置存储的示例。
+
+[#_glusterfs_volumes]
+== GlusterFS Volumes
+
+在将数据存储在 GlusterFS 卷的集群中，您可能会遇到一个问题，即在重新启动 `kubelet` 后，Pods 无法挂载卷。有关防止此问题发生的详细信息，请参阅 {xref-glusterfs-storage}[此页面。]
+
+[#_iscsi_volumes]
+== iSCSI 卷
+
+在 {xref-launch-k8s-with-rancher}[Rancher 启动的 Kubernetes 集群] 中，将数据存储在 iSCSI 卷上，您可能会遇到一个问题，即 kubelet 无法自动连接到 iSCSI 卷。有关解决此问题的详细信息，请参阅 {xref-iscsi-storage}[此页面。]
+
+[#_hostpath_volumes]
+== hostPath 卷
+
+K3s 和 RKE2 都支持使用 https://github.com/rancher/local-path-provisioner[Rancher Local Path Provisioner] 挂载 hostPath 卷。有关配置的信息，请根据您的发行版参考 {url-k3s-hostpath}[K3s - 卷和存储] 或 {url-rke2-hostpath}[RKE2 - 高级选项和配置]。
+
+ifeval::["{build-type}" != "srfa"]
+[#_migrating_vmware_vsphere_cloud_provider_from_in_tree_to_out_of_tree]
+== 将 VMware vSphere 云提供程序从树内迁移到树外
+
+Kubernetes 正在逐步停止维护树内的云提供程序。vSphere 有一个树外的云提供程序，可以通过安装 vSphere 云提供程序和云存储插件来使用。
+
+有关如何从树内 vSphere 云提供程序迁移到树外的说明，以及迁移后如何管理现有虚拟机，请参考 {xref-cloud-provider-vsphere-out-of-tree}[此页面。]
+endif::[]
+
+[#_related_links]
+== 相关链接
+
+* https://kubernetes.io/docs/concepts/storage/[Kubernetes 文档：存储]

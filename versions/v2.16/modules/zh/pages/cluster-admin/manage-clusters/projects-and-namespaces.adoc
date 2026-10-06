@@ -1,0 +1,246 @@
+= 项目和 Kubernetes 名称空间与 {rancher-product-name}
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-01-08
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/manage-clusters/projects-and-namespaces.adoc 
+:product-path: cluster-admin/manage-clusters/projects-and-namespaces.adoc
+:description: Rancher 项目减轻了集群的管理负担，并支持多租户。学习如何创建项目并将项目划分为 Kubernetes 名称空间
+:experimental:
+ifeval::["{build-type}" != "community"]
+:xref-cluster-project-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:security/secrets-hub.adoc
+:xref-persistent-storage: xref:cluster-admin/manage-clusters/persistent-storage/manage-persistent-storage.adoc
+:xref-configmaps: xref:cluster-admin/kubernetes-resources/configmaps.adoc
+:xref-workloads-and-pods: xref:cluster-admin/kubernetes-resources/workloads-and-pods/workloads-and-pods.adoc
+:xref-project-resource-quotas: xref:cluster-admin/project-admin/project-resource-quotas/project-resource-quotas.adoc
+:xref-custom-roles: xref:rancher-admin/users/authn-and-authz/manage-role-based-access-control-rbac/custom-roles.adoc
+:xref-http-encrypt: xref:security/encrypting-http.adoc
+:xref-namespaces: xref:cluster-admin/namespaces.adoc
+:xref-k8s-docker-registries: xref:cluster-admin/kubernetes-resources/kubernetes-and-docker-registries.adoc
+:xref-create-services: xref:cluster-admin/kubernetes-resources/create-services.adoc
+:xref-lb-and-ingress-controller: xref:cluster-admin/kubernetes-resources/load-balancer-and-ingress-controller/load-balancer-and-ingress-controller.adoc
+endif::[]
+ifeval::["{build-type}" == "community"]
+:xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
+:xref-secrets: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/secrets.adoc
+:xref-persistent-storage: xref:how-to-guides/new-user-guides/manage-clusters/create-kubernetes-persistent-storage/index.adoc
+:xref-configmaps: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/configmaps.adoc
+:xref-workloads-and-pods: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/workloads-and-pods/index.adoc
+:xref-project-resource-quotas: xref:how-to-guides/advanced-user-guides/manage-projects/manage-project-resource-quotas/index.adoc
+:xref-custom-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/custom-roles.adoc
+:xref-http-encrypt: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/encrypt-http-communication.adoc
+:xref-namespaces: xref:how-to-guides/new-user-guides/manage-namespaces.adoc
+:xref-k8s-docker-registries: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/kubernetes-and-docker-registries.adoc
+:xref-create-services: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/create-services.adoc
+:xref-lb-and-ingress-controller: xref:how-to-guides/new-user-guides/kubernetes-resources-setup/load-balancer-and-ingress-controller/index.adoc
+endif::[]
+
+名称空间是 Kubernetes 的一个概念，允许在集群内创建虚拟集群，这对于将集群划分为各自拥有访问控制和资源配额的 "虚拟集群" 非常有用。
+
+项目是一组名称空间，是 Rancher 引入的一个概念。项目允许您将多个名称空间作为一个组进行管理，并在其中执行 Kubernetes 操作。您可以使用项目来支持多租户，这样一个团队可以在集群内访问一个项目，而无需访问同一集群中的其他项目。
+
+[NOTE]
+====
+在用户界面上，项目的强调程度降低，因为在项目范围内创建 Kubernetes 资源并不是必需的。然而，诸如 {xref-secrets}#_creating_secrets_in_projects[Secrets] 之类的资源仍然可以在项目范围内创建。
+====
+
+
+本节描述了项目和名称空间如何与 Rancher 一起工作。
+
+[#_about_namespaces]
+== 关于名称空间
+
+名称空间是 Kubernetes 引入的一个概念。根据 https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/[官方 Kubernetes 文档关于名称空间的内容,]
+
+[NOTE]
+====
+
+Kubernetes 支持多个由同一物理集群支持的虚拟集群。这些虚拟集群称为名称空间。[...] 名称空间旨在用于用户众多、跨多个团队或项目的环境。对于用户数量从几到十几的集群，您根本不需要创建或考虑名称空间。
+====
+
+
+名称空间提供以下功能：
+
+* *提供名称的范围：*资源名称在一个名称空间内需要是唯一的，但在不同名称空间之间可以重复。名称空间不能相互嵌套，每个 Kubernetes 资源只能属于一个名称空间。
+* *资源配额：*名称空间提供了一种在多个用户之间划分集群资源的方法。
+
+您可以在项目级别分配资源，以便项目中的每个名称空间都可以使用这些资源。您还可以通过将资源显式分配给名称空间来绕过这种继承。
+
+您可以将以下资源直接分配给名称空间：
+
+* {xref-workloads-and-pods}[工作负载]
+* {xref-lb-and-ingress-controller}[负载均衡器/入口]
+* {xref-create-services}[服务发现记录]
+* {xref-persistent-storage}[持久卷声明]
+* {xref-http-encrypt}[证书]
+* {xref-configmaps}[ConfigMaps]
+* {xref-k8s-docker-registries}[注册表]
+* {xref-secrets}[Secrets]
+
+要管理原生 Kubernetes 集群中的权限，集群管理员为每个名称空间配置基于角色的访问控制。使用 Rancher，用户权限在项目级别分配，权限会自动继承给该项目拥有的任何名称空间。
+
+有关创建和移动名称空间的更多信息，请参见{xref-namespaces}[名称空间]。
+
+[#_role_based_access_control_issues_with_namespaces_and_kubectl]
+=== 与名称空间和kubectl相关的基于角色的访问控制问题
+
+由于项目是Rancher引入的概念，kubectl无法限制名称空间的创建，仅限于创建者有权限访问的项目。
+
+这意味着，当具有项目范围权限的标准用户创建一个名称空间时，`kubectl` 可能无法使用，因为 `kubectl` 不要求新的名称空间在特定项目内。
+
+如果您的权限仅限于项目级别，最好通过 Rancher {xref-namespaces}[创建名称空间]，以确保您有权限访问该名称空间。
+
+如果标准用户是项目所有者，该用户将能够在该项目内创建名称空间。Rancher UI 将阻止该用户在他们有权限访问的项目范围之外创建名称空间。
+
+[#_about_projects]
+== 关于项目
+
+在层级结构方面：
+
+* 集群包含项目
+* 项目包含名称空间
+
+您可以使用项目来支持多租户，这样一个团队可以在集群内访问一个项目，而无需访问同一集群中的其他项目。
+
+在 Kubernetes 的基础版本中，基于角色的访问权限或集群资源等功能被分配给单个名称空间。项目允许您节省时间，通过为个人或团队同时访问多个名称空间。
+
+您可以使用项目执行以下操作：
+
+* 将用户分配到一组名称空间（即 {xref-cluster-project-roles}[项目成员资格]）。
+* 在项目中为用户分配特定角色。角色可以是所有者、成员、只读或 {xref-custom-roles}[自定义]。
+* 将资源分配给项目。
+
+当您创建集群时，自动在其中创建两个项目：
+
+* <<_the_clusters_default_project,默认项目>>
+* <<_the_system_project,系统项目>>
+
+[#_the_clusters_default_project]
+=== 集群的默认项目
+
+当您使用 Rancher 配置集群时，它会自动为该集群创建一个 `default` 项目。这是一个可以帮助您开始使用集群的项目，但您可以随时删除它，并用更具描述性的名称替换它的项目。
+
+如果您不需要超过默认名称空间的功能，那么在 Rancher 中也不需要超过 *默认* 项目。
+
+如果您需要超出 *默认* 项目的另一个组织级别，您可以在 Rancher 中创建更多项目，以隔离名称空间、应用程序和资源。
+
+[#_the_system_project]
+=== 系统项目
+
+在故障排除时，您可以查看 `system` 项目，以检查 Kubernetes 系统中的重要名称空间是否正常工作。这个易于访问的项目可以让您避免逐个故障排除系统名称空间容器。
+
+要打开它，请打开集群视图并点击 menu:集群[项目/名称空间]。此视图显示 `system` 项目中的所有名称空间。
+
+`system` 项目：
+
+* 在您配置集群时自动创建。
+* 列出 `v3/settings/system-namespaces` 中存在的所有名称空间（如果存在）。
+* 允许您添加更多名称空间或将其名称空间移动到其他项目。
+* 无法删除，因为它是集群操作所必需的。
+
+[NOTE]
+====
+
+在启用项目网络隔离选项的 RKE2/K3s 集群中，`system` 项目会覆盖项目网络隔离选项，以便它可以与其他项目通信、收集日志和检查健康状态。
+====
+
+
+[#_project_authorization]
+== 项目授权
+
+标准用户仅在两种情况下被授权访问项目：
+
+* 管理员、集群所有者或集群成员明确将标准用户添加到项目的 *成员* 标签中。
+* 标准用户可以访问他们自己创建的项目。
+
+
+[#_creating_projects]
+== 创建项目
+
+本节描述如何创建一个具有名称的新项目，并可选地设置 Pod 安全策略、成员和资源配额。
+
+. <<_name_a_new_project,命名一个新项目>>
+. <<_recommended_add_project_members,建议：添加项目成员。>>
+. <<_optional_add_resource_quotas,可选：添加资源配额。>>
+
+[#_name_a_new_project]
+=== 命名新项目
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在*集群*页面上，进入您想要创建项目的集群，然后点击*浏览*。
+. 单击menu:集群[项目/名称空间]。
+. 单击*创建项目*。
+. 输入*项目名称*。
+
+[#_recommended_add_project_members]
+=== 推荐：添加项目成员
+
+使用*成员*部分为其他用户提供项目访问权限和角色。
+
+默认情况下，您的用户被添加为项目`Owner`。
+
+[NOTE]
+.权限说明：
+====
+
+* 被分配`Owner`或`Member`角色的用户会自动继承`namespace creation`角色。然而，这个角色是一个 https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole[Kubernetes集群角色]，这意味着它的范围扩展到集群中的所有项目。因此，明确分配`Owner`或`Member`角色的用户可以在他们被分配的其他项目中创建名称空间，即使他们只被分配了`Read Only`角色。
+* 默认情况下，`project-member`的Rancher角色继承自`Kubernetes-edit`角色，而`project-owner`角色继承自`Kubernetes-admin`角色。因此，`project-member`和`project-owner`角色都允许进行名称空间管理，包括创建和删除名称空间的能力。
+* 选择`Custom`以动态创建自定义角色：{xref-cluster-project-roles}#_custom_project_roles[自定义项目角色]。
+====
+
+
+要添加成员：
+
+. 在*成员*选项卡中，单击*添加*。
+. 在*选择成员*字段中，搜索您想要分配项目访问权限的用户或组。只有在启用外部身份验证的情况下，才能搜索组。
++
+[NOTE]
+.注意
+====
+* 搜索框中必须输入至少2个字符才能显示结果。
+* 用户可以根据其用户名或显示名称进行搜索。
+* 搜索是基于前缀的（例如，名为`Stan Dard`的用户在搜索`Sta`时会出现，但在搜索`Dar`时不会出现），并且区分大小写。
+====
+
+. 在*项目权限*部分，选择一个角色。有关更多信息，请参阅{xref-cluster-project-roles}[项目角色的文档。]
+
+[#_optional_add_resource_quotas]
+=== 可选：添加资源配额
+
+资源配额限制了项目（及其名称空间）可以消耗的资源。有关更多信息，请参见{xref-project-resource-quotas}[资源配额]。
+
+要添加资源配额，
+
+. 在*资源配额*选项卡中，点击*添加资源*。
+. 选择一个*资源类型*。有关更多信息，请参见{xref-project-resource-quotas}[资源配额。]。
+. 输入*项目限制*和*名称空间默认限制*的值。
+. *可选：*指定*容器默认资源限制*，该限制将应用于项目中启动的每个容器。如果您设置了资源配额的处理器或内存限制，则建议使用该参数。可以在单个名称空间或容器级别覆盖该限制。有关更多信息，请参见{xref-project-resource-quotas}[容器默认资源限制]。
+. 单击*创建*。
+
+*结果：*您的项目已创建。您可以从集群的*项目/名称空间*视图中查看它。
+
+|===
+| 字段 | 说明
+
+| 项目限制
+| 项目的整体资源限制。
+
+| 名称空间默认限制
+| 每个名称空间可用的默认资源限制。在创建项目时，此限制会传播到项目中的每个名称空间。所有项目名称空间的总限制不应超过项目限制。
+|===
+
+[#_deleting_projects]
+== 删除项目
+
+. 在左上角，点击 *☰ > 集群管理*。
+. 在*集群*页面，转到项目附加的集群，然后点击*浏览*。
+. 单击menu:集群[项目/名称空间]。
+. 找到您想要删除的项目，然后点击*⋮*。
+. 选择*删除*。
+
+当您删除一个项目时，之前与该项目关联的任何名称空间将保留在集群中。您可以在Rancher UI中找到这些名称空间，在*不在项目中*选项卡的*项目/名称空间*页面。您可以通过{xref-namespaces}#_moving_namespaces_to_another_project[移动]将这些名称空间重新分配到某个项目中。
+
+[#_further_reading]
+== 更多资料
+
+您可以通过xref:api/quickstart.adoc[公共API]更程序化地创建项目和项目成员。有关更多信息，请参见xref:api/workflows/projects.adoc[项目工作流程文档]。

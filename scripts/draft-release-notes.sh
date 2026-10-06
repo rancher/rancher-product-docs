@@ -310,7 +310,22 @@ if [ -f "$NAV_FILE" ]; then
             print new_entry
             inserted = 1
         }
+        /^\* xref:release-notes\.adoc\[.*\]/ {
+            print
+            in_rn = 1
+            next
+        }
+        !inserted && in_rn && /^\* / {
+            print new_entry
+            inserted = 1
+            in_rn = 0
+        }
         { print }
+        END {
+            if (in_rn && !inserted) {
+                print new_entry
+            }
+        }
         ' "$NAV_FILE" > "${NAV_FILE}.tmp" && mv "${NAV_FILE}.tmp" "$NAV_FILE"
     fi
 else
@@ -334,7 +349,22 @@ for LOCALE_DIR in "$VERSIONS_DIR/modules/"*; do
                 print new_entry
                 inserted = 1
             }
+            /^\* xref:release-notes\.adoc\[.*\]/ {
+                print
+                in_rn = 1
+                next
+            }
+            !inserted && in_rn && /^\* / {
+                print new_entry
+                inserted = 1
+                in_rn = 0
+            }
             { print }
+            END {
+                if (in_rn && !inserted) {
+                    print new_entry
+                }
+            }
             ' "$LOCALE_NAV_FILE" > "${LOCALE_NAV_FILE}.tmp" && mv "${LOCALE_NAV_FILE}.tmp" "$LOCALE_NAV_FILE"
         fi
     else

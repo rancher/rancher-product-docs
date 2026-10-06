@@ -1,0 +1,170 @@
+= 创建VMware vSphere虚拟机模板
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2025-08-25
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/launch-kubernetes-with-rancher/use-new-nodes-in-an-infra-provider/vsphere/create-a-vm-template.adoc 
+:product-path: cluster-deployment/infra-providers/vsphere/create-a-vm-template.adoc
+
+以可重复和可靠的方式创建虚拟机通常是困难的。VMware vSphere提供了构建一个虚拟机的能力，该虚拟机可以转换为模板。然后可以使用该模板创建配置完全相同的虚拟机。Rancher利用此能力创建相同的RKE/K3s节点。
+
+为了利用模板创建新的虚拟机，Rancher要求虚拟机预先安装满足<<_requirements,特定要求>>的必要组件。在您根据这些要求配置虚拟机后，在<<_creating_a_template,创建模板>>之前，您需要<<_preparing_your_vm,准备虚拟机>>。最后，一旦准备完成，虚拟机可以<<_converting_to_a_template,转换为模板>>并<<_moving_to_a_content_library,移动到内容库>>。
+
+[#_requirements]
+== 要求
+
+Linux和Windows虚拟机都需要特定的工具才能被vSphere节点驱动程序使用。最关键的依赖项是 https://cloud-init.io/[cloud-init]用于Linux和 https://cloudbase.it/cloudbase-init/[cloudbase-init]用于Windows。这两者都用于为虚拟机配置主机名、设置SSH访问权限以及指定默认的Rancher用户。如果需要其他配置，用户可以根据需要添加更多内容。此外，下面列出了其他要求以供参考。
+
+[NOTE]
+====
+
+如果您有任何特定的防火墙规则或配置，您需要在创建模板之前将其添加到虚拟机中。
+====
+
+
+[#_linux_dependencies]
+== Linux依赖项
+
+需要在模板上安装的软件包列在下面。这些软件包的名称可能会根据发行版略有不同；例如，一些发行版默认提供这些依赖项。集群提供程序将自动安装Kubernetes所需的依赖项。下面列出的依赖项是Rancher集群提供程序正常运行所需的（不是Kubernetes所需的）：
+
+* curl
+* wget
+* git
+* net-tools
+* 解压缩
+* apparmor-parser
+* ca-certificates
+* cloud-init
+* cloud-guest-utils
+* cloud-image-utils
+* growpart（cloud-guest-utils的一部分）
+* cloud-initramfs-growroot
+* open-iscsi
+* openssh-server
+* https://docs.vmware.com/en/VMware-Tools/11.3.0/com.vmware.vsphere.vmwaretools.doc/GUID-8B6EA5B7-453B-48AA-92E5-DB7F061341D1.html[open-vm-tools]
+
+[#_windows_dependencies]
+== Windows依赖项
+
+需要在模板上安装的软件包列表如下：
+
+* Windows容器功能
+* https://cloudbase.it/cloudbase-init/#download[cloudbase-init]
+
+[#_creating_a_template]
+== 创建模板
+
+您可以手动创建虚拟机，也可以利用<<_alternatives_to_manual_creation,其他替代方案>>来创建虚拟机。
+
+[#_manual_creation]
+=== 手动创建
+
+. 请按照VMware提供的 https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AE8AFBF1-75D1-4172-988C-378C35C9FAF2.html[这些说明]手动创建虚拟机。一旦虚拟机运行起来，您可以手动安装上述依赖项，以便为vSphere节点驱动程序正确配置虚拟机。
+. 根据您的特定环境和要求进行必要的自定义。
+. 在创建模板之前进行最终准备。
+
+[#_alternatives_to_manual_creation]
+=== 手动创建的替代方案
+
+创建虚拟机的其他替代选项如下：
+
+* https://developer.vmware.com/powercli[VMware PowerCLI]
+* https://www.packer.io/[Packer]
+* https://saltproject.io/[SaltStack]
+* https://www.ansible.com/[Ansible]
+
+Packer是一个常用的替代方案。请参考此 https://github.com/vmware-samples/packer-examples-for-vsphere[参考资料]以获取与vSphere一起使用的示例。
+
+[#_preparing_your_vm]
+== 准备您的虚拟机
+
+在创建了所有必需的依赖项（以及任何其他所需项）后，您必须执行下一步最关键的步骤：准备虚拟机以便将其转换为模板。此准备将重置关键数据，例如虚拟机主机名、IP地址等，以防止这些信息被带入新的虚拟机。如果您未能执行此步骤，可能会创建一个具有相同主机名、IP地址等的虚拟机。
+
+请注意，这些准备步骤在 Linux 和 Windows 之间有所不同。
+
+[#_linux_preparation]
+=== Linux 准备
+
+以下命令将重置您的 Linux 虚拟机：
+
+[,bash]
+----
+# Cleaning logs.
+if [ -f /var/log/audit/audit.log ]; then
+  cat /dev/null > /var/log/audit/audit.log
+fi
+if [ -f /var/log/wtmp ]; then
+  cat /dev/null > /var/log/wtmp
+fi
+if [ -f /var/log/lastlog ]; then
+  cat /dev/null > /var/log/lastlog
+fi
+
+# Cleaning udev rules.
+if [ -f /etc/udev/rules.d/70-persistent-net.rules ]; then
+  rm /etc/udev/rules.d/70-persistent-net.rules
+fi
+
+# Cleaning the /tmp directories
+rm -rf /tmp/*
+rm -rf /var/tmp/*
+
+# Cleaning the SSH host keys
+rm -f /etc/ssh/ssh_host_*
+
+# Cleaning the machine-id
+truncate -s 0 /etc/machine-id
+rm /var/lib/dbus/machine-id
+ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# Cleaning the shell history
+unset HISTFILE
+history -cw
+echo > ~/.bash_history
+rm -fr /root/.bash_history
+
+# Truncating hostname, hosts, resolv.conf and setting hostname to localhost
+truncate -s 0 /etc/{hostname,hosts,resolv.conf}
+hostnamectl set-hostname localhost
+
+# Clean cloud-init
+cloud-init clean -s -l
+----
+
+[#_windows_preparation]
+=== Windows 准备
+
+Windows 有一个名为 https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep\--generalize\--a-windows-installation?view=windows-11[sysprep] 的工具，用于将映像通用化并重置与 Linux 相同的项目。命令如下：
+
+[,PowerShell]
+----
+sysprep.exe /generalize /shutdown /oobe
+----
+
+[#_converting_to_a_template]
+== 转换为模板
+
+. 关闭并停止虚拟机。
+. 在清单列表中右键单击虚拟机并选择 *模板*。
+. 点击 *转换为模板*。
+
+*结果：*一旦过程完成，将可以使用模板。
+
+有关将虚拟机转换为模板的更多信息，请参见 https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-5B3737CC-28DB-4334-BD18-6E12011CDC9F.html[VMware 指南]。
+
+[#_moving_to_a_content_library]
+== 移动到内容库
+
+Rancher 能够使用内容库提供的模板。内容库在 vSphere 中存储和管理内容，并且还提供发布和共享该内容的能力。
+
+以下是一些关于内容库的有用链接：
+
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-2A0F1C13-7336-45CE-B211-610D39A6E1F4.html[创建内容库]
+* https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.vm_admin.doc/GUID-AC1545F0-F8BA-4CD2-96EB-21B3DFAA1DC1.html[将模板克隆到内容库]
+
+[#_other_resources]
+== 其他资源
+
+以下是可能有用的额外资源列表：
+
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-ubuntu-template[创建Linux模板的教程]
+* https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/manage/hybrid/server/best-practices/vmware-windows-template[创建Windows模板的教程]

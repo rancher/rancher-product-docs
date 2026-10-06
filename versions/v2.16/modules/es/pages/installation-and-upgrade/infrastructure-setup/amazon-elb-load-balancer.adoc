@@ -1,0 +1,225 @@
+= Configuración del Balanceador de Carga de Red de Amazon ELB
+:page-languages: [en, de, es, fr, ja, pt, zh]
+:revdate: 2026-03-20
+:page-revdate: {revdate}
+:community-path: how-to-guides/new-user-guides/infrastructure-setup/amazon-elb-load-balancer.adoc 
+:product-path: installation-and-upgrade/infrastructure-setup/amazon-elb-load-balancer.adoc
+
+Estas instrucciones describen cómo configurar un Balanceador de Carga de Red (NLB) en el servicio EC2 de Amazon que dirigirá el tráfico a múltiples instancias en EC2.
+
+Estos ejemplos muestran el balanceador de carga configurado para dirigir el tráfico a tres nodos de servidor de Rancher. Si Rancher está instalado en un clúster de Kubernetes K3s, solo se requieren dos nodos.
+
+Este tutorial trata sobre una posible forma de configurar tu balanceador de carga, no la única forma. Otros tipos de balanceadores de carga, como un Balanceador de Carga Clásico o un Balanceador de Carga de Aplicaciones, también podrían dirigir el tráfico a los nodos del servidor Rancher.
+
+Rancher solo admite el uso del NLB de Amazon al terminar el tráfico en modo `tcp` para el puerto 443 en lugar de modo `tls`. Esto se debe a que el NLB no inyecta los encabezados correctos en las solicitudes cuando se termina en el NLB. Esto significa que si deseas utilizar certificados gestionados por el Administrador de Certificados de Amazon (ACM), deberías usar un ALB.
+
+[#_requirements]
+== Requisitos
+
+Estas instrucciones asumen que ya has creado instancias de Linux en EC2. El balanceador de carga dirigirá el tráfico a estos nodos.
+
+[#_1_create_target_groups]
+== 1. Crear Grupos de Destino
+
+Comienza creando dos grupos de destino para el protocolo *TCP*, uno con el puerto TCP 443 y otro para el puerto TCP 80 (proporcionando redirección al puerto TCP 443). Añadirás tus nodos de Linux a estos grupos.
+
+Tu primer paso de configuración del NLB es crear dos grupos de destino. Técnicamente, solo se necesita el puerto 443 para acceder a Rancher, pero es conveniente agregar un listener para el puerto 80, ya que el tráfico hacia este puerto se redirigirá automáticamente al 443.
+
+El Traefik Ingress debería redirigir el tráfico del puerto 80 al puerto 443.
+
+. Inicia sesión en la https://console.aws.amazon.com/ec2/[Consola de Amazon AWS] para comenzar. Asegúrese de seleccionar la *Región* donde se crean sus instancias EC2 (nodos Linux).
+. Selecciona *Servicios* y elige *EC2*, encuentra la sección *Balanceo de Carga* y abre *Grupos de Destino*.
+. Haz clic en *Crear grupo de destino* para crear el primer grupo de destino para el puerto TCP 443.
+
+[NOTE]
+====
+Para detalles sobre las comprobaciones de salud del Traefik Ingress, consulta <<_health_check_paths_for_traefik_ingresses,esta sección.>>
+====
+
+[discrete]
+[#_target_group_tcp_port_443]
+==== Grupo de destino (puerto TCP 443)
+
+Configura el primer grupo de destino según la tabla a continuación.
+
+|===
+| Opción | Valor
+
+| Nombre del grupo de destino
+| `rancher-tcp-443`
+
+| Tipo de destino
+| `instance`
+
+| Protocolo
+| `TCP`
+
+| Puerto
+| `443`
+
+| VPC
+| Elige tu VPC
+|===
+
+Configuración de comprobación de salud:
+
+|===
+| Opción | Valor
+
+| Protocolo
+| TCP
+
+| Puerto
+| `override`,`80`
+
+| Umbral saludable
+| `3`
+
+| Umbral no saludable
+| `3`
+
+| Tiempo límite
+| `6 seconds`
+
+| Intervalo
+| `10 seconds`
+|===
+
+Haz clic en *Crear grupo de destino* para crear el segundo grupo de destino para el puerto TCP 80.
+
+[discrete]
+[#_target_group_tcp_port_80]
+==== Grupo de destino (puerto TCP 80)
+
+Configura el segundo grupo de destino según la tabla a continuación.
+
+|===
+| Opción | Valor
+
+| Nombre del grupo de destino
+| `rancher-tcp-80`
+
+| Tipo de destino
+| `instance`
+
+| Protocolo
+| `TCP`
+
+| Puerto
+| `80`
+
+| VPC
+| Elige tu VPC
+|===
+
+Configuración de comprobación de salud:
+
+|===
+| Opción | Valor
+
+| Protocolo
+| TCP
+
+| Puerto
+| `traffic port`
+
+| Umbral saludable
+| `3`
+
+| Umbral no saludable
+| `3`
+
+| Tiempo límite
+| `6 seconds`
+
+| Intervalo
+| `10 seconds`
+|===
+
+[#_2_register_targets]
+== 2. Registrar destinos
+
+A continuación, añade tus nodos Linux a ambos grupos de destino.
+
+Selecciona el grupo de destino llamado *rancher-tcp-443*, haz clic en la pestaña *Destinos* y elige *Editar*.
+
+image::ha/nlb/edit-targetgroup-443.png[]
+
+Selecciona las instancias (nodos Linux) que deseas añadir y haz clic en *Añadir a registrados*.
+
+'''
+
+.Captura de pantalla Añadir destinos al grupo de destino puerto TCP 443
+image::ha/nlb/add-targets-targetgroup-443.png[]
+
+'''
+
+.Captura de pantalla Destinos añadidos al grupo de destino puerto TCP 443
+image::ha/nlb/added-targets-targetgroup-443.png[]
+
+Cuando las instancias estén añadidas, haz clic en *Guardar* en la parte inferior derecha de la pantalla.
+
+Repite esos pasos, reemplazando *rancher-tcp-443* con *rancher-tcp-80*. Las mismas instancias deben ser añadidas como destinos a este grupo de destino.
+
+[#_3_create_your_nlb]
+== 3. Crea tu NLB
+
+Utiliza el asistente de Amazon para crear un balanceador de carga de red. Como parte de este proceso, añadirás los grupos de destino que creaste en <<_1_create_target_groups,1. Crea Grupos de Destino>>.
+
+. Desde tu navegador web, navega a la https://console.aws.amazon.com/ec2/[Consola de Amazon EC2].
+. Desde el panel de navegación, elige *BALANCEO DE CARGA* > *Balanceadores de Carga*.
+. Haz clic en *Crear Balanceador de Carga*.
+. Elige *Balanceador de Carga de Red* y haz clic en *Crear*. Luego completa cada formulario.
+
+* <<_step_1_configure_load_balancer,Paso 1: Configurar Balanceador de Carga>>
+* <<_step_2_configure_routing,Paso 2: Configurar Enrutamiento>>
+* <<_step_3_register_targets,Paso 3: Registrar Destinos>>
+* <<_step_4_review,Paso 4: Revisar>>
+
+[#_step_1_configure_load_balancer]
+=== Paso 1: Configurar el balanceador de carga
+
+Establece los siguientes campos en el formulario:
+
+* *Nombre:* `rancher`
+* *Esquema:* `internal` o `internet-facing`. El esquema que elijas para tu NLB depende de la configuración de tus instancias y VPC. Si tus instancias no tienen IPs públicas asociadas, o solo accederás a Rancher internamente, deberías establecer el esquema de tu NLB en `internal` en lugar de `internet-facing`.
+* *Listeners:* El protocolo del balanceador de carga debería ser `TCP` y el puerto correspondiente del balanceador de carga debería estar configurado en `443`.
+* *Zonas de disponibilidad:* Selecciona tu *VPC* y *Zonas de disponibilidad*.
+
+[#_step_2_configure_routing]
+=== Paso 2: Configurar enrutamiento
+
+. Desde el menú desplegable *Grupo de destino*, elige *Grupo de destino existente*.
+. Desde el menú desplegable *Nombre*, elige `rancher-tcp-443`.
+. Abre *Configuraciones avanzadas de verificación de salud*, y configura *Intervalo* a `10 seconds`.
+
+[#_step_3_register_targets]
+=== Paso 3: Registrar destinos
+
+Dado que registraste tus destinos anteriormente, todo lo que tienes que hacer es hacer clic en *Siguiente: Revisar*.
+
+[#_step_4_review]
+=== Paso 4: Repaso
+
+Revisa los detalles del balanceador de carga y haz clic en *Crear* cuando estés satisfecho.
+
+Después de que AWS cree el NLB, haz clic en *Cerrar*.
+
+[#_4_add_listener_to_nlb_for_tcp_port_80]
+== 4. Añadir listener al NLB para el puerto TCP 80
+
+. Selecciona tu NLB recién creado y selecciona la pestaña *Listeners*.
+. Haz clic en *Añadir listener*.
+. Usa `TCP`:``80`` como *Protocolo* : *Puerto*
+. Haz clic en *Añadir acción* y elige *Reenviar a..*.
+. Desde el menú desplegable *Reenviar a*, elige `rancher-tcp-80`.
+. Haz clic en *Guardar* en la parte superior derecha de la pantalla.
+
+[#_health_check_paths_for_traefik_ingresses]
+== Rutas de comprobación de salud para Ingress de Traefik
+
+Los clústeres de K3s Kubernetes utilizan Traefik como el Ingress por defecto.
+
+La ruta de comprobación de salud es `/ping`. Por defecto, `/ping` siempre se coincide (independientemente del Host), y siempre se sirve una respuesta de https://docs.traefik.io/operations/ping/[Traefik mismo].
+
+Para simular una comprobación de salud precisa, es una buena práctica utilizar el encabezado Host (nombre de host de Rancher) combinado con `/ping` o `/healthz` siempre que sea posible, para obtener una respuesta de los Pods de Rancher, no del Ingress.
