@@ -224,10 +224,31 @@ ifeval::["{build-type}" != "community"]
 [#_rancher_monitoring_dashboards_installation]
 === Rancher Monitoring Dashboards Installation
 
-This section guides you through setting up your Prometheus stack and installing the `rancher-monitoring-dashboards` chart using the xref:integrations/fleet/appco.adoc[SUSE Application Collection].
+This section guides you through setting up your Prometheus stack and installing the `rancher-monitoring-dashboards` chart using the xref:integrations/fleet/appco.adoc[SUSE Application Collection (AppCo)].
 
-[#_install_kube_prometheus_stack_chart]
-==== Install `kube-prometheus-stack` chart
+[#_create_the_appco_credentials]
+==== Create the AppCo credentials
+
+First create the secret that will be used by Kubernetes to pull the images and login to Helm to pull the required chart from SUSE AppCo. The secret needs to be created in the `cattle-monitoring-system` namespace where the chart is installed.
+
+Run the following commands to create the secret:
+
+[,shell]
+----
+kubectl create namespace cattle-monitoring-system
+
+kubectl create secret docker-registry application-collection --docker-server=dp.apps.rancher.io --docker-username=<your_username> --docker-password=<your_password> --namespace cattle-monitoring-system
+----
+
+Run the following command to login to Helm, replacing `<your_username>` and `<your_password>` with your SUSE AppCo credentials:
+
+[,shell]
+----
+helm registry login dp.apps.rancher.io -u <your_username> -p <your_password>
+----
+
+[#_install_the_kube_prometheus_stack_chart]
+==== Install the `kube-prometheus-stack` chart
 
 . Create the `kube-prometheus-stack` `values.yaml` file. Configure the file with the following required settings to ensure `kube-prometheus-stack` integrates properly and supports embedded dashboards in `rancher-monitoring-dashboards`.
 +
@@ -247,7 +268,6 @@ grafana:
       default_home_dashboard_path: /tmp/dashboards/rancher-default-home.json
     users:
       auto_assign_org_role: Viewer
-
 # Prometheus configuration to pick up all ServiceMonitors
 prometheus:
   prometheusSpec:
@@ -255,17 +275,26 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
 
 # No metric exporter by default
+
 kubeEtcd:
-  enabled: false
+  enabled: true
+  serviceMonitor:
+    enabled: false
 
 kubeControllerManager:
-  enabled: false
+  enabled: true
+  serviceMonitor:
+    enabled: false
 
 kubeScheduler:
-  enabled: false
+  enabled: true
+  serviceMonitor:
+    enabled: false
 
 kubeProxy:
-  enabled: false
+  enabled: true
+  serviceMonitor:
+    enabled: false
 ----
 
 . Install the `kube-prometheus-stack` chart in the `cattle-monitoring-system` namespace through the Rancher UI or via the Helm CLI, applying the `values.yaml` file from the previous step:
@@ -325,7 +354,7 @@ To deploy the `rancher-monitoring-dashboards` chart using the Rancher UI:
 . Click *Install*.
 . In the *Namespace* dropdown, select *cattle-monitoring-system*.
 . Click *Next*.
-. The default `values.yaml` sets the upstream services name to the default value provided by the upstream `kube-prometheus-stack` and NGINX image. When using values provided by the SUSE Application Collection, you must modify the names of the services and the images. The following is an example with modified chart values:
+. The default `values.yaml` sets the upstream services name to the default value provided by the upstream `kube-prometheus-stack` and NGINX image. When using values provided by the SUSE Application Collection, you must modify the names of the services and the images. Check the https://apps.rancher.io/[SUSE AppCo] website for the latest patch of each image minor to take advantage of images with lower CVE impact when configuring. The following is an example with modified chart values:
 +
 .Click to expand
 [%collapsible]
@@ -372,7 +401,7 @@ global:
   kubectl:
     pullPolicy: IfNotPresent
     repository: rancher/kuberlr-kubectl
-    tag: v7.0.1
+    tag: v7.0.1 #The latest minor/version from https://github.com/rancher/kuberlr-kubectl/releases
   rbac:
     create: true
     userRoles:
@@ -402,8 +431,6 @@ hardened:
       enabled: false
 hardenedNodeExporter:
   enabled: false
-k3sServer:
-  enabled: true
 kubeStateMetrics:
   enabled: false
 kubeTargetVersionOverride: ''
@@ -433,6 +460,26 @@ rancherMonitoring:
   enabled: true
   prometheusServiceAccount: kube-prometheus-stack-prom-prometheus
   selector: {}
+----
+
+Depending on your distribution you will also need to add the following modifications to your `values.yaml` file:
+
+[,yaml]
+.K3s:
+----
+k3sServer:
+  enabled: true
+etcd:
+  enabled: false
+----
+
+[,yaml]
+.RKE2 or distributions with etcd:
+----
+etcd:
+  enabled: true
+k3sServer:
+  enabled: false
 ----
 ======
 
@@ -569,20 +616,26 @@ ifeval::["{build-type}" != "community"]
 ====
 * **Mandatory Image Configuration:** Default component images (Grafana, Prometheus, Alertmanager, etc.) are no longer provided by the chart. You must explicitly supply image repositories and tags in your configuration.
 * The `chartSource.repo` URL must point strictly to the repository root directory, do not append `/index.yaml` to the URL: +https://raw.githubusercontent.com/rancher/ob-team-charts/refs/heads/main+.
-* Ensure you include the following in your `values.yaml` file to pull images from the SUSE Application Collection registry:
+* Ensure you create the AppCo secret in the namespace `cattle-project-<project_id>-monitoring` and note this must be done for all projects. Include the `imagePullSecrets` in your `values.yaml` file to pull images from the SUSE AppCo registry:
 +
 [,yaml]
 ----
-global:
-  imagePullSecrets: ["application-collection"]
+helmProjectOperator:
+  valuesOverride:
+    global:
+      imagePullSecrets:
+        - name: application-collection
+    grafana:
+      imagePullSecrets:
+        - name: application-collection
 ----
 ====
 
-If installing using the UI ensure all required fields under the **Project Monitoring Chart** and **Grafana Chart** tabs are filled respective to your `values.yaml` configuration, note the example UI view below. This changes the **image**, not the chart. At the moment it is not possible to choose what version of the Grafana chart is installed.
+If installing using the UI ensure all required fields under the **Project Monitoring Chart** and **Grafana Chart** tabs are filled respective to your `values.yaml` configuration, note the example UI view below. This changes the **images**, not the chart. At the moment it is not possible to choose what version of the Grafana chart is installed.
 
 image::UI-prometheus-example.png[UI Prometheus Charts Example]
 
-To supply the required Prometheus, Grafana, and Alertmanager images via Helm, specify them under `helmProjectOperator.valuesOverride` when deploying Prometheus Federator, for example Grafana:
+To supply the required Prometheus, Grafana, and Alertmanager images via Helm, specify them under `helmProjectOperator.valuesOverride` when deploying Prometheus Federator. Check the https://apps.rancher.io/[SUSE AppCo] website for the latest patch of each image minor to take advantage of images with lower CVE impact when configuring:
 
 [,yaml]
 ----
@@ -590,23 +643,23 @@ helmProjectOperator:
   valuesOverride:
     grafana:
       downloadDashboardsImage:
-        repository: rancher/appco-curl
-        tag: 8.14.1-7.1
+        repository: dp.apps.rancher.io/containers/curl
+        tag: 8.14.1
       image:
-        repository: rancher/appco-grafana
-        tag: 12.3.1-1.12
+        repository: dp.apps.rancher.io/containers/grafana
+        tag: 12.3.1
       imageRenderer:
         image:
-          repository: rancher/mirrored-grafana-grafana-image-renderer
+          repository: dp.apps.rancher.io/containers/grafana-image-renderer
           tag: v5.1.0
       initChownData:
         image:
-          repository: rancher/mirrored-library-busybox
+          repository: dp.apps.rancher.io/containers/bci-busybox
           tag: 1.31.1
       sidecar:
         image:
-          repository: rancher/appco-k8s-sidecar
-          tag: 2.1.2-1.10
+          repository: dp.apps.rancher.io/containers/k8s-sidecar
+          tag: 2.1.2
   chartSource:
     name: rancher-project-monitoring
     repo: https://raw.githubusercontent.com/rancher/ob-team-charts/refs/heads/main
