@@ -666,6 +666,260 @@ helmProjectOperator:
     version: 1.0.0
 ----
 
+[#_pushprox_alternative_using_prometheus_agent]
+=== Pushprox alternative using Prometheus Agent
+
+Previous versions of `rancher-monitoring` relied on a Rancher-maintained fork of PushProx to scrape metrics from components that bind exclusively to port `127.0.0.1`. These components include:
+
+* `kube-proxy`
+* `etcd`
+* `kube-scheduler`
+* `kube-controller-manager`
+
+This localhost binding strategy is standard across Kubernetes distributions, including K3s and RKE2, and aligns with CIS benchmark recommendations. Upstream PushProx lacks the custom features present in the Rancher fork, making it an unsuitable replacement.
+
+Note that authentication behavior varies across components:
+
+* `kube-scheduler` and `kube-controller-manager` require a valid bearer token for scrape requests.
+* `kube-proxy` and `etcd` do not enforce authentication, which remains secure because scrape requests operate entirely over the local loopback interface.
+
+To collect these local metrics, deploy a Prometheus Agent on each control-plane node. The agent scrapes all four targets over loopback and forwards the collected metrics to the primary Prometheus instance via `remote_write`. This approach avoids creating new listening ports or exposing control-plane network interfaces, offering a safer alternative to tools like `socat`.
+
+. First enable `remote-write` on the previously installed `kube-prometheus-stack chart`:
++
+[,shell]
+----
+helm upgrade kube-prometheus-stack oci://dp.apps.rancher.io/charts/prometheus-operator \
+    -n cattle-monitoring-system --reuse-values \
+    --set prometheus.prometheusSpec.enableRemoteWriteReceiver=true \
+    --wait
+----
+
+. Create the service that the Prometheus Agent will use to send metrics to the main Prometheus instance:
++
+[,shell]
+----
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-prometheus-stack-prom-prometheus-write
+  namespace: cattle-monitoring-system
+spec:
+  selector:
+    app.kubernetes.io/name: prometheus
+    operator.prometheus.io/name: kube-prometheus-stack-prom-prometheus
+  ports:
+    - name: remote-write
+      port: 9091
+      targetPort: 9091
+----
+
+. Create the CRD for the Prometheus Agent:
++
+[,shell]
+----
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: PrometheusAgent
+metadata:
+  name: control-plane-agent
+  namespace: cattle-monitoring-system
+spec:
+  replicas: <number_of_replicas>
+  hostNetwork: true
+  listenLocal: true
+  serviceAccountName: kube-prometheus-stack-prom-prometheus
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: "true"
+  tolerations:
+    - operator: Exists
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus-agent
+              operator.prometheus.io/name: control-plane-agent
+          topologyKey: kubernetes.io/hostname
+  scrapeConfigSelector:
+    matchLabels:
+      control-plane-agent: "true"
+  remoteWrite:
+    - url: https://kube-prometheus-stack-prom-prometheus-write.cattle-monitoring-system.svc:9091/api/v1/write
+      authorization:
+        type: Bearer
+        credentialsFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        insecureSkipVerify: true
+----
+
+. Create the `ScrapeConfig` that matches the `scrapeConfigSelector` above:
++
+[,shell]
+----
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: control-plane-agent-kube-proxy
+  namespace: cattle-monitoring-system
+  labels:
+    control-plane-agent: "true"
+spec:
+  jobName: kube-proxy
+  staticConfigs:
+    - targets: ["127.0.0.1:10249"]
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: control-plane-agent-kube-etcd
+  namespace: cattle-monitoring-system
+  labels:
+    control-plane-agent: "true"
+spec:
+  jobName: kube-etcd
+  staticConfigs:
+    - targets: ["127.0.0.1:2381"]
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: control-plane-agent-kube-scheduler
+  namespace: cattle-monitoring-system
+  labels:
+    control-plane-agent: "true"
+spec:
+  jobName: kube-scheduler
+  scheme: HTTPS
+  tlsConfig:
+    insecureSkipVerify: true
+  authorization:
+    credentials:
+      name: kube-prometheus-stack-prom-prometheus-token
+      key: token
+  staticConfigs:
+    - targets: ["127.0.0.1:10259"]
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: control-plane-agent-kube-controller-manager
+  namespace: cattle-monitoring-system
+  labels:
+    control-plane-agent: "true"
+spec:
+  jobName: kube-controller-manager
+  scheme: HTTPS
+  tlsConfig:
+    insecureSkipVerify: true
+  authorization:
+    credentials:
+      name: kube-prometheus-stack-prom-prometheus-token
+      key: token
+  staticConfigs:
+    - targets: ["127.0.0.1:10257"]
+----
+
+At this point, the Prometheus Agent is fully configured to scrape metrics from the control-plane components and forward them to the existing Prometheus instance.
+
+[#_optional_security_hardening]
+==== Optional Security Hardening
+
+Prometheus' `remote_write` receiver (`--web.enable-remote-write-receiver`) lacks built-in authentication capabilities, and `prometheus-operator` does not currently provide a CRD field to configure receiver authentication. For more details on this limitation, refer to the https://github.com/prometheus-operator/prometheus-operator/issues/4200[upstream prometheus-operator issue].
+
+Leaving the receiver unauthenticated exposes the endpoint and increases the cluster's attack surface. To mitigate this risk, deploy `kube-rbac-proxy` as a sidecar container to enforce RBAC authentication and authorization in front of the `remote_write` receiver.
+
+. First create the `configmap` that will hold the configuration file for the proxy:
++
+[,shell]
+----
+ kubectl create configmap kube-rbac-proxy-remote-write-config \
+   -n cattle-monitoring-system \
+   --from-literal=config-file.yaml='authorization:
+   resourceAttributes:
+     namespace: cattle-monitoring-system
+     apiVersion: v1
+     resource: services
+     subresource: remote-write
+     name: kube-prometheus-stack-prom-prometheus-write'
+----
+
+. Give the appropriate permissions to the `serviceAccount`:
++
+[,shell]
+----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-prometheus-stack-prom-prometheus-auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: kube-prometheus-stack-prom-prometheus
+    namespace: cattle-monitoring-system
+roleRef:
+  kind: ClusterRole
+  name: system:auth-delegator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: control-plane-agent-remote-write
+rules:
+  - apiGroups: [""]
+    resources: ["services/remote-write"]
+    resourceNames: ["kube-prometheus-stack-prom-prometheus-write"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: control-plane-agent-remote-write
+subjects:
+  - kind: ServiceAccount
+    name: kube-prometheus-stack-prom-prometheus
+    namespace: cattle-monitoring-system
+roleRef:
+  kind: ClusterRole
+  name: control-plane-agent-remote-write
+  apiGroup: rbac.authorization.k8s.io
+----
+
+. Lastly, in the `kube-prometheus-stack` chart, under `prometheus.PrometheusSpec.containers` add the following:
++
+[,yaml]
+----
+ containers:
+   - name: kube-rbac-proxy-remote-write
+     image: dp.apps.rancher.io/containers/kube-rbac-proxy:0.23.0  
+     args:
+       - --secure-listen-address=0.0.0.0:9091
+       - --upstream=http://127.0.0.1:9090/
+       - --config-file=/etc/kube-rbac-proxy/config-file.yaml
+       - --logtostderr=true
+       - --v=2
+     ports:
+       - containerPort: 9091
+         name: remote-write
+     volumeMounts:
+       - name: kube-rbac-proxy-config
+         mountPath: /etc/kube-rbac-proxy
+     resources:
+       requests: { cpu: 10m, memory: 32Mi }
+       limits: { cpu: 100m, memory: 64Mi }
+ volumes:
+   - name: kube-rbac-proxy-config
+     configMap:
+       name: kube-rbac-proxy-remote-write-config
+----
++
+[IMPORTANT]
+====
+
+* Port numbers 10249, 10257, 10259, 2381, node role labels, and whether kube-proxy is loopback-bound can differ by distribution and Kubernetes version. Check with `ss -tln` on a node directly before using the configuration outside of K3s or RKE2.
+
+* Resources requests and limits are examples and should be configured based on the cluster size and workload requirements.
+====
+
 endif::[]
 
 [#_default_components_and_deployments]
