@@ -251,11 +251,11 @@ The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an An
     Refer to the {xref-tuning-rancher-at-scale}[Tuning and Best Practices for at Scale] guide for details.
     ```
 
-#### Referencing other Product Documentation URLs
+#### Cross Project Documentation Links
 
-URLs pointing to other products in the portfolio must also be single-sourced via attributes in the metadata section rather than written as static URLs. Portfolio products maintain separate documentation domains for community and SUSE product variants, so hardcoding them introduces domain leakage.
+Links pointing to other documentation URLs in the portfolio must also be single-sourced via attributes in the metadata section rather than written as static URLs. Portfolio projects (RKE2, K3s, Harvester, Longhorn, Fleet, etc.) maintain separate documentation domains for community and SUSE product variants, so hardcoding them introduces domain leakage.
 
-##### Single-Sourcing Project URLs in the Document Header
+##### Single-Sourcing Project Documentation URLs
 
 1. Add the URL attribute definitions near the top  of the `.adoc` page in the header metadata block based on the build type:
 
@@ -268,7 +268,7 @@ URLs pointing to other products in the portfolio must also be single-sourced via
     :url-rke2-intro: https://docs.rke2.io/
     :url-k3s-intro: https://docs.k3s.io/
     endif::[]
-   ```
+    ```
 
 1. Reference the URL attribute in the body text using `{attribute-name}[link text]`:
 
