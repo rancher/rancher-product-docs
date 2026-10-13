@@ -253,7 +253,7 @@ The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an An
 
 #### Cross Project Documentation Links
 
-Links pointing to other documentation URLs in the portfolio must also be single-sourced via attributes in the metadata section rather than written as static URLs. Portfolio projects (RKE2, K3s, Harvester, Longhorn, Fleet, etc.) maintain separate documentation domains for community and SUSE product variants, so hardcoding them introduces domain leakage.
+When linking to portfolio projects that maintain separate documentation domains for community and SUSE product variants, single-source the target URLs using attributes in the metadata section. Hardcoding URLs for these dual-variant projects introduces domain leakage across site builds. If a project only maintains a single documentation site, single-sourcing the target URL is not required.
 
 ##### Single-Sourcing Project Documentation URLs
 
