@@ -233,7 +233,7 @@ The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an An
 
 ##### Attribute-Based Path Substitution for Inline Links
 
-1. Set a file path attribute near the top of the .adoc file based on the build type:
+1. Set a file path attribute  near the top  of the `.adoc` page in the header metadata block based on the build type:
 
     ```asciidoc
     ifeval::["{build-type}" != "community"]
@@ -250,6 +250,35 @@ The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an An
     ```asciidoc
     Refer to the {xref-tuning-rancher-at-scale}[Tuning and Best Practices for at Scale] guide for details.
     ```
+
+#### Referencing other Product Documentation URLs
+
+URLs pointing to other products in the portfolio must also be single-sourced via attributes in the metadata section rather than written as static URLs. Portfolio products maintain separate documentation domains for community and SUSE product variants, so hardcoding them introduces domain leakage.
+
+##### Single-Sourcing Project URLs in the Document Header
+
+1. Add the URL attribute definitions near the top  of the `.adoc` page in the header metadata block based on the build type:
+
+    ```asciidoc
+    ifeval::["{build-type}" != "community"]
+    :url-rke2-intro: https://documentation.suse.com/cloudnative/rke2/latest/en/introduction.html
+    :url-k3s-intro: https://documentation.suse.com/cloudnative/k3s/latest/en/introduction.html
+    endif::[]
+    ifeval::["{build-type}" == "community"]
+    :url-rke2-intro: https://docs.rke2.io/
+    :url-k3s-intro: https://docs.k3s.io/
+    endif::[]
+   ```
+
+1. Reference the URL attribute in the body text using `{attribute-name}[link text]`:
+
+    ```asciidoc
+    For more information, see the {url-rke2-intro}[RKE2 Introduction] or the {url-k3s-intro}[K3s Introduction].
+    ```
+
+> [!TIP]
+> **Naming Convention:** Prefix project link attributes with `:url-<project>-<topic>:` (e.g., `:url-rke2-intro:`, `:url-k3s-intro:`, `:url-harvester-storage:`) to distinguish them from internal `:xref-...:` attributes.
+> **Full URLs Only:** Define complete target URLs within the conditional attribute blocks. Avoid constructing links inline with base URL attributes (e.g., do not write `{url-base-rke2}/install`).
 
 #### Updating Navigation
 
