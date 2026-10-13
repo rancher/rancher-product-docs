@@ -233,7 +233,7 @@ The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an An
 
 ##### Attribute-Based Path Substitution for Inline Links
 
-1. Set a file path attribute  near the top  of the `.adoc` page in the header metadata block based on the build type:
+1. Set a file path attribute in the `.adoc` documentation file in the header metadata block based on the build type:
 
     ```asciidoc
     ifeval::["{build-type}" != "community"]
@@ -257,7 +257,7 @@ Links pointing to other documentation URLs in the portfolio must also be single-
 
 ##### Single-Sourcing Project Documentation URLs
 
-1. Add the URL attribute definitions near the top  of the `.adoc` page in the header metadata block based on the build type:
+1. Add the URL attribute definitions in the `.adoc` file in the header metadata block based on the build type:
 
     ```asciidoc
     ifeval::["{build-type}" != "community"]
