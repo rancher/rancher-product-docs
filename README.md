@@ -34,16 +34,16 @@ If you don't have Node.js installed on your machine, install it, preferably via 
 
 #### Git Submodules
 
-This repository uses [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules) to manage some of its dependencies, including the Antora files that provide the custom GUI for the documentation website. Run the command below to initialize the submodules.
+This repository uses [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules) to manage some of its dependencies, including the Antora files that provide the custom GUI for the documentation website. Run the command below to initialize the submodules recursively (including any nested submodules).
 
 ```
-git submodule update --init
+git submodule update --init --recursive
 ```
 
 After initializing, and whenever the referenced commits for the submodules are updated in the repository (such as after a `git pull`), you need to use the `update` command to fetch the latest data for the submodules:
 
 ```
-git submodule update
+git submodule update --recursive
 ```
 
 #### Node Modules
@@ -276,7 +276,7 @@ The list of available locales for each page is defined by the `:page-languages:`
 #### Troubleshooting Common Issues
 
 **Error:** `Antora documentation component not found` or CSS formatting looks completely broken.
-**Fix:** You likely forgot to initialize the submodules. Run `git submodule update --init` and rebuild.
+**Fix:** You likely forgot to initialize the submodules. Run `git submodule update --init --recursive` and rebuild.
 
 **Error:**  `npm ERR! code EBADENGINE` or dependency conflicts.
 **Fix:** Ensure you are using a modern Node.js LTS version (e.g., Node 18 or Node 20). If you used `npm install`, delete your `node_modules` directory and run `npm ci` instead.
