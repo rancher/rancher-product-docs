@@ -41,8 +41,8 @@ Documentation is built with **Antora** from **AsciiDoc** (`.adoc`) source files.
 - **Mandatory Header Path Attributes**:
   Every `.adoc` page must declare its relative path in both trees at the very top. It also needs to define a short description of the page, the revision date, and the list of other languages if other translations of the page exist:
   ```asciidoc
-  :community-path: reference-guides/kubernetes-concepts.adoc
-  :product-path: about-rancher/concepts.adoc
+  :page-community-path: reference-guides/kubernetes-concepts.adoc
+  :page-product-path: about-rancher/concepts.adoc
   :description: Explain Kubernetes concepts important for understanding Rancher, covering clusters, nodes, etcd, control plane, worker nodes, and Helm, with a simplified explanation
   :revdate: 2025-08-27
   :page-revdate: {revdate}
