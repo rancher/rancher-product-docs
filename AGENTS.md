@@ -55,7 +55,7 @@ Documentation is built with **Antora** from **AsciiDoc** (`.adoc`) source files.
   - `"{build-type}" == "srfa"`: SUSE Rancher for AWS only
   - `"{build-type}" != "srfa"`: Applies to both Community and Prime, excluded from SRFA
 - **Mandatory Explicit Heading Anchors**:
-  Every section heading (`==`, `===`, etc.) **must** have an explicit anchor placed on the line immediately preceding it. Auto-generated anchors break during translation.
+  Every section heading (`==`, `===`, etc.) **must** have an explicit Antora-style anchor (`[#_anchor_name]`) placed on the line immediately preceding it. Format the anchor ID in lowercase, prefixed with an underscore (`_`), with words separated by underscores (`_`) and punctuation removed. Auto-generated anchors break during translation.
   ```asciidoc
   [#_configuring_storage]
   == Configuring Storage

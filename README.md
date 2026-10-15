@@ -14,7 +14,7 @@ This repository uses [Antora](https://docs.antora.org/antora/latest/) to build [
 
 You need git to get the source code of this repository. Run the command below to check whether git is installed on your machine.
 
-```
+```bash
 git --version
 ```
 
@@ -24,7 +24,7 @@ If you don't have git installed on your machine, it is recommended to install it
 
 Antora requires an active long term support (LTS) release of Node.js. Run the command below to check if you have Node.js installed, and which version. This command should return an [active Node.js LTS version number](https://nodejs.org/en/about/releases/).
 
-```
+```bash
 node -v
 ```
 
@@ -36,13 +36,13 @@ If you don't have Node.js installed on your machine, install it, preferably via 
 
 This repository uses [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules) to manage some of its dependencies, including the Antora files that provide the custom GUI for the documentation website. Run the command below to initialize the submodules recursively (including any nested submodules).
 
-```
+```bash
 git submodule update --init --recursive
 ```
 
 After initializing, and whenever the referenced commits for the submodules are updated in the repository (such as after a `git pull`), you need to use the `update` command to fetch the latest data for the submodules:
 
-```
+```bash
 git submodule update --recursive
 ```
 
@@ -50,7 +50,7 @@ git submodule update --recursive
 
 Open a terminal at the root of the git repository. Run the command below.
 
-```
+```bash
 npm ci
 ```
 
@@ -66,13 +66,13 @@ If you want to build and view the documentation content from your local machine,
 
 Run the command below to build the site using your chosen playbook file, replacing `<PLAYBOOK_FILE>` with the respective playbook:
 
-```
+```bash
 npx antora <PLAYBOOK_FILE>
 ```
 
 To preview the built documentation using a local HTTP server, run the command below, replacing `<SITE_DIRECTORY>` with the corresponding build output directory (for example, `build/site-product-local`, `build/site-community-local`, or `build/site-srfa-local`):
 
-```
+```bash
 npx http-server <SITE_DIRECTORY> -c-1
 ```
 
@@ -134,13 +134,13 @@ For product docs, the directory structure is as follows:
 
 - `versions/<VERSION>/modules/<LOCALE>/pages/`
 
-To define the location of the documentation page in the product `versions` documentation tree and its community symlink counterpart in the `community-docs` tree, use the `:community-path:` and `:product-path:` attributes at the top of the AsciiDoc file.
+To define the location of the documentation page in the product `versions` documentation tree and its community symlink counterpart in the `community-docs` tree, use the `:page-community-path:` and `:page-product-path:` attributes at the top of the AsciiDoc file.
 
 For example:
 
 ```asciidoc
-:community-path: reference-guides/kubernetes-concepts.adoc 
-:product-path: about-rancher/concepts.adoc
+:page-community-path: reference-guides/kubernetes-concepts.adoc 
+:page-product-path: about-rancher/concepts.adoc
 ```
 
 Other asset files (for example, images) have their own subdirectories. For example, `versions/<VERSION>/modules/en/images`.
@@ -218,6 +218,7 @@ xref:#_my_anchor[My Anchor]
 > ```asciidoc
 > xref:installation/requirements.adoc[System Requirements]
 > ```
+>
 > For more information, refer to the [Antora Xref documentation](https://docs.antora.org/antora/latest/page/xref/).
 
 #### Cross-References (xrefs)
@@ -229,7 +230,7 @@ Always use a xref instead of hardcoding absolute domain URLs (such as [https://d
 The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an Antora resource ID (relative to the `pages` directory) specifying a publishable page. For example, the resource ID for [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) is `installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc`.
 
 > [!TIP]
-> To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
+> To find the product or community file path of a file, go to the header block of the docs file and find the `:page-product-path:` or `:page-community-path:` attribute.
 
 ##### Attribute-Based Path Substitution for Inline Links
 
