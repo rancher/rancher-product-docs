@@ -1,7 +1,7 @@
 = Helm CLI Quick Start
 :description: Use Helm CLI to install and configure a Kubernetes cluster by running commands on a Linux machine and access the cluster using the kubeconfig file
 :page-languages: [en, de, es, fr, ja, pt, zh]
-:revdate: 2026-07-20
+:revdate: 2026-10-15
 :page-revdate: {revdate}
 :page-community-path: getting-started/quick-start-guides/deploy-rancher-manager/helm-cli.adoc 
 :page-product-path: installation-and-upgrade/quick-start/deploy-rancher/helm-cli.adoc
@@ -11,6 +11,7 @@ ifeval::["{build-type}" != "community"]
 :xref-install-reqs: xref:installation-and-upgrade/requirements/requirements.adoc
 :xref-setup-ec2-nodes: xref:installation-and-upgrade/infrastructure-setup/nodes-in-amazon-ec2.adoc
 :xref-bootstrap-password: xref:installation-and-upgrade/resources/bootstrap-password.adoc
+:url-k3s-ha-embedded: https://documentation.suse.com/cloudnative/k3s/latest/en/datastore/ha-embedded.html
 endif::[]
 ifeval::["{build-type}" == "community"]
 :xref-install-rancher: xref:getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/index.adoc
@@ -18,6 +19,7 @@ ifeval::["{build-type}" == "community"]
 :xref-install-reqs: xref:getting-started/installation-and-upgrade/installation-requirements/index.adoc 
 :xref-setup-ec2-nodes: xref:how-to-guides/new-user-guides/infrastructure-setup/nodes-in-amazon-ec2.adoc
 :xref-bootstrap-password: xref:getting-started/installation-and-upgrade/resources/bootstrap-password.adoc 
+:url-k3s-ha-embedded: https://rancher.com/docs/k3s/latest/en/installation/ha-embedded/
 endif::[]
 
 These instructions capture a quick way to set up a proof-of-concept Rancher installation.
@@ -35,6 +37,25 @@ The full installation requirements are {xref-install-reqs}[here].
 
 Rancher needs to be installed on a supported Kubernetes version. To find out which versions of Kubernetes are supported for your Rancher version, refer to the https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/[Rancher Support Matrix].
 
+ifeval::["{build-type}" != "community"]
+To specify the K3s (Kubernetes) version, use the INSTALL_K3S_VERSION (e.g., `INSTALL_K3S_VERSION="v1.36.5+k3s1"`) environment variable when running the K3s installation script. You can use any {k3s-product-name} version listed on the Prime Artifacts URL. To learn more about the Prime Artifacts URL, see our https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[Prime-only documentation]. Authentication is required. Use your https://scc.suse.com/[SUSE Customer Center (SCC)] credentials to log in.
+
+Before you run the installation script, set `system-default-registry` to the SUSE Rancher Prime registry in the K3s configuration file. Without it, K3s pulls its system images, such as CoreDNS, Traefik and metrics-server, from Docker Hub:
+
+[,shell]
+----
+sudo mkdir -p /etc/rancher/k3s
+echo "system-default-registry: registry.rancher.com" | sudo tee -a /etc/rancher/k3s/config.yaml
+----
+
+Install a K3s cluster by running this command on the Linux machine, where `INSTALL_K3S_ARTIFACT_URL` is the Prime Artifacts URL:
+
+[,shell]
+----
+curl -sfL https://get.k3s.io | INSTALL_K3S_ARTIFACT_URL=<PRIME-ARTIFACTS-URL>/k3s INSTALL_K3S_VERSION=<VERSION> sh -s - server --cluster-init
+----
+endif::[]
+ifeval::["{build-type}" == "community"]
 To specify the K3s (Kubernetes) version, use the INSTALL_K3S_VERSION (e.g., `INSTALL_K3S_VERSION="v1.24.10+k3s1"`) environment variable when running the K3s installation script.
 
 Install a K3s cluster by running this command on the Linux machine:
@@ -43,8 +64,9 @@ Install a K3s cluster by running this command on the Linux machine:
 ----
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<VERSION> sh -s - server --cluster-init
 ----
+endif::[]
 
-Using `--cluster-init` allows K3s to use embedded etcd as the datastore and has the ability to convert to an HA setup. Refer to https://rancher.com/docs/k3s/latest/en/installation/ha-embedded/[High Availability with Embedded DB].
+Using `--cluster-init` allows K3s to use embedded etcd as the datastore and has the ability to convert to an HA setup. Refer to {url-k3s-ha-embedded}[High Availability with Embedded DB].
 
 Save the IP of the Linux machine.
 
@@ -123,41 +145,62 @@ Once edited, either press `ctrl+s` or go to `File > Save` to save your work.
 
 Then from your local workstation, run the following commands. You will need to have https://kubernetes.io/docs/tasks/tools/#kubectl[kubectl] and https://helm.sh/docs/intro/install/[helm] installed.
 
+ifeval::["{build-type}" != "community"]
+[,shell]
+----
+helm repo add rancher-prime <helm-chart-repo-url>
+
+helm repo update
+----
+
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
+
+Rancher uses cert-manager to issue its certificates. https://docs.apps.rancher.io/[SUSE Application Collection] provides a {rancher-product-name} compatible cert-manager chart. To install it, https://docs.apps.rancher.io/get-started/authentication[authenticate] with your Application Collection username and access token, create the image pull secret, and install the chart:
+
+[NOTE]
+====
+To see options on how to customize the cert-manager install, see the https://apps.rancher.io/applications/cert-manager[cert-manager chart in SUSE Application Collection].
+====
+
+[,shell]
+----
+kubectl create namespace cattle-system
+
+kubectl create namespace cert-manager
+
+helm registry login dp.apps.rancher.io -u <APPCO_USERNAME> -p <APPCO_ACCESS_TOKEN>
+
+kubectl create secret docker-registry application-collection \
+  --namespace cert-manager \
+  --docker-server=dp.apps.rancher.io \
+  --docker-username=<APPCO_USERNAME> \
+  --docker-password=<APPCO_ACCESS_TOKEN>
+
+helm install cert-manager oci://dp.apps.rancher.io/charts/cert-manager \
+  --namespace cert-manager \
+  --set "global.imagePullSecrets={application-collection}" \
+  --set crds.enabled=true
+
+# Windows Powershell
+kubectl create secret docker-registry application-collection `
+  --namespace cert-manager `
+  --docker-server=dp.apps.rancher.io `
+  --docker-username=<APPCO_USERNAME> `
+  --docker-password=<APPCO_ACCESS_TOKEN>
+
+helm install cert-manager oci://dp.apps.rancher.io/charts/cert-manager `
+  --namespace cert-manager `
+  --set "global.imagePullSecrets={application-collection}" `
+  --set crds.enabled=true
+----
+endif::[]
+ifeval::["{build-type}" == "community"]
 [NOTE]
 ====
 
 To see options on how to customize the cert-manager install (including for cases where your cluster uses PodSecurityPolicies), see the https://artifacthub.io/packages/helm/cert-manager/cert-manager#configuration[cert-manager docs].
 ====
 
-ifeval::["{build-type}" != "community"]
-[,shell]
-----
-helm repo add rancher-prime <helm-chart-repo-url>
-----
-
-include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
-
-[,shell]
-----
-kubectl create namespace cattle-system
-
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/<VERSION>/cert-manager.crds.yaml
-
-helm repo add jetstack https://charts.jetstack.io
-
-helm repo update
-
-helm install cert-manager jetstack/cert-manager \
-  --namespace cert-manager \
-  --create-namespace
-
-# Windows Powershell
-helm install cert-manager jetstack/cert-manager `
-  --namespace cert-manager `
-  --create-namespace
-----
-endif::[]
-ifeval::["{build-type}" == "community"]
 [,shell]
 ----
 helm repo add rancher-latest https://releases.rancher.com/server-charts/latest
@@ -183,7 +226,7 @@ endif::[]
 
 The final command to install Rancher is below. The command requires a domain name that forwards traffic to the Linux machine. For the sake of simplicity in this tutorial, you can use a fake domain name to create your proof-of-concept. An example of a fake domain name would be `<IP_OF_LINUX_NODE>.sslip.io`.
 
-To install a specific Rancher version, use the `--version` flag (e.g., `--version 2.6.6`). Otherwise, the latest Rancher is installed by default.
+To install a specific Rancher version, use the `--version` flag (e.g., `--version 2.15.2`). Otherwise, the latest Rancher is installed by default.
 
 See {xref-bootstrap-password}#_password_requirements[Setting up the Bootstrap Password] for password requirements.
 
