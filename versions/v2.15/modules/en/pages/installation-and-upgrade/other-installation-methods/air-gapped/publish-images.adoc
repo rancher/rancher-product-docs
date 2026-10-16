@@ -1,7 +1,7 @@
 = 2. Collect and Publish Images to your Private Registry
 :description: Collect and publish container images to a private registry for an air-gapped Rancher installation on Kubernetes clusters with Linux and Windows nodes
 :page-languages: [en, de, es, fr, ja, pt, zh]
-:revdate: 2026-07-27
+:revdate: 2026-10-16
 :page-revdate: {revdate}
 :page-community-path: getting-started/installation-and-upgrade/other-installation-methods/air-gapped-helm-cli-install/publish-images.adoc 
 :page-product-path: installation-and-upgrade/other-installation-methods/air-gapped/publish-images.adoc
@@ -83,7 +83,12 @@ endif::[]
 | This file contains a list of images needed to install Rancher, provision clusters and user Rancher tools.
 
 | `rancher-save-images.sh`
+ifeval::["{build-type}" != "community"]
+| This script pulls all the images in an image list, such as `rancher-images.txt`, and saves them as `rancher-images.tar.gz`. Use `--source-registry registry.rancher.com` to pull the Rancher images from the SUSE Rancher Prime registry.
+endif::[]
+ifeval::["{build-type}" == "community"]
 | This script pulls all the images in the `rancher-images.txt` from Docker Hub and saves all of the images as `rancher-images.tar.gz`.
+endif::[]
 
 | `rancher-load-images.sh`
 | This script loads images from the `rancher-images.tar.gz` file and pushes them to your private registry.
@@ -98,6 +103,28 @@ endif::[]
 Skip this step if you are using your own certificates, or if you are terminating TLS on an external load balancer.
 ====
 
+ifeval::["{build-type}" != "community"]
+In a Kubernetes Install, if you elect to use the Rancher default self-signed TLS certificates, you must also collect the images of the https://apps.rancher.io/applications/cert-manager[cert-manager chart from SUSE Application Collection] in a separate image list, `cert-manager-images.txt`. Don't add them to `rancher-images.txt`: the Rancher images are pulled with `--source-registry registry.rancher.com`, and the scripts add the source registry to every entry of the list.
+
+. Log in to the SUSE Application Collection registry with your https://docs.apps.rancher.io/get-started/authentication[Application Collection username and access token]. Helm uses the login to pull the chart, and Docker uses it when `rancher-save-images.sh` pulls the cert-manager images:
++
+[,console]
+----
+helm registry login dp.apps.rancher.io -u <APPCO_USERNAME> -p <APPCO_ACCESS_TOKEN>
+docker login dp.apps.rancher.io -u <APPCO_USERNAME> -p <APPCO_ACCESS_TOKEN>
+----
+
+. Pull the cert-manager chart and parse the template for image details:
++
+[,console]
+----
+helm pull oci://dp.apps.rancher.io/charts/cert-manager --version <CERT_MANAGER_VERSION>
+helm template ./cert-manager-<CERT_MANAGER_VERSION>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g | sort -u > ./cert-manager-images.txt
+----
++
+Keep the `cert-manager-<CERT_MANAGER_VERSION>.tgz` file. You need it to install cert-manager in xref:./install-rancher-ha.adoc#_1_install_cert_manager[4. Install {rancher-product-name}].
+endif::[]
+ifeval::["{build-type}" == "community"]
 In a Kubernetes Install, if you elect to use the Rancher default self-signed TLS certificates, you must add the https://artifacthub.io/packages/helm/cert-manager/cert-manager[`cert-manager`] image to `rancher-images.txt` as well.
 
 . Fetch the latest `cert-manager` Helm chart and parse the template for image details:
@@ -114,6 +141,7 @@ helm repo update
 helm fetch jetstack/cert-manager
 helm template ./cert-manager-<version>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> ./rancher-images.txt
 ----
+endif::[]
 
 . Sort and unique the images list to remove any overlap between the sources:
 +
@@ -141,6 +169,32 @@ head rancher-images.txt
 chmod +x rancher-save-images.sh
 ----
 
+ifeval::["{build-type}" != "community"]
+. Run `rancher-save-images.sh` with the `rancher-images.txt` image list to create a tarball of all the required images. Use `--source-registry registry.rancher.com` to pull the images from the SUSE Rancher Prime registry. Some entries of the list, such as the OCI Helm charts, are only available in this registry:
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./rancher-images.txt --source-registry registry.rancher.com
+----
+
+. If you collected the cert-manager images, save them in a separate tarball. Don't use `--source-registry`, because each entry of `cert-manager-images.txt` already includes its registry:
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./cert-manager-images.txt --images cert-manager-images.tar.gz
+----
+
+. *(Optional)* Specify a custom output file:
++
+[,console]
+----
+./rancher-save-images.sh \
+  --image-list ./rancher-images.txt \
+  --source-registry registry.rancher.com \
+  --images rancher-images-custom.tar.gz
+----
+endif::[]
+ifeval::["{build-type}" == "community"]
 . Run `rancher-save-images.sh` with the `rancher-images.txt` image list to create a tarball of all the required images:
 +
 [,console]
@@ -156,6 +210,7 @@ chmod +x rancher-save-images.sh
   --image-list ./rancher-images.txt \
   --images rancher-images-custom.tar.gz
 ----
+endif::[]
 +
 *Result:* Docker begins pulling the images used for an air-gap install. Be patient. This process takes a few minutes. If the image list contains OCI Helm charts and the Helm CLI fallback is used, the charts are saved to a `./rancher-oci-charts/` directory instead of the tarball.
 
@@ -192,12 +247,29 @@ The `rancher-images.txt` is expected to be on the workstation in the same direct
    chmod +x rancher-load-images.sh
 ----
 
+ifeval::["{build-type}" != "community"]
+. Use `rancher-load-images.sh` to extract, tag and push `rancher-images.txt` and `rancher-images.tar.gz` to your private registry. Use the same `--source-registry` that you used to save the images:
++
+[,console]
+----
+   ./rancher-load-images.sh --image-list ./rancher-images.txt --source-registry registry.rancher.com --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. If you saved the cert-manager images, copy `cert-manager-images.txt` and `cert-manager-images.tar.gz` to the same directory and push them to your private registry:
++
+[,console]
+----
+   ./rancher-load-images.sh --image-list ./cert-manager-images.txt --images cert-manager-images.tar.gz --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+endif::[]
+ifeval::["{build-type}" == "community"]
 . Use `rancher-load-images.sh` to extract, tag and push `rancher-images.txt` and `rancher-images.tar.gz` to your private registry:
 +
 [,console]
 ----
    ./rancher-load-images.sh --image-list ./rancher-images.txt --registry <REGISTRY.YOURDOMAIN.COM:PORT>
 ----
+endif::[]
 --
 
 Linux and Windows Clusters::
@@ -328,8 +400,14 @@ The workstation must have Docker 18.02+ in order to support manifests, which are
 [pass]
 <h3><a id="_1_find_the_required_assets_for_your_rancher_version"></a>1. Find the required assets for your Rancher version</h3>
 
+ifeval::["{build-type}" != "community"]
+. Go to the https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[Prime Artifacts URL] and find the Rancher v2.x.x release that you want to install, and click *show*.
+. Download the following files:
+endif::[]
+ifeval::["{build-type}" == "community"]
 . Browse to our https://github.com/rancher/rancher/releases[releases page] and find the Rancher v2.x.x release that you want to install. Don't download releases marked `rc` or `Pre-release`, as they are not stable for production environments. Click *Assets*.
 . From the release's *Assets* section, download the following files:
+endif::[]
 
 |===
 | Release File | Description
@@ -341,7 +419,12 @@ The workstation must have Docker 18.02+ in order to support manifests, which are
 | This file contains a list of images needed to provision Windows clusters.
 
 | `rancher-save-images.sh`
+ifeval::["{build-type}" != "community"]
+| This script pulls all the images in an image list, such as `rancher-images.txt`, and saves them as `rancher-images.tar.gz`. Use `--source-registry registry.rancher.com` to pull the Rancher images from the SUSE Rancher Prime registry.
+endif::[]
+ifeval::["{build-type}" == "community"]
 | This script pulls all the images in the `rancher-images.txt` from Docker Hub and saves all of the images as `rancher-images.tar.gz`.
+endif::[]
 
 | `rancher-load-images.sh`
 | This script loads images from the `rancher-images.tar.gz` file and pushes them to your private registry.
@@ -352,6 +435,28 @@ The workstation must have Docker 18.02+ in order to support manifests, which are
 [pass]
 <h3><a id="_2_collect_all_the_required_images"></a>2. Collect all the required images</h3>
 
+ifeval::["{build-type}" != "community"]
+*For Kubernetes Installs using Rancher Generated Self-Signed Certificate:* In a Kubernetes Install, if you elect to use the Rancher default self-signed TLS certificates, you must also collect the images of the https://apps.rancher.io/applications/cert-manager[cert-manager chart from SUSE Application Collection] in a separate image list, `cert-manager-images.txt`. Don't add them to `rancher-images.txt`: the Rancher images are pulled with `--source-registry registry.rancher.com`, and the scripts add the source registry to every entry of the list. You skip this step if you are using your own certificates.
+
+. Log in to the SUSE Application Collection registry with your https://docs.apps.rancher.io/get-started/authentication[Application Collection username and access token]. Helm uses the login to pull the chart, and Docker uses it when `rancher-save-images.sh` pulls the cert-manager images:
++
+[,console]
+----
+helm registry login dp.apps.rancher.io -u <APPCO_USERNAME> -p <APPCO_ACCESS_TOKEN>
+docker login dp.apps.rancher.io -u <APPCO_USERNAME> -p <APPCO_ACCESS_TOKEN>
+----
+
+. Pull the cert-manager chart and parse the template for image details:
++
+[,console]
+----
+helm pull oci://dp.apps.rancher.io/charts/cert-manager --version <CERT_MANAGER_VERSION>
+helm template ./cert-manager-<CERT_MANAGER_VERSION>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g | sort -u > ./cert-manager-images.txt
+----
++
+Keep the `cert-manager-<CERT_MANAGER_VERSION>.tgz` file. You need it to install cert-manager in xref:./install-rancher-ha.adoc#_1_install_cert_manager[4. Install {rancher-product-name}].
+endif::[]
+ifeval::["{build-type}" == "community"]
 *For Kubernetes Installs using Rancher Generated Self-Signed Certificate:* In a Kubernetes Install, if you elect to use the Rancher default self-signed TLS certificates, you must add the https://artifacthub.io/packages/helm/cert-manager/cert-manager[`cert-manager`] image to `rancher-images.txt` as well. You skip this step if you are using you using your own certificates.
 
 . Fetch the latest `cert-manager` Helm chart and parse the template for image details:
@@ -368,6 +473,7 @@ helm repo update
 helm fetch jetstack/cert-manager
 helm template ./cert-manager-<version>.tgz | awk '$1 ~ /image:/ {print $2}' | sed s/\"//g >> ./rancher-images.txt
 ----
+endif::[]
 
 . Sort and unique the images list to remove any overlap between the sources:
 +
@@ -388,12 +494,30 @@ sort -u rancher-images.txt -o rancher-images.txt
 chmod +x rancher-save-images.sh
 ----
 
+ifeval::["{build-type}" != "community"]
+. Run `rancher-save-images.sh` with the `rancher-images.txt` image list to create a tarball of all the required images. Use `--source-registry registry.rancher.com` to pull the images from the SUSE Rancher Prime registry. Some entries of the list, such as the OCI Helm charts, are only available in this registry:
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./rancher-images.txt --source-registry registry.rancher.com
+----
+
+. If you collected the cert-manager images, save them in a separate tarball. Don't use `--source-registry`, because each entry of `cert-manager-images.txt` already includes its registry:
++
+[,console]
+----
+./rancher-save-images.sh --image-list ./cert-manager-images.txt --images cert-manager-images.tar.gz
+----
+endif::[]
+ifeval::["{build-type}" == "community"]
 . Run `rancher-save-images.sh` with the `rancher-images.txt` image list to create a tarball of all the required images:
 +
 [,console]
 ----
 ./rancher-save-images.sh --image-list ./rancher-images.txt
 ----
+
+endif::[]
 
 *Result:* Docker begins pulling the images used for an air-gap install. Be patient. This process takes a few minutes. When the process completes, your current directory will output a tarball named `rancher-images.tar.gz`. Check that the output is in the directory. If the image list contains OCI Helm charts and the Helm CLI fallback is used, the charts are saved to a `./rancher-oci-charts/` directory instead of the tarball.
 
@@ -422,12 +546,32 @@ chmod +x rancher-load-images.sh
 
 . Use `rancher-load-images.sh` to extract, tag and push the images from `rancher-images.tar.gz` to your private registry:
 
+ifeval::["{build-type}" != "community"]
+Use the same `--source-registry` that you used to save the images:
+
+[,console]
+----
+./rancher-load-images.sh --image-list ./rancher-images.txt \
+   --windows-image-list ./rancher-windows-images.txt \
+   --source-registry registry.rancher.com \
+   --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. If you saved the cert-manager images, copy `cert-manager-images.txt` and `cert-manager-images.tar.gz` to the same directory and push them to your private registry:
++
+[,console]
+----
+./rancher-load-images.sh --image-list ./cert-manager-images.txt --images cert-manager-images.tar.gz --registry <REGISTRY.YOURDOMAIN.COM:PORT>
+----
+endif::[]
+ifeval::["{build-type}" == "community"]
 [,console]
 ----
 ./rancher-load-images.sh --image-list ./rancher-images.txt \
    --windows-image-list ./rancher-windows-images.txt \
    --registry <REGISTRY.YOURDOMAIN.COM:PORT>
 ----
+endif::[]
 --
 ======
 
