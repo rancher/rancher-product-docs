@@ -93,8 +93,11 @@ If you are unsure about the correct values to enter in the  user/group Search Ba
 | Service Account Password
 | The password for the service account.
 
+| Bind Mechanism
+| Defines the authentication mechanism used to bind to Active Directory. Valid options are `simple` and `ntlm`. Default: `simple`. For details on requirements and channel binding tokens, see <<_bind_mechanisms>>.
+
 | Default Login Domain
-| When you configure this field with the NetBIOS name of your AD domain, usernames entered without a domain (e.g. "jdoe") will automatically be converted to a slashed,  NetBIOS logon (e.g. "LOGIN_DOMAIN\jdoe") when binding to the AD server. If your users authenticate with the UPN (e.g. "jdoe@acme.com") as username then this field *must* be left empty.
+| The NetBIOS name of your Active Directory domain. When configured, user names entered without a domain prefix (such as `jdoe`) are automatically converted to a NetBIOS logon (`DOMAIN\jdoe`). This field is required when `Bind Mechanism` is set to `ntlm` and users log in with bare user names. If users authenticate with UPN format (`jdoe@example.com`) under simple bind, leave this field empty.
 
 | User Search Base
 | The Distinguished Name of the node in your directory tree from which to start searching for user objects. All users must be descendents of this base DN. For example: "ou=people,dc=acme,dc=com".
@@ -103,7 +106,62 @@ If you are unsure about the correct values to enter in the  user/group Search Ba
 | If your groups live under a different node than the one configured under `User Search Base` you will need to provide the Distinguished Name here. Otherwise leave it empty. For example: "ou=groups,dc=acme,dc=com".
 |===
 
-'''
+[#_bind_mechanisms]
+=== Bind mechanisms
+
+Rancher supports two bind mechanisms when communicating with Active Directory:
+
+* *Simple bind (`simple`)*: The default mechanism. Authenticates credentials by sending the user name and password over the LDAP connection. TLS or StartTLS must be enabled to protect credentials in transit.
+* *NTLM bind (`ntlm`)*: Authenticates using the NTLM protocol with a `tls-server-end-point` channel binding token (CBT). This satisfies environments enforcing LDAP channel binding and signing requirements.
+
+[IMPORTANT]
+.TLS or StartTLS required for NTLM bind
+====
+Setting `bindMechanism` to `ntlm` over an unencrypted LDAP connection causes Rancher to reject the configuration.
+
+To use NTLM bind, enable either *TLS* (LDAPS on port 636) or *StartTLS* (port 389).
+====
+
+[NOTE]
+.Domains with NTLM disabled
+====
+NTLM bind does not work in environments where Group Policy or security baselines disable NTLM authentication across the Active Directory domain. Support for Kerberos bind in NTLM-disabled environments is planned for a future release.
+====
+
+[#_supported_login_formats]
+==== Supported login formats
+
+The user name formats accepted by Rancher depend on the configured `bindMechanism`:
+
+[#tab-ad-login-formats]
+.Supported login formats by bind mechanism
+[cols="2,1,1,3",options="header"]
+|===
+| Login format | `simple` | `ntlm` | Description
+
+| `DOMAIN\user`
+| Supported
+| Supported
+| Down-level logon format using the NetBIOS domain prefix.
+
+| `user` (bare user name)
+| Supported
+| Supported*
+| Bare user name without domain prefix. *Under `ntlm`, bare user names require `Default Login Domain` to be configured.
+
+| `user@realm` (UPN)
+| Supported
+| Not supported
+| User Principal Name (UPN) format. Under `ntlm`, UPN logins fail with an explicit error.
+|===
+
+[WARNING]
+.Authentication disruption when downgrading Rancher
+====
+Downgrading Rancher from version 2.16 to an earlier version while `bindMechanism` is set to `ntlm` disables Active Directory authentication. Older versions do not recognize the `bindMechanism` field, ignore the parameter, and fall back to simple bind without channel binding tokens.
+
+Before downgrading Rancher to a version earlier than 2.16, set `bindMechanism` back to `simple` in your Active Directory configuration and ensure that your domain controllers permit simple binds.
+====
 
 [#_configure_user_group_schema]
 === Configure User/Group Schema
@@ -301,3 +359,32 @@ In the same way, we can observe that the value in the *memberOf* attribute in th
 == Annex: Troubleshooting
 
 If you are experiencing issues while testing the connection to the Active Directory server, first double-check the credentials entered for the service account as well as the search base configuration. You may also inspect the Rancher logs to help pinpointing the problem cause. Debug logs may contain more detailed information about the error. Please refer to xref:faq/technical-items.adoc#_how_can_i_enable_debug_logging[How can I enable debug logging] in this documentation.
+
+[#_troubleshoot_channel_binding_failures]
+=== LDAP channel binding failures (data 80090346)
+
+When Active Directory enforces LDAP channel binding and Rancher uses `bindMechanism: ntlm`, authentication can fail with LDAP error code `49` (`invalidCredentials`) and Windows subcode `80090346` (`SEC_E_BAD_BINDINGS`):
+
+[,console]
+----
+LDAP Result Code 49 "Invalid Credentials": 80090346: LdapErr: DSID-0C09056B, comment: AcceptSecurityContext error, data 80090346, v4563
+----
+
+The error `SEC_E_BAD_BINDINGS` indicates that the channel binding token (CBT) calculated from the TLS session does not match the token expected by the domain controller.
+
+Review the following common causes and remediations:
+
+TLS inspection or proxy termination::
+The `tls-server-end-point` channel binding token is computed from the TLS certificate presented by the Active Directory server. If an intermediate proxy, load balancer, or firewall performs SSL/TLS termination or certificate inspection between Rancher and the domain controller, the certificate hash differs from the certificate on the domain controller.
++
+*Remediation:* Configure intermediate proxies and load balancers to use TCP pass-through (Layer 4) for LDAPS traffic, allowing Rancher to establish a direct TLS session with the domain controller.
+
+Missing or incomplete CA certificate chain::
+If the certificate authority (CA) that issued the domain controller certificate is missing or incomplete in Rancher, certificate validation fails or binds to an unverified endpoint.
++
+*Remediation:* Verify that the complete CA certificate chain (including root and any intermediate certificates) is provided in the *Certificate* field during Active Directory configuration.
+
+UPN login format used with NTLM::
+Users who attempt to authenticate with their User Principal Name (`user@example.com`) receive an authentication error when `bindMechanism` is set to `ntlm`.
++
+*Remediation:* Instruct users to log in using the `DOMAIN\user` format, or configure *Default Login Domain* and have users log in with their bare user name.
