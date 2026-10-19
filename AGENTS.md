@@ -61,7 +61,6 @@ Documentation is built with **Antora** from **AsciiDoc** (`.adoc`) source files.
   == Configuring Storage
   ```
 - **Cross-References (`xref`)**:
-  - **Never hardcode absolute URLs** to `https://documentation.suse.com` or `https://ranchermanager.docs.rancher.com`.
   - Always use Antora `xref:` macros: `xref:path/to/page.adoc[Link Text]`.
   - If a target page has different paths in community vs. product builds, use attribute substitution:
     ```asciidoc
