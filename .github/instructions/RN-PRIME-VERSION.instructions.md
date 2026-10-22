@@ -16,7 +16,7 @@ The file to edit is `versions/__MINOR_VERSION__/modules/en/pages/release-notes/_
 The `.1` release carries over the content of the `.0` release notes. Do not clean up the file:
 
 1. Do not remove the `Security Fixes for Vulnerabilities` section.
-2. Do not remove the `What's New - SUSE Rancher Prime` section.
+2. Do not remove the `What's New` section. Its heading can be worded differently between releases, so match any `==` heading that starts with `What's New`.
 3. Do not remove any release notes under `Major Bug Fixes` or `Features and Enhancements` sections.
 4. Do not move any issues from `Behavior Changes` or `Known Issues` sections to `Previous Rancher Behavior Changes` or `Long-standing Known Issues`.
 

@@ -13,7 +13,7 @@ The file to edit is `versions/__MINOR_VERSION__/modules/en/pages/release-notes/_
 
 ## 1. Clean up the release notes file
 
-1. Remove the entire `What's New - SUSE Rancher Prime` section if found.
+1. Remove the entire `What's New` section if found. Its heading can be worded differently between releases, so match any `==` heading that starts with `What's New`.
 2. Remove the entire `Security Fixes for Vulnerabilities` section if found.
 3. Remove all bug fix release notes listed under `Major Bug Fixes` sections.
 4. Remove all feature enhancement release notes listed under `Features and Enhancements` sections.
