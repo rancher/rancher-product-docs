@@ -14,7 +14,7 @@ This repository uses [Antora](https://docs.antora.org/antora/latest/) to build [
 
 You need git to get the source code of this repository. Run the command below to check whether git is installed on your machine.
 
-```
+```bash
 git --version
 ```
 
@@ -24,7 +24,7 @@ If you don't have git installed on your machine, it is recommended to install it
 
 Antora requires an active long term support (LTS) release of Node.js. Run the command below to check if you have Node.js installed, and which version. This command should return an [active Node.js LTS version number](https://nodejs.org/en/about/releases/).
 
-```
+```bash
 node -v
 ```
 
@@ -34,23 +34,23 @@ If you don't have Node.js installed on your machine, install it, preferably via 
 
 #### Git Submodules
 
-This repository uses [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules) to manage some of its dependencies, including the Antora files that provide the custom GUI for the documentation website. Run the command below to initialize the submodules.
+This repository uses [git submodules](https://git-scm.com/book/en/v2/Git-Tools-Submodules) to manage some of its dependencies, including the Antora files that provide the custom GUI for the documentation website. Run the command below to initialize the submodules recursively (including any nested submodules).
 
-```
-git submodule update --init
+```bash
+git submodule update --init --recursive
 ```
 
 After initializing, and whenever the referenced commits for the submodules are updated in the repository (such as after a `git pull`), you need to use the `update` command to fetch the latest data for the submodules:
 
-```
-git submodule update
+```bash
+git submodule update --recursive
 ```
 
 #### Node Modules
 
 Open a terminal at the root of the git repository. Run the command below.
 
-```
+```bash
 npm ci
 ```
 
@@ -66,13 +66,13 @@ If you want to build and view the documentation content from your local machine,
 
 Run the command below to build the site using your chosen playbook file, replacing `<PLAYBOOK_FILE>` with the respective playbook:
 
-```
+```bash
 npx antora <PLAYBOOK_FILE>
 ```
 
 To preview the built documentation using a local HTTP server, run the command below, replacing `<SITE_DIRECTORY>` with the corresponding build output directory (for example, `build/site-product-local`, `build/site-community-local`, or `build/site-srfa-local`):
 
-```
+```bash
 npx http-server <SITE_DIRECTORY> -c-1
 ```
 
@@ -134,13 +134,13 @@ For product docs, the directory structure is as follows:
 
 - `versions/<VERSION>/modules/<LOCALE>/pages/`
 
-To define the location of the documentation page in the product `versions` documentation tree and its community symlink counterpart in the `community-docs` tree, use the `:community-path:` and `:product-path:` attributes at the top of the AsciiDoc file.
+To define the location of the documentation page in the product `versions` documentation tree and its community symlink counterpart in the `community-docs` tree, use the `:page-community-path:` and `:page-product-path:` attributes at the top of the AsciiDoc file.
 
 For example:
 
 ```asciidoc
-:community-path: reference-guides/kubernetes-concepts.adoc 
-:product-path: about-rancher/concepts.adoc
+:page-community-path: reference-guides/kubernetes-concepts.adoc 
+:page-product-path: about-rancher/concepts.adoc
 ```
 
 Other asset files (for example, images) have their own subdirectories. For example, `versions/<VERSION>/modules/en/images`.
@@ -218,6 +218,7 @@ xref:#_my_anchor[My Anchor]
 > ```asciidoc
 > xref:installation/requirements.adoc[System Requirements]
 > ```
+>
 > For more information, refer to the [Antora Xref documentation](https://docs.antora.org/antora/latest/page/xref/).
 
 #### Cross-References (xrefs)
@@ -229,11 +230,11 @@ Always use a xref instead of hardcoding absolute domain URLs (such as [https://d
 The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an Antora resource ID (relative to the `pages` directory) specifying a publishable page. For example, the resource ID for [https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html](https://documentation.suse.com/cloudnative/rancher-manager/v2.14/en/installation-and-upgrade/best-practices/tuning-rancher-at-scale.html) is `installation-and-upgrade/best-practices/tuning-rancher-at-scale.adoc`.
 
 > [!TIP]
-> To find the product or community file path of a file, go to the header block of the docs file and find the `:product-path:` or `:community-path:` attribute.
+> To find the product or community file path of a file, go to the header block of the docs file and find the `:page-product-path:` or `:page-community-path:` attribute.
 
 ##### Attribute-Based Path Substitution for Inline Links
 
-1. Set a file path attribute near the top of the .adoc file based on the build type:
+1. Set a file path attribute in the `.adoc` documentation file in the header metadata block based on the build type:
 
     ```asciidoc
     ifeval::["{build-type}" != "community"]
@@ -250,6 +251,35 @@ The [xref macro](https://docs.antora.org/antora/latest/page/xref/) accepts an An
     ```asciidoc
     Refer to the {xref-tuning-rancher-at-scale}[Tuning and Best Practices for at Scale] guide for details.
     ```
+
+#### Cross Project Documentation Links
+
+When linking to portfolio projects that maintain separate documentation domains for community and SUSE product variants, single-source the target URLs using attributes in the metadata section. Hardcoding URLs for these dual-variant projects introduces domain leakage across site builds. If a project only maintains a single documentation site, single-sourcing the target URL is not required.
+
+##### Single-Sourcing Project Documentation URLs
+
+1. Add the URL attribute definitions in the `.adoc` file in the header metadata block based on the build type:
+
+    ```asciidoc
+    ifeval::["{build-type}" != "community"]
+    :url-rke2-intro: https://documentation.suse.com/cloudnative/rke2/latest/en/introduction.html
+    :url-k3s-intro: https://documentation.suse.com/cloudnative/k3s/latest/en/introduction.html
+    endif::[]
+    ifeval::["{build-type}" == "community"]
+    :url-rke2-intro: https://docs.rke2.io/
+    :url-k3s-intro: https://docs.k3s.io/
+    endif::[]
+    ```
+
+1. Reference the URL attribute in the body text using `{attribute-name}[link text]`:
+
+    ```asciidoc
+    For more information, see the {url-rke2-intro}[RKE2 Introduction] or the {url-k3s-intro}[K3s Introduction].
+    ```
+
+> [!TIP]
+> **Naming Convention:** Prefix project link attributes with `:url-<project>-<topic>:` (e.g., `:url-rke2-intro:`, `:url-k3s-intro:`, `:url-harvester-storage:`) to distinguish them from internal `:xref-...:` attributes.
+> **Full URLs Only:** Define complete target URLs within the conditional attribute blocks. Avoid constructing links inline with base URL attributes (e.g., do not write `{url-base-rke2}/install`).
 
 #### Updating Navigation
 
@@ -276,7 +306,7 @@ The list of available locales for each page is defined by the `:page-languages:`
 #### Troubleshooting Common Issues
 
 **Error:** `Antora documentation component not found` or CSS formatting looks completely broken.
-**Fix:** You likely forgot to initialize the submodules. Run `git submodule update --init` and rebuild.
+**Fix:** You likely forgot to initialize the submodules. Run `git submodule update --init --recursive` and rebuild.
 
 **Error:**  `npm ERR! code EBADENGINE` or dependency conflicts.
 **Fix:** Ensure you are using a modern Node.js LTS version (e.g., Node 18 or Node 20). If you used `npm install`, delete your `node_modules` directory and run `npm ci` instead.
