@@ -3,7 +3,7 @@
 :page-languages: [en, de, es, fr, ja, pt, zh]
 :revdate: 2026-08-27
 :page-revdate: {revdate}
-:page-community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc 
+:page-community-path: getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/rollbacks.adoc
 :page-product-path: installation-and-upgrade/rollbacks.adoc
 :experimental:
 ifeval::["{build-type}" != "community"]
@@ -43,22 +43,54 @@ Rancher has to be started with the lower/previous version after a rollback.
 
 A restore is performed by creating a Restore custom resource.
 
-[#_step_1_create_the_restore_custom_resource]
-== Step 1: Create the Restore Custom Resource
+[#_prerequisites]
+== Prerequisites
 
-. Click *☰ > Cluster Management*.
-. Go to the local cluster and click *Explore*.
-. In the left navigation bar, click menu:Rancher Backups[Restore].
+Before initiating the rollback, verify the backup application and record the details of the backup you intend to restore. Because scaling down Rancher in <<_step_1_scale_down_the_rancher_deployment_to_zero_replicas,Step 1>> will make the Rancher UI inaccessible, perform these checks beforehand.
 
-[NOTE]
+. Verify Rancher Backups is Installed:
+  * Click *☰ > Cluster Management > local > Explore*.
+  * In the left navigation bar, verify that *Rancher Backups* is present.
+  * If the Rancher Backups app is not visible, you will need to install it from the Charts page in *Apps*. Refer {xref-helm-charts-in-rancher}#_access_charts[here] for more information.
+. Record Backup Information:
+  * Go to *Rancher Backups > Backups* and identify the backup you wish to restore.
+  * Note the exact backup file name, storage location details (bucket name, folder, region, endpoint), and any associated secret names (e.g., encryption configuration secret or S3 credentials secret). You will need these to construct the Restore custom resource in <<_step_2_create_the_restore_custom_resource,Step 2>>.
+  * CLI Alternative: If the Rancher UI is already inaccessible, retrieve existing backups via `kubectl`:
++
+[,shell]
+----
+kubectl get backups.resources.cattle.io -A
+----
+
+
+[#_step_1_scale_down_the_rancher_deployment_to_zero_replicas]
+== Step 1: Scale down the Rancher Deployment to zero replicas
+
+Before performing the restore, manually scale the Rancher deployment to zero replicas.
+
+[WARNING]
 ====
-If the Rancher Backups app is not visible, you will need to install it from the Charts page in *Apps*. Refer {xref-helm-charts-in-rancher}#_access_charts[here] for more information.
+Scaling down the Rancher Deployment is a required step to ensure successful rollback. The *Rancher Backups* application is used to backup and restore Rancher state, but does not itself alter the version of the Rancher Deployment. Whilst it scales the Rancher Deployment down to zero replicas to perform a restore operation, it will scale the Deployment up to the previously running number of replicas upon completion of the restore. As a result, where Rancher is not first manually scaled to zero replicas, before initiating the restore in <<_step_2_create_the_restore_custom_resource,Step 2>>, it is possible that Rancher Pods - running the upgraded Rancher version - start after the restore operation, but before the Rancher release is rolled back to the previous version in <<_step_3_roll_back_to_a_previous_rancher_version,Step 3>>.
 ====
 
+Run the following command against the local cluster:
+[,shell]
+----
+kubectl -n cattle-system scale deployment rancher --replicas=0
+----
 
-. Click *Create*.
-. Create the Restore with the form or with YAML. For help creating the Restore resource using the online form, refer to the {xref-rancher-restore-config}[configuration reference] and to the {xref-back-restore-example-configs}[examples.]
-. To use the YAML editor, you can click menu:Create[Create from YAML.] Enter the Restore YAML. The following is an example Restore custom resource:
+Verify that all Rancher pods have terminated:
+[,shell]
+----
+kubectl -n cattle-system get pods -l app=rancher
+----
+
+[#_step_2_create_the_restore_custom_resource]
+== Step 2: Create the Restore Custom Resource
+
+Because the Rancher UI is unavailable after scaling down the Rancher deployment in <<_step_1_scale_down_the_rancher_deployment_to_zero_replicas,Step 1>>, the `Restore` custom resource must be created using the `kubectl` CLI.
+
+. Create a file named `restore.yaml` containing your `Restore` configuration using the backup details noted in the <<_prerequisites,prerequisites>>. The following is an example `Restore` custom resource:
 +
 [,yaml]
 ----
@@ -81,7 +113,12 @@ If the Rancher Backups app is not visible, you will need to install it from the 
 +
 For help configuring the Restore, refer to the {xref-rancher-restore-config}[configuration reference] and to the {xref-back-restore-example-configs}[examples.]
 
-. Click *Create*.
+. Apply the manifest to the cluster:
++
+[,shell]
+----
+kubectl apply -f restore.yaml
+----
 
 *Result:* The backup file is created and updated to the target storage location. The resources are restored in this order:
 
@@ -89,16 +126,21 @@ For help configuring the Restore, refer to the {xref-rancher-restore-config}[con
 . Cluster-scoped resources
 . Namespaced resources
 
-To check how the restore is progressing, you can check the logs of the operator. Follow these steps to get the logs:
+To check how the restore is progressing, you can check the logs of the `rancher-backup` operator Pod:
 
-[,yaml]
+[,shell]
 ----
-kubectl get pods -n cattle-resources-system
-kubectl logs -n cattle-resources-system -f
+kubectl logs -n cattle-resources-system -l app.kubernetes.io/name=rancher-backup -f
 ----
 
-[#_step_2_roll_back_to_a_previous_rancher_version]
-== Step 2: Roll Back to a Previous Rancher Version
+You can also check the status of the `Restore` resource directly:
+[,shell]
+----
+kubectl get restore restore-migration -o wide
+----
+
+[#_step_3_roll_back_to_a_previous_rancher_version]
+== Step 3: Roll Back to a Previous Rancher Version
 
 Rancher can be rolled back using the Helm CLI. To roll back to the previous version:
 
