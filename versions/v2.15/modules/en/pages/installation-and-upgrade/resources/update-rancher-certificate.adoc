@@ -107,9 +107,17 @@ When the change is completed, navigate to `\https://<rancher_server_url>/v3/sett
 [#_3b_update_the_helm_values_for_rancher]
 ==== 3b. Update the Helm values for Rancher
 
-This step is required if the certificate source is changing. If Rancher was previously configured to use the default self-signed certificate (`ingress.tls.source=rancher`) or Let's Encrypt (`ingress.tls.source=letsEncrypt`), and is now using a certificate signed by a private CA (`ingress.tls.source=secret`).
+#### 3b. Update the Helm values for Rancher
 
-The below steps update the Helm values for the Rancher chart, so the Rancher pods and ingress are reconfigured to use the new private CA certificate created in Step 1 & 2.
+This step is required whenever the certificate change requires updating `ingress.tls.source` or `privateCA` in Rancher’s Helm values. This includes:
+
+- Switching between Rancher-generated certificates (`ingress.tls.source=rancher`), Let’s Encrypt (`ingress.tls.source=letsEncrypt`), and certificates provided through a Kubernetes Secret (`ingress.tls.source=secret`).
+- Migrating from a public CA to a private CA, which requires `ingress.tls.source=secret` and `privateCA: true`.
+- Migrating from a private CA to a public CA, which requires reviewing and updating `privateCA` and the agent trust configuration as appropriate for the configured `agent-tls-mode`.
+
+Public and private CA certificates can both use `ingress.tls.source=secret`. A Helm update is therefore required when `privateCA` changes, even if `ingress.tls.source` remains unchanged.
+
+Apply the updated Helm values using the currently deployed Rancher chart version to avoid upgrading Rancher during the certificate change.
 
 . Adjust the values that were used during initial installation, store the current values with:
 +
@@ -200,7 +208,25 @@ Manually patch the agent Kubernetes objects by updating the `CATTLE_CA_CHECKSUM`
 
 [,bash]
 ----
-curl -k -s -fL <RANCHER_SERVER_URL>/v3/settings/cacerts | jq -r .value | sha256sum | awk '{print $1}'
+(
+  set -euo pipefail
+
+  command -v jq >/dev/null 2>&1 || {
+    echo "ERROR: jq is required to calculate the CA checksum." >&2
+    exit 1
+  }
+
+  RANCHER_SERVER_URL="https://<RANCHER_SERVER_HOSTNAME>"
+
+  CA_CHECKSUM=$(
+    curl -kfsSL "${RANCHER_SERVER_URL}/v3/settings/cacerts" \
+      | jq -er '.value | select(type == "string" and contains("-----BEGIN CERTIFICATE-----"))' \
+      | sha256sum \
+      | awk '{print $1}'
+  )
+
+  printf '%s\n' "$CA_CHECKSUM"
+)
 ----
 
 Using a Kubeconfig for each downstream cluster update the environment variable for the two agent deployments. If the {xref-kubeconfig-file}[ACE] is enabled for the cluster, {xref-access-cluster-kubectl}#_authenticating_directly_with_a_downstream_cluster[the kubectl context can be adjusted] to connect directly to the downstream cluster.
