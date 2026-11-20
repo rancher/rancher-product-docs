@@ -1,0 +1,217 @@
+= 2. Collect and Publish Images with Hauler
+:description: Use Hauler to collect the Rancher Prime images and Helm charts into one archive and publish them to a private registry for an air-gapped installation
+:page-languages: [en]
+:revdate: 2026-10-17
+:page-revdate: {revdate}
+
+This page describes how to use https://docs.hauler.dev/docs/intro[Hauler] to collect the images and Helm charts for an air-gapped installation of {rancher-product-name} and publish them to your private registry. It's an alternative to xref:./publish-images.adoc[Collect and Publish Images to your Private Registry], which uses the `rancher-save-images.sh` and `rancher-load-images.sh` scripts.
+
+Hauler stores all the content in one archive file. It pulls every image from the registry in its name, so the Rancher images from the SUSE Rancher Prime registry and the cert-manager chart and images from SUSE Application Collection go in the same archive. Hauler also keeps the signatures and attestations of the images.
+
+[NOTE]
+====
+This page covers the images for the Rancher server and for Linux clusters. If you plan to provision downstream clusters with Windows nodes, collect and publish the Windows images as described in the *Linux and Windows Clusters* tab of xref:./publish-images.adoc[Collect and Publish Images to your Private Registry].
+====
+
+[#_prerequisites]
+== Prerequisites
+
+* A Linux workstation that has internet access, Docker, and at least 30 GB of disk space. The Hauler store and the archive file each use about 14 GB for Rancher v2.15.2 with the `linux/amd64` platform.
+* A system in the air-gapped network that has access to your private registry and at least 45 GB of disk space, for the archive file, its extraction and the Hauler store. It can be the same workstation if it has access to both networks.
+* A https://docs.apps.rancher.io/get-started/authentication[SUSE Application Collection username and access token]. You need them to get Hauler and the cert-manager chart.
+* A private registry. If the registry has certificates, the system that publishes the images must trust them.
+
+[#_1_install_hauler]
+== 1. Install Hauler
+
+Hauler is available as a container image in https://apps.rancher.io/applications/hauler[SUSE Application Collection]. On the workstation that has internet access, copy the `hauler` binary from the image:
+
+[,console]
+----
+docker login dp.apps.rancher.io -u <APPCO_USERNAME> -p <APPCO_ACCESS_TOKEN>
+docker create --name hauler dp.apps.rancher.io/containers/hauler:<HAULER_VERSION>
+docker cp hauler:/usr/bin/hauler ./hauler
+docker rm hauler
+sudo install -m 0755 ./hauler /usr/local/bin/hauler
+hauler version
+----
+
+Keep the `hauler` file. You also need it in the air-gapped network.
+
+[#_2_find_the_required_assets_for_your_rancher_version]
+== 2. Find the required assets for your Rancher version
+
+[IMPORTANT]
+====
+You can use any Rancher Prime version listed on the Prime Artifacts URL for the assets mentioned in these steps. To learn more about the Prime Artifacts URL, see our https://scc.suse.com/rancher-docs/rancherprime/latest/en/reference-guide.html#prime-artifacts-url[Prime-only documentation]. Authentication is required. Use your https://scc.suse.com/home[SUSE Customer Center (SCC)] credentials to log in.
+====
+
+Go to the Prime Artifacts URL, find the Rancher v2.x.x release that you want to install, click *show*, and download `rancher-images.txt`. This file contains the list of images needed to install Rancher, provision clusters and use Rancher tools.
+
+[#_3_collect_the_images_and_charts]
+== 3. Collect the images and charts
+
+. Log in to the SUSE Application Collection registry:
++
+[,console]
+----
+hauler login dp.apps.rancher.io -u <APPCO_USERNAME> -p <APPCO_ACCESS_TOKEN>
+----
+
+. The entries in `rancher-images.txt` don't include a registry. Create a copy of the list that pulls them from the SUSE Rancher Prime registry. Some entries, such as the OCI Helm charts, are only available in this registry:
++
+[,console]
+----
+sed 's|^|registry.rancher.com/|' rancher-images.txt > rancher-images-prime.txt
+----
+
+. Add the images to the Hauler store:
++
+[,console]
+----
+hauler store sync --image-txt ./rancher-images-prime.txt --platform linux/amd64
+----
++
+`--platform linux/amd64` collects only the images for the `linux/amd64` platform. If your nodes use other architectures, set the platform of your nodes, or remove the option to collect the images for all the platforms. Collecting all the platforms makes the archive bigger.
+
+. Create a Hauler manifest, `rancher-charts.yaml`, with the {rancher-product-name} and cert-manager charts. Replace `<helm-chart-repo-url>` with the Rancher Prime Helm chart repository URL, `<RANCHER_VERSION>` with the Rancher version without the `v` prefix, and `<CERT_MANAGER_VERSION>` with the version of the https://apps.rancher.io/applications/cert-manager[cert-manager chart in SUSE Application Collection]:
++
+[,yaml]
+----
+apiVersion: content.hauler.cattle.io/v1
+kind: Charts
+metadata:
+  name: rancher-charts
+spec:
+  charts:
+    - name: rancher
+      repoURL: <helm-chart-repo-url>
+      version: <RANCHER_VERSION>
+    - name: cert-manager
+      repoURL: oci://dp.apps.rancher.io/charts
+      version: <CERT_MANAGER_VERSION>
+      add-images: true
+----
++
+include::shared:ROOT:partial$en/helm-chart-repo-url.adoc[]
++
+`add-images: true` adds the cert-manager images to the store with the chart. If you use your own certificates, or if you terminate TLS on an external load balancer, you don't need cert-manager and you can remove it from the manifest.
+
+. Add the charts to the Hauler store:
++
+[,console]
+----
+hauler store sync --filename ./rancher-charts.yaml --platform linux/amd64
+----
+
+. *(Optional)* Check the content of the store:
++
+[,console]
+----
+hauler store info
+----
+
+. Save the store to an archive file:
++
+[,console]
+----
+hauler store save --filename rancher-airgap.tar.zst
+----
+
+[#_4_publish_the_images_and_charts_to_the_private_registry]
+== 4. Publish the images and charts to the private registry
+
+. Copy `rancher-airgap.tar.zst` and the `hauler` binary to a system in the air-gapped network that has access to your private registry, and install Hauler:
++
+[,console]
+----
+sudo install -m 0755 ./hauler /usr/local/bin/hauler
+----
+
+. Load the archive file into the Hauler store:
++
+[,console]
+----
+hauler store load --filename rancher-airgap.tar.zst
+----
++
+Hauler extracts the archive in the temporary directory of the system before it loads it. If the temporary directory is smaller than the archive, for example because `/tmp` is a `tmpfs` file system, use `--tempdir` to extract it in a directory with enough disk space:
++
+[,console]
+----
+mkdir -p ./hauler-tmp
+hauler store load --filename rancher-airgap.tar.zst --tempdir ./hauler-tmp
+----
+
+. Log in to your private registry if required:
++
+[,console]
+----
+hauler login <REGISTRY.YOURDOMAIN.COM:PORT> -u <USERNAME> -p <PASSWORD>
+----
+
+. Copy the content of the store to your private registry:
++
+[,console]
+----
+hauler store copy registry://<REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+Hauler removes the source registry from the image names when it copies them. The content is published in these locations:
+
+|===
+| Content | Location in the private registry
+
+| Rancher images, for example `registry.rancher.com/rancher/rancher`
+| `<REGISTRY.YOURDOMAIN.COM:PORT>/rancher/rancher`
+
+| cert-manager images, for example `dp.apps.rancher.io/containers/cert-manager-controller`
+| `<REGISTRY.YOURDOMAIN.COM:PORT>/containers/cert-manager-controller`
+
+| {rancher-product-name} chart
+| `oci://<REGISTRY.YOURDOMAIN.COM:PORT>/hauler/rancher`
+
+| cert-manager chart
+| `oci://<REGISTRY.YOURDOMAIN.COM:PORT>/hauler/cert-manager`
+|===
+
+[#_5_install_cert_manager_and_rancher_from_the_private_registry]
+== 5. Install cert-manager and Rancher from the private registry
+
+Set up the Kubernetes cluster as described in xref:./install-kubernetes.adoc[3. Install Kubernetes], and then follow xref:./install-rancher-ha.adoc[4. Install {rancher-product-name}] to choose your SSL configuration and the options of the Rancher chart. Because the charts are in your private registry, you install them directly from it instead of fetching them.
+
+If your private registry requires authentication, log in with Helm first:
+
+[,console]
+----
+helm registry login <REGISTRY.YOURDOMAIN.COM:PORT> -u <USERNAME> -p <PASSWORD>
+----
+
+. If you use the Rancher generated self-signed certificates, install cert-manager. Set `image.registry` of each component to your private registry, so that the chart uses the images that Hauler published:
++
+[,console]
+----
+helm install cert-manager oci://<REGISTRY.YOURDOMAIN.COM:PORT>/hauler/cert-manager \
+  --version <CERT_MANAGER_VERSION> \
+  --namespace cert-manager \
+  --create-namespace \
+  --set crds.enabled=true \
+  --set image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+  --set webhook.image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+  --set cainjector.image.registry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+  --set startupapicheck.image.registry=<REGISTRY.YOURDOMAIN.COM:PORT>
+----
+
+. Install Rancher. `systemDefaultRegistry` makes Rancher pull its images, and the images of the clusters and tools that it deploys, from your private registry:
++
+[,console]
+----
+helm install rancher oci://<REGISTRY.YOURDOMAIN.COM:PORT>/hauler/rancher \
+  --version <RANCHER_VERSION> \
+  --namespace cattle-system \
+  --create-namespace \
+  --set hostname=<RANCHER.YOURDOMAIN.COM> \
+  --set certmanager.version=<CERT_MANAGER_VERSION> \
+  --set systemDefaultRegistry=<REGISTRY.YOURDOMAIN.COM:PORT> \
+  --set useBundledSystemChart=true
+----
