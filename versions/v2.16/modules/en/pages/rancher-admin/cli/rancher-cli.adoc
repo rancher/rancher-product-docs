@@ -318,6 +318,134 @@ Custom helpers implement a JSON protocol over standard input/output. The CLI inv
 
 |===
 
+[#_command_output_and_execution_controls]
+== Command Output and Execution Controls
+
+All command outputs use enveloped JSON, YAML, or tabular formatting (`-o table|json|yaml`, plus `-o name` to output resource IDs only). Tabular formatting is the default for interactive shell sessions.
+
+Mutating commands require explicit flags to write changes, there are no implicit writes:
+
+* Pass `--apply` to execute state-changing or mutating operations.
+* Pass `--yes` (alongside `--apply`) to execute destructive operations.
+
+To inspect the full command surface, including available flags, API contracts, and stability levels without checking external documentation, execute the following command:
+
+[source,bash]
+----
+rancher schema
+----
+
+[#_safety_model]
+=== Safety Model
+
+Every command that changes the server runs these steps, in order:
+
+[NOTE]
+====
+`--dry-run` runs the https://kubernetes.io/docs/reference/using-api/api-concepts/#dry-run[server-side dry-run] and needs the same RBAC verb as the write; read-only credentials get an `RBAC` error. That means the write would be denied, not that `--dry-run` is broken.
+====
+
+. `--dry-run` previews the change (the action, the fields the command sets or changes, and warnings) and changes nothing. The preview succeeds only if the server-side dry-run succeeds.
+. `--apply` executes. A command that changes the server, run with neither `--dry-run` nor `--apply`, is refused with `CONFIRMATION_REQUIRED`, and the refusal names the exact flags required.
+. `--yes` is required together with `--apply` (never alone) when the change is destructive: every `delete` and `revoke`, writes to sensitive kinds, and creating secrets that are shown only once (`create token`, `create kubeconfig`).
+. `--allow-deprecated` is required for a write whose stability is `deprecated`.
+. Updates and deletes carry a https://kubernetes.io/docs/reference/using-api/api-concepts/#resource-versions[`resourceVersion`] precondition taken from their own dry-run preview: if the resource changes between that preview and the apply, the change fails (exit `5`) instead of overwriting it. A `--dry-run` run on its own is a preview only; the later `--apply` run takes a new dry-run preview and sets its precondition from the resource as it is at that time. Creating an object has no precondition (there is no existing object to check).
++
+A `delete` also waits until the object is gone, for up to 5 minutes by default (`--timeout`). `--wait=false` returns once the server accepts the request and prints `deletion started`.
+
+Most commands carry a contract (`public` | `internal`) and a stability (`stable`/`beta`/`deprecated`), shown in the schema manifest. For more detail on all the steps and gates in full refer to the https://github.com/rancher/rancher-cli/blob/main/ARCHITECTURE.md[architecture] and https://github.com/rancher/rancher-cli/blob/main/REFERENCE.md#read-only-mode[read-only mode documentation].
+
+[#_output]
+=== Output
+
+Nearly every command prints one JSON document per run under `-o json`, versioned by `apiVersion`, that agents can depend on (note the https://github.com/rancher/rancher-cli/blob/main/REFERENCE.md#output-formats[exceptions]):
+
+[source, json]
+----
+{
+  "apiVersion": "cli.rancher.io/v1",
+  "kind": "LoginResult",
+  "data": { "server": "prod", "url": "https://rancher.example.com" },
+  "warnings": []
+}
+----
+
+Format options: 
+
+* `-o table` (default)
+* `-o wide`
+* `-o json`
+* `-o yaml`
+* `-o name`
+* `-o template=<go-template>`
+
+For more information refer to the https://github.com/rancher/rancher-cli/blob/main/REFERENCE.md#output-formats[full format semantics].
+
+[#_exit_codes]
+=== Exit Codes
+
+* **Errors** have the same shape as a success: under `-o json`/`-o yaml` they are the same document, with the error object under `data`, and any warnings go in the document's own `warnings` array. Use `-o json` to get the document, errors included:
++
+[source, json]
+----
+{ "apiVersion": "cli.rancher.io/v1", "kind": "Error",
+  "data": { "error": { "code": "NOT_LOGGED_IN", "message": "...",
+            "hint": "rancher auth login 'prod'", "retryable": false } } }
+----
++
+Every other format, including the default, prints a short text message on `stderr` instead:
++
+[source, shell]
+----
+error (NOT_LOGGED_IN): ...
+  hint: rancher auth login 'prod'
+----
++
+* **Exit codes** (act on the code without parsing output): 
+** `0` ok
+** `2` usage/validation
+** `3` auth
+** `4` not-found
+** `5` conflict/precondition
+** `6` RBAC
+** `8` lock-timeout
+** `9` Prime required
+** `10` TLS trust
+** `11` capability unsupported
+** `14` credential store unavailable
+** `130` interrupted
+** `1` generic; https://github.com/rancher/rancher-cli/blob/main/REFERENCE.md#error-codes[reference] for every code with its meaning. 
++
+Ctrl-C or a termination signal ends the command with `INTERRUPTED`, exit `130` for either; a second signal forces a command that did not stop on the first to exit with 128 plus that signal's own number (`130` Ctrl-C, `143` SIGTERM).
+* **Discovery:** `rancher schema -o json` is the overview - commands, kinds, and exit codes as a compact table of contents; `rancher schema --all -o json` is the complete manifest, and the single source for contract and stability. `rancher schema <command|kind|group>` shows only that command, kind or group.
+
+[#_rancher_kubeconfig]
+=== `rancher kubeconfig`
+
+`rancher kubeconfig --cluster <id-or-name>` emits a bare kubeconfig YAML document to stdout. Its user entry runs `rancher auth get-token` as a kubectl exec-credential plugin, so no long-lived token is ever written to disk, only the CLI's own short-lived cache. It replaces the legacy `kubectl` passthrough's purpose; the Rancher CLI itself does not wrap kubectl.
+
+[NOTE]
+.PATH note
+====
+The exec stanza runs `rancher` by name, so the `rancher` binary must be on `PATH` for kubectl to authenticate.
+====
+
+Example command merging into your default kubeconfig (the command only writes to stdout, it never touches `~/.kube/config`):
+
+[source,shell]
+----
+KUBECONFIG=~/.kube/config:<(rancher kubeconfig --cluster X) kubectl config view --flatten > merged && mv merged ~/.kube/config
+----
+
+If a `rancher` binary does not exist on the target machine, then the `rancher kubeconfig` exec mode is not the only option. The command `rancher create kubeconfig [--clusters ...] --apply` creates a server-side, embedded, revocable kubeconfig that is the same as the Dashboard's *Download KubeConfig* option, which does not need a local `rancher` binary to authenticate. The output goes to stdout, with a shown-once notice on where its server-assigned name is.
+
+[#_wait_on_named_get]
+=== `--wait` on named `get`
+
+`rancher get <kind> <name> --wait [--for state=<value>|condition=<Type>[=<Status>]] [--timeout <duration>]` replaces the legacy standalone `wait` command. Unlike `kubectl wait`, it fails fast on a Rancher-reported provisioning error instead of going through the full timeout.
+
+For anything `--wait` doesn't cover well (arbitrary JSONPath conditions, non-Rancher resources), use `kubectl wait` via `rancher kubeconfig`. `--for state=<value>` matches `status.state` (the Rancher idiom); for kinds that carry no `status.state` (core kinds like Pod), it falls back to `status.phase` instead, compared case-insensitively.
+
 [#_shell_completion]
 == Shell Completion
 
