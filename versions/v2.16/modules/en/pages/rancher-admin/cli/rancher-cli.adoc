@@ -128,47 +128,95 @@ Below are the options for customizing the Rancher CLI installation. You can pass
 
 ====
 
-[#_airgapped_or_manual_installation]
-=== Air-Gapped or Manual Installation
+[#_manual_installation_and_verification]
+=== Manual Installation and Verification
 
-For restricted environments, internal repositories, or manual deployments without script execution:
+Follow the steps outlined below for manual installation and verification of the {rancher-product-name} CLI depending on your operating system.
 
-. Download the release binaries (`rancher` and `rancher-credential-vault`) alongside `SHA256SUMS` from the official GitHub releases.
-. Verify checksum integrity prior to placement:
+[#_linux_and_macos]
+==== Linux and macOS
+
+. Download the https://github.com/rancher/rancher-cli/releases/latest[latest release] for your operating system and architecture: `rancher-<os>-<arch>`, `rancher-credential-vault-<os>-<arch>` (both with `.exe` on <<_windows,Windows>>) and `SHA256SUMS`.
+. Check each binary against its line in `SHA256SUMS`. On Linux:
 +
-[tabs]
-======
-Linux / macOS::
-+
---
-
 [source,shell]
 ----
-sha256sum -c SHA256SUMS --ignore-missing
+grep '  rancher-linux-amd64$' SHA256SUMS | sha256sum -c -
+grep '  rancher-credential-vault-linux-amd64$' SHA256SUMS | sha256sum -c -
 ----
-
---
-
-Windows (PowerShell)::
 +
---
+On macOS use `shasum -a 256 -c -` in place of `sha256sum -c -`. Each command prints `<name>: OK`.
 
+. Optional: verify the build provenance with the GitHub CLI (2.68.0 or newer; it needs `gh auth login`), for each of the two binaries:
++
+[source,shell]
+----
+gh attestation verify rancher-linux-amd64 --repo rancher/rancher-cli \
+  --cert-identity https://github.com/rancher/rancher-cli/.github/workflows/release.yaml@refs/tags/<tag> \
+  --source-ref refs/tags/<tag>
+----
++
+Use the tag you downloaded if you are verifying a different release (for example `v0.1.0-beta.1`).
++
+The attestations cover the binaries, their software bill of materials (SBOM) files, `rancher-schema.json`, `install.sh` and `install.ps1`. `SHA256SUMS` has no attestation and does not list the SBOMs or the Sigstore bundles. It protects only against a damaged download.
++
+Each binary also has an SPDX 2.3 SBOM, `<binary>.spdx.json` (for example `rancher-linux-amd64.spdx.json`), which Syft writes from the Go modules built into the binary. Its digest is in the build provenance and in its own attestation. To verify that the release workflow (`release.yaml`) attested an SBOM for a binary:
++
+[source,shell]
+----
+gh attestation verify rancher-linux-amd64 --repo rancher/rancher-cli \
+  --cert-identity https://github.com/rancher/rancher-cli/.github/workflows/release.yaml@refs/tags/<tag> \
+  --source-ref refs/tags/<tag> \
+  --predicate-type https://spdx.dev/Document/v2.3
+----
++
+To verify without a GitHub login, also download the Sigstore bundle files. Each holds one attestation and its signature: `provenance.sigstore.json` for the build provenance and `<binary>.sbom.sigstore.json` for the SBOM of each binary. With `cosign` (flags as of cosign v3.1.4):
++
+[source,shell]
+----
+cosign verify-blob-attestation \
+  --bundle rancher-linux-amd64.sbom.sigstore.json \
+  --type https://spdx.dev/Document/v2.3 \
+  --certificate-identity https://github.com/rancher/rancher-cli/.github/workflows/release.yaml@refs/tags/<tag> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  rancher-linux-amd64
+----
++
+For the build provenance use `--bundle provenance.sigstore.json` and `--type https://slsa.dev/provenance/v1`. That bundle names every file the provenance covers; the last argument can be any of them. Give the whole URL as the type. The short names `spdx` and `spdxjson` stand for a type without a version, and the type of these SBOM attestations has one (`v2.3`).
+
+. Rename the two downloads to `rancher` and `rancher-credential-vault`, make both binaries executable (`chmod +x` on Linux and macOS) and put them in one directory on `PATH`. Both names matter: the CLI runs a credential helper as `rancher-credential-<name>`, and kubectl runs a kubeconfig's exec plugin as `rancher`.
+
+[#_windows]
+==== Windows
+
+. Download the `windows` assets from the https://github.com/rancher/rancher-cli/releases/latest[latest release]: the CLI binary and `rancher-credential-vault`.
+. Rename them to `rancher.exe` and `rancher-credential-vault.exe`. Both names matter and need to be changed: kubectl runs the kubeconfig's exec plugin as the command `rancher` unless `rancher kubeconfig --exec-command` sets another, and the CLI runs a credential helper as `rancher-credential-<name>`. On Windows, a program started by name is found only on `PATH` and only with an extension listed in `PATHEXT` (`.exe`).
+. Verify both binaries against `SHA256SUMS` (PowerShell). `rancher-credential-vault.exe` matters as much as `rancher.exe`, it is the process that stores your Rancher credentials and holds your Vault token, never install them unverified:
++
 [source,powershell]
 ----
 Get-FileHash rancher.exe -Algorithm SHA256
 Get-FileHash rancher-credential-vault.exe -Algorithm SHA256
 ----
-
---
-======
-. *(Optional)* Manually verify GitHub build provenance:
 +
-[source,shell]
-----
-gh attestation verify rancher --repo rancher/rancher-cli --signer-workflow rancher/rancher-cli/.github/workflows/release.yaml
-----
+Compare each output against its matching line in `SHA256SUMS`.
 
-. Place the verified binaries into your target directory on `PATH`.
+. Optionally verify build provenance for both:
++
+[source,powershell]
+----
+gh attestation verify rancher.exe --repo rancher/rancher-cli --cert-identity https://github.com/rancher/rancher-cli/.github/workflows/release.yaml@refs/tags/<tag> --source-ref refs/tags/<tag>
+----
++
+Run the above with the tag you downloaded (for example `v0.1.0-beta.1`), then run the same command using `rancher-credential-vault.exe` instead of `rancher.exe` to verify. The SBOMs, Sigstore bundles, and the commands that verify them are the same as in <<_linux_and_macos>> however replace `rancher` with `rancher.exe` and `rancher-credential-vault` with `rancher-credential-vault.exe`.
+
+. Only after both binaries verify should you place them in a directory on `PATH`.
+
+[NOTE]
+.Notepad on Windows 11
+====
+On Windows 11, the Store version of Notepad opens `config edit`'s temp file as a new tab in an already-running Notepad window rather than a new window; close the tab, not the window, to return control to the CLI.
+====
 
 [#_managing_the_installation]
 === Managing the Installation
