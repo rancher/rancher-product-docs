@@ -701,7 +701,7 @@ Alternatively, point your coding agent's custom instructions or prompt files dir
 [#_commands]
 == Commands
 
-The following commands are available in {rancher-product-name} CLI as of the latest release. 
+The following commands are available in {rancher-product-name} CLI as of https://github.com/rancher/rancher-cli/blob/v0.1.0-beta.2/COMMANDS.md[`release v0.1.0-beta.2`]. For the live catalog, which also lists the generated `get <kind>`, `patch <kind>` and `delete <kind>` commands, run `rancher schema`; `rancher schema <command>` shows one command in detail. Refer to the https://github.com/rancher/rancher-cli/blob/v0.1.0-beta.2/REFERENCE.md[CLI reference] for further architectural details.
 
 [#_authentication]
 === Authentication
@@ -714,7 +714,7 @@ The following commands are available in {rancher-product-name} CLI as of the lat
 | Log in with a token (interactive prompt or `--token-stdin`, secrets never on the command line); `--url` adds the entry first when `<name>` is new, and refuses when `<name>` is already registered at a different URL. Omitting `<name>` with `--url` derives it from the URL's hostname, with the same refuse-on-collision rule. Verifies a pasted/piped token against the server before storing it, with one `SelfSubjectReview` that also names the token's owner, which the login records (`--no-verify` skips this and records no owner; not available with the provider sign-in flow, which is already authenticated). Never switches the current server - only a fresh add can bootstrap it when unset. `--credential-store` changes where the directory keeps its credentials, after the new credential is stored: a change takes only this entry's credential, and refuses before the sign-in while another entry still has one in the store being left.
 
 | `auth logout [<name>]`
-| Clear the stored login token for the current server, `<name>`, or every server with `--all`; keeps server config; deletes the exec-credential cache entries its login made, then revokes on the server the tokens the CLI created and recorded (`revoked`, `notRevoked`); records the logout on the entry.
+| Clear the stored login token for the current server, `<name>`, or every server with `--all`; keeps server config; deletes the exec-credential cache entries its login made, then revokes on the server the tokens the CLI created and recorded (reporting them as `revoked` or `notRevoked` if cleanup fails); records the logout on the entry.
 
 | `auth status`
 | Connectivity and credential preflight (calls the cluster's Kubernetes API); an unfinished credential store change and what it has left.
@@ -752,10 +752,10 @@ The server pointer is the config's only session state, cluster and project scope
 | Add a server entry (establishes trust); bootstraps the current server if unset - never an upsert (a different URL/CA under an existing name is a conflict); a credential still stored under a name no entry had is removed first, with a warning.
 
 | `config update-server <name>`
-| Change a server's URL or CA without the credential purge `delete-server` forces; a URL change clears the stored token and exec-credential cache and sends nothing to the old address (the tokens left there are listed under `notRevoked`: on the moved entry `otherServer`, `manual`, never retired by its logins; on another entry still naming the old server, retired by that entry's next login), a CA-only change keeps them.
+| Change a server's URL or CA without the credential purge `delete-server` forces. A URL change clears the stored token and exec-credential cache without contacting the old address; any tokens left on the old server are reported under `notRevoked` (with reason `otherServer` on the moved entry, meaning they are never retired by its future logins, or `manual` if another entry still points to the old server and will retire them on its next login). A CA-only change keeps existing credentials.
 
 | `config delete-server <name>`
-| Remove a server and its stored credentials, after revoking on the server the tokens the CLI created and recorded; `revoked` and `notRevoked` report each token, with a `recovery` for one left on the removed entry.
+| Remove a server and its stored credentials, after revoking on the server the tokens the CLI created and recorded. Reports each token as `revoked` or `notRevoked`, including `recovery` instructions for any token left on the removed entry.
 
 | `config path`
 | Print the resolved config file path (whether or not the file exists yet).
@@ -770,7 +770,7 @@ The server pointer is the config's only session state, cluster and project scope
 | Persist live-completion preferences: enable/disable network completion and set the per-TAB HTTP budget (max 2s).
 
 | `config set-token-reuse`
-| Let the kubectl exec plugin (`auth get-token`) reuse one login credential per server: on, the first cache miss runs one login and stores an unscoped credential under `exec-login-<host>`; off (default) restores the per-cluster login and lists the dormant plugin-created logins and how to remove them.
+| Control whether the kubectl exec plugin (`auth get-token`) reuses a single login credential per server instead of creating separate per-cluster tokens. When enabled (`on`), the first cache miss triggers one login and saves an unscoped server entry named `exec-login-<host>` (where `<host>` is the Rancher server hostname) for subsequent cluster requests. When disabled (`off`, default), the plugin reverts to per-cluster logins and lists any leftover `exec-login-<host>` entries (dormant plugin-created logins that are no longer used) along with the commands to remove them.
 
 |===
 
@@ -794,10 +794,10 @@ The server pointer is the config's only session state, cluster and project scope
 | Create/apply a resource from a YAML manifest (file or stdin); dry-run/apply.
 
 | `create token`
-| Create a server-side derived token (`ext.Token`), shown once - sensitive; dry-run/apply --yes.
+| Create a server-side derived token (backed by the Rancher `ext.cattle.io` `Token` resource), shown once - sensitive; dry-run/apply --yes.
 
 | `create kubeconfig`
-| Create a server-side, embedded, revocable kubeconfig (`ext.Kubeconfig`) to stdout, shown once - sensitive; dry-run/apply --yes.
+| Create a server-side, embedded, revocable kubeconfig (backed by the Rancher `ext.cattle.io` `Kubeconfig` resource) to stdout, shown once - sensitive; dry-run/apply --yes.
 
 ifeval::["{build-type}" != "community"]
 | `create oidc-client <name>`
@@ -805,10 +805,10 @@ ifeval::["{build-type}" != "community"]
 endif::[]
 
 | `create user <username> --password-stdin [--global-role <id>]`
-| Create a local user (`v3 User`), its password secret (`cattle-local-user-passwords`) and a `v3 GlobalRoleBinding` for each global role Rancher gives new users by default (`newUserDefault`), or for each `--global-role`; password never on the command line - sensitive; a newline inside the password is refused; dry-run/apply --yes. Requires a server that supports local user passwords.
+| Create a local user (Rancher `management.cattle.io/v3` `User` resource), store its password secret in the `cattle-local-user-passwords` namespace, and create a `GlobalRoleBinding` for each role marked as a default for new users (`newUserDefault: true`) or specified via `--global-role`. The password is never passed on the command line and cannot contain newlines - sensitive; dry-run/apply --yes. Requires a server that supports local user passwords.
 
 | `create password-change-request <user> --password-stdin [--current-password-stdin]`
-| Change a local user's password (`ext.cattle.io PasswordChangeRequest`); completes synchronously; password never on the command line - sensitive; with `--current-password-stdin`, stdin holds two lines: line 1 the current password (`currentPassword`), line 2 the new password; Rancher requires the current password when you change your own password without permission to change every user's password; a newline inside the password is refused; exit 2 when Rancher refuses the current password, exit 6 when you change another user's password without permission to change every user's password; dry-run/apply --yes. Requires a server that supports local user passwords.
+| Change a local user's password via a synchronous `ext.cattle.io` `PasswordChangeRequest` resource. The password is never passed on the command line and cannot contain newlines - sensitive. With `--current-password-stdin`, stdin holds two lines: line 1 is the current password (`currentPassword`) and line 2 is the new password (required when changing your own password without admin privileges to change any user's password). Exits `2` if the current password is rejected, or `6` if you lack permission to change another user's password; dry-run/apply --yes. Requires a server that supports local user passwords.
 
 | `create cluster <name>`
 | Create a provisioning cluster: imported, custom, or node-driver with one machine pool; the settings the Rancher UI form fills in are left unset unless a full manifest sets them - dry-run/apply.
@@ -899,6 +899,27 @@ ifeval::["{build-type}" != "community"]
 | *(Rancher Prime feature):* Resume the cluster autoscaler cluster-wide - destructive; dry-run/apply --yes. A Rancher Prime feature; the connected server decides whether it is available.
 endif::[]
 
+| `cluster upgrade <cluster> --k8s-version <version>`
+| Upgrade the Kubernetes version of a provisioned or imported RKE2 or K3s cluster with the version checks of the Rancher UI, and wait until Rancher reports the upgrade done; the preview names the newest etcd snapshot, because the upgrade cannot be reversed with this command - destructive; dry-run/apply --yes.
+
+| `cluster save-etcd-snapshot <cluster>`
+| Take an etcd snapshot of a provisioned RKE2 or K3s cluster as the Rancher UI does, wait until Rancher reports it taken and list the cluster's snapshots; the command refuses while another operation is in progress on the cluster and while the cluster is not ready - destructive; dry-run/apply --yes.
+
+|===
+
+[#_nodes]
+=== Nodes
+
+[cols="1,2",options="header"]
+|===
+| Command | Purpose
+
+| `node drain <node> --cluster <cluster>`
+| Ask Rancher to drain a node: Rancher cordons it and evicts its pods through the Eviction API; the preview lists the pods and what the drain does to each; waits until Rancher reports the drain done or failed (`--wait=false` returns once the server accepts the request) - destructive; dry-run/apply --yes.
+
+| `node stop-drain <node> --cluster <cluster>`
+| Ask Rancher to stop a running drain of a node; the node stays cordoned and evicted pods are not put back; waits until Rancher reports the drain stopped - dry-run/apply.
+
 |===
 
 [#_read_and_inspect]
@@ -948,10 +969,10 @@ endif::[]
 | Command | Purpose
 
 | `app install <release> --cluster <c> --namespace <ns> --repo <name> --chart <name> [--version <v>] [--values <file>]`
-| Ask Rancher to install a chart from a ClusterRepo as a Helm release; Rancher fetches the chart and runs Helm in its own pod, and the CLI runs no `helm`. The preview comes from server reads (`previewSource: serverReads`) and carries no resourceVersion precondition; values come only from files or stdin and show as paths, never values, except the values the CLI adds and the registry host (for a chart that declares a registry path), which show the value sent; `--system-default-registry` and `--no-system-default-registry` set or leave out the registry values. Returns once Rancher accepts the request, with the operation to follow, or with `--wait` when Helm's run finishes; dry-run/apply.
+| Ask Rancher to install a chart from a ClusterRepo as a Helm release; Rancher fetches the chart and runs Helm in its own pod, and the CLI runs no `helm`. Because Helm actions are executed asynchronously by Rancher, the `--dry-run` preview is assembled from current server state (`previewSource: serverReads`) rather than a server-side dry-run mutation and carries no `resourceVersion` precondition. Values come only from files or stdin and show as paths, never values, except the values the CLI adds and the registry host (for a chart that declares a registry path), which show the value sent; `--system-default-registry` and `--no-system-default-registry` set or leave out the registry values. Returns once Rancher accepts the request, with the operation to follow, or with `--wait` when Helm's run finishes; dry-run/apply.
 
 | `app upgrade <release> --cluster <c> --namespace <ns> [--version <v>] [--values <file>] [--reset-values]`
-| Ask Rancher to upgrade, downgrade or change the values of an installed Helm release shown as an App, through the upgrade action of its ClusterRepo; Rancher runs Helm in its own pod, and there is no rollback. The preview comes from server reads (`previewSource: serverReads`) and carries no resourceVersion precondition; it lists the path of every value added, removed or changed, never the value (except the values the CLI adds and the registry host), and counts the release's values it sends unchanged; the release's values are read from the release Secret, which needs permission to get Secrets in the release's namespace, and `--reset-values` sends only your files. The chart is the release's chart; a request that changes nothing is refused. `--wait` returns when Helm's run finishes, with the revision and status - destructive; dry-run/apply --yes.
+| Ask Rancher to upgrade, downgrade, or change the values of an installed Helm release shown as an App, through the upgrade action of its ClusterRepo; Rancher runs Helm in its own pod, and there is no rollback. Like `app install`, the `--dry-run` preview is built from current server reads (`previewSource: serverReads`) and carries no `resourceVersion` precondition. It lists the path of every value added, removed, or changed, never the value (except the values the CLI adds and the registry host), and counts the release's values it sends unchanged; the release's values are read from the release Secret, which needs permission to get Secrets in the release's namespace, and `--reset-values` sends only your files. The chart is the release's chart; a request that changes nothing is refused. `--wait` returns when Helm's run finishes, with the revision and status - destructive; dry-run/apply --yes.
 
 | `app uninstall <release> --cluster <c> --namespace <ns> [--keep-history]`
 | Ask Rancher to uninstall a Helm release shown as an App, which removes the release's resources; the preview comes from server reads, with no resourceVersion precondition; `--wait` waits for Helm's run to finish - destructive; dry-run/apply --yes.
@@ -1023,22 +1044,19 @@ endif::[]
 | Command | Purpose
 
 | `telemetry status`
-| Show whether usage recording is on, what decided it (the `RANCHER_CLI_TELEMETRY` variable, the `telemetry` key of `config.yaml`, or the default), the counts of recorded and dropped events, the contract version and the config directory id; whether this build sends the events that later recorded runs store (a release build sends none, and a development build sends only with an upload endpoint and recording on; a release build prints `sending: none - this build sends no event; recorded events stay on this machine`, a development build with no endpoint prints `sending: none - no upload endpoint is set; recorded events stay on this machine`, and `-o json` has `sendsEvents`); in a development build with `RANCHER_CLI_EXPERIMENT` set, also the active experiments and the upload endpoint; a development build sends the stored events of finished hours to that endpoint at most once an hour, after a recorded run, never from the kubectl exec plugin, and with an endpoint status shows the last attempt, the next attempt, the events waiting and the events of the current hour; creates nothing and works while recording is off.
+| Show whether local usage recording is enabled and what determined it (the `RANCHER_CLI_TELEMETRY` environment variable, the `telemetry` key in `config.yaml`, or the default), along with counts of recorded and dropped events, the telemetry schema contract version, and the anonymous random identifier generated for this config directory.
 
 | `telemetry on`
 | Set the `telemetry` key to `true`; creates the config directory when it is missing and deletes nothing.
 
 | `telemetry off`
-| Set the `telemetry` key to `false`, then delete the recorded events, the server facts, the config directory id and the upload state (the upload lock and the state file in `telemetry/upload`); creates the config directory when it is missing.
+| Set the `telemetry` key to `false`, then delete the recorded events, the server facts, the config directory id and the upload state; creates the config directory when it is missing.
 
 | `telemetry reset`
-| Delete the recorded events, the server facts, the config directory id and the upload state (the upload lock and the state file in `telemetry/upload`); keeps the `telemetry` key.
+| Delete the recorded events, the server facts, the config directory id and the upload state; keeps the `telemetry` key.
 
 | `telemetry show`
-| List the recorded events, oldest first; the HOUR column is the hour in UTC, the only time an event stores; `-o json` carries every stored field of each event; in a development build with the `telemetryupload` experiment, a sent event is listed until the file that holds it is deleted.
-
-| `telemetry upload`
-| Send the stored events of finished hours and of the current hour to the `telemetryupload` experiment endpoint now, without waiting for the hourly limit; development builds only, at most 30 seconds, never from the kubectl exec plugin; exits 0 whatever the endpoint answered; `sent` counts every event in a request the endpoint answered with a 2xx, including the ones it refused.
+| List the recorded events, oldest first; the HOUR column is the hour in UTC, the only time an event stores; `-o json` carries every stored field of each event.
 
 |===
 
@@ -1069,4 +1087,9 @@ endif::[]
 [#_limitations]
 == Limitations
 
-The Rancher CLI *cannot* be used to install {xref-helm-charts-in-rancher}[dashboard apps or Rancher feature charts].
+What the `app install` command **does not** do. The Rancher UI does more in one install:
+
+* Upgrade. `app install` refuses a release name that already has an App (`CONFLICT`). To change a release, use `rancher app upgrade`.
+* A chart that names another chart to install first (rancher-monitoring is an example). The UI installs the dependency chart in the same request, in the same namespace, with the main chart's `global` values. `app install` refuses such a chart; install it from the Rancher UI.
+* The namespace. The CLI refuses a namespace that does not exist, before it sends anything; the UI creates the namespace when it does not exist.
+* Pull secrets. For a repo with `defaultImagePullSecrets`, the UI offers a pull secret and sets `global.imagePullSecrets` to the one chosen; for a SUSE Application Collection repository it can create the secret from the repository's credentials. The CLI creates none.
