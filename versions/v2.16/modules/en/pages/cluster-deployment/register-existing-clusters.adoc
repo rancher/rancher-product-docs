@@ -1,7 +1,7 @@
 = Registering Existing Clusters
 :description: Register existing clusters in Rancher by following the prerequisites and ensuring proper node roles and permissions are set
 :page-languages: [en, de, es, fr, ja, pt, zh]
-:revdate: 2026-11-13
+:revdate: 2026-11-24
 :page-revdate: {revdate}
 :page-community-path: how-to-guides/new-user-guides/kubernetes-clusters-in-rancher-setup/register-existing-clusters.adoc
 :page-product-path: cluster-deployment/register-existing-clusters.adoc
@@ -23,6 +23,7 @@ endif::[]
 ifeval::["{build-type}" == "community"]
 :url-k3s-introduction: https://docs.k3s.io/
 :url-rke2-introduction: https://docs.rke2.io/
+:url-backup-restore: https://docs.rke2.io/datastore/backup_restore
 :xref-kubeconfig-file: xref:how-to-guides/new-user-guides/manage-clusters/access-clusters/authorized-cluster-endpoint.adoc
 :xref-cluster-project-roles: xref:how-to-guides/new-user-guides/authentication-permissions-and-global-configuration/manage-role-based-access-control-rbac/cluster-and-project-roles.adoc
 :xref-istio: xref:integrations-in-rancher/istio/index.adoc
@@ -244,7 +245,8 @@ You can perform Day 2 operations directly from the Rancher UI on the following c
 * RKE2 and K3s clusters imported into Rancher using the *Generic* option.
 * RKE2 clusters provisioned with https://caprke2.docs.rancher.com/[CAPRKE2] and imported into Rancher by {xref-turtles}[{turtles-product-name}].
 
-The available operations are rotating encryption keys and creating, viewing, and restoring local `etcd` snapshots.
+
+The available operations include certificate rotation, encryption-key rotation, and creating, viewing, and restoring `etcd` snapshots (local and S3). For clusters imported using the *Generic* option, you can also configure automatic `etcd` snapshots, snapshot retention, and S3 snapshot storage.
 
 {rancher-product-name} coordinates these operations across the applicable server nodes. You don't need to run the corresponding RKE2 or K3s commands manually on each node.
 
@@ -261,12 +263,13 @@ Before you perform a Day 2 operation, ensure that the following prerequisites ar
 * *Rancher Version:* {rancher-product-name} v2.15 or later.
 * *Feature Flag:* The `imported-day-2-ops` feature flag is active by default.
 * *Cluster Enablement:* Day 2 operations are enabled for the cluster. See <<_configuring_day_2_operations,Configuring Day 2 Operations>>.
-* *Cluster Health:* The cluster is in the *Active* state, its Kubernetes API is reachable, and the {xref-about-rancher-agents}#_rancher_system_agent[`rancher-system-agent`] has registered on every cluster node.
+* *Cluster Health:* For non-restore operations, the cluster must be in the *Active* state, and its Kubernetes API is reachable. All operations require the {xref-about-rancher-agents}#_rancher_system_agent[`rancher-system-agent`] to be registered on every cluster node as a prerequisite.
 * *Version Management:* For clusters imported using the *Generic* option, version management is enabled so Rancher can install or update the required `rancher-system-agent` support. See <<_configuring_version_management_for_rke2_and_k3s_clusters,Configuring Version Management for RKE2 and K3s Clusters>>.
-* *Installation Layout:* Clusters imported using the *Generic* option use the standard RKE2 or K3s installation layout, including the default data and configuration directories and systemd service names. Custom data directories, custom configuration paths, and IPv6-only server networking aren't supported.
+* *Installation Layout:* Clusters imported using the *Generic* option require the standard configuration paths and systemd service names. For certificate rotation, Rancher recognizes `data-dir` in the standard runtime configuration, the `--data-dir` flag, and the applicable `RKE2_DATA_DIR` or `K3S_DATA_DIR` environment variable
 * *Datastore:* For snapshot and restore operations, the cluster uses embedded `etcd`. K3s clusters that use SQLite or an external datastore aren't supported for these operations.
-* *Snapshot Storage:* Day 2 snapshot operations support only local `etcd` snapshots. Creating or restoring S3-backed snapshots isn't supported.
-* *Server Token:* For snapshot and restore operations, every applicable `etcd` server node has a non-empty `token:` value in `/etc/rancher/rke2/config.yaml`, `/etc/rancher/k3s/config.yaml`, or a YAML or JSON file under `/etc/rancher/rke2/config.yaml.d/` or `/etc/rancher/k3s/config.yaml.d/`. A token supplied only through an environment variable, command-line argument, `token-file`, `/var/lib/rancher/rke2/server/token`, or `/var/lib/rancher/k3s/server/token` doesn't meet this prerequisite.
+* *Node Configuration:* For clusters imported using the *Generic* option, configure RKE2 or K3s through `/etc/rancher/rke2/config.yaml` and `/etc/rancher/rke2/config.yaml.d/`, or `/etc/rancher/k3s/config.yaml` and `/etc/rancher/k3s/config.yaml.d/`. Rancher writes its settings to a drop-in file in the `config.yaml.d` directory. Command-line flags and environment variables take precedence over these settings.
+* *Server Token:* For restore operations, every `etcd` server node has a non-empty server token file at `/var/lib/rancher/rke2/server/token` or `/var/lib/rancher/k3s/server/token`. The token must match the token that the cluster used when the snapshot was taken. Rancher verifies the token before the restore starts and cancels the restore if the token doesn't match.
+* *Server Networking:* For restore operations, server nodes can reach each other on the first internal IP address of each node. If a node has no internal IP address, its first external IP address is used instead. IPv4, IPv6, and dual-stack networking are supported.
 * *Secrets Encryption:* For encryption-key rotation, secrets encryption is enabled in the RKE2 or K3s configuration.
 * *Permissions:* Your Rancher account is a global administrator, a *Cluster Owner*, or has an equivalent custom role with access to the `operation.cattle.io` resources.
 
@@ -325,6 +328,29 @@ If the annotation is absent or has another value, the cluster also inherits the 
 When you disable day 2 operations, Rancher waits for the current operation to finish before removing the support resources. When you re-enable the functionality, allow time for Rancher to reconcile those resources before starting an operation.
 ====
 
+[#_certificate_rotation]
+=== Certificate Rotation
+
+Rancher v2.16 or later can rotate certificates for supported imported RKE2 and K3s clusters. A successful snapshot is not required to start certificate rotation.
+
+[CAUTION]
+====
+Certificate rotation can restart cluster components and temporarily affect availability. Schedule the operation during a maintenance window.
+====
+
+. Click *☰ > Cluster Management*.
+. Locate the cluster and click *⋮ > Rotate Certificates*.
+. Select one of the following:
+** **All services** - Rotate certificates for all supported services on the applicable nodes.
+** **Selected services** - Choose one or more services. Each service must be available on at least one node. For example, selecting `etcd` on a K3s cluster without an `etcd` node fails validation.
+. Click **Rotate Certificates**.
+. Click the *Operations* tab and monitor the certificate rotation operation.
+. After the operation succeeds:
+** The CA remains unchanged.
+** Rancher restarts the runtime agent on affected worker-only nodes.
+** Explicitly configured scheduler and controller-manager TLS certificate and key pairs are preserved.
+** Verify that the cluster, nodes, and workloads are active.
+
 [#_encryption_key_rotation]
 === Encryption Key Rotation
 
@@ -353,6 +379,66 @@ Don't make cluster configuration changes while key rotation is in progress.
 [#_managing_etcd_snapshots_and_restores]
 === Managing `etcd` Snapshots and Restores
 
+[#_configuring_imported_cluster_snapshots]
+==== Configuring Automatic `etcd` Snapshots, Retention, and S3 Storage
+
+For {rke2-product-name} and {k3s-product-name} clusters imported using the _Generic_ option, you can configure the automatic `etcd` snapshot schedule, snapshot retention, and S3 snapshot storage from {rancher-product-name}. Before you apply this configuration, complete the initial cluster import and enable Day 2 operations for the cluster.
+
+[WARNING]
+.Service restarts on `etcd` nodes
+====
+Applying the snapshot configuration can restart {rke2-product-name} or {k3s-product-name} server services on the affected `etcd` nodes, causing temporary control plane disruption.
+
+Schedule this change during a planned maintenance window.
+====
+
+When you change this configuration, {rancher-product-name} writes a `50-rancher-etcd.yaml` drop-in file to `/etc/rancher/rke2/config.yaml.d/` or `/etc/rancher/k3s/config.yaml.d/` on each `etcd` node. Rancher then restarts the RKE2 or K3s server service on each node, one node at a time.
+
+To configure the settings, edit the `Cluster.management.cattle.io` resource on the cluster. Set the `etcd` field under `spec.rke2Config` for {rke2-product-name} clusters or `spec.k3sConfig` for {k3s-product-name} clusters:
+
+[source,yaml]
+----
+spec:
+  rke2Config:
+    etcd:
+      disableSnapshots: false
+      snapshotScheduleCron: "0 */5 * * *"
+      snapshotRetention: 5
+      s3:
+        bucket: my-snapshot-bucket
+        cloudCredentialName: cattle-global-data:cc-abc123
+        endpoint: s3.us-east-1.amazonaws.com
+        folder: my-cluster
+        region: us-east-1
+        retention: 10
+----
+
+The `etcd` field accepts the following settings:
+
+* `disableSnapshots`: Disables automatic `etcd` snapshots when set to `true`.
+* `snapshotScheduleCron`: The cron schedule for automatic `etcd` snapshots.
+* `snapshotRetention`: The number of automatic snapshots to keep on each node.
+* `s3`: The S3 storage settings for `etcd` snapshots. When this field is set, {rancher-product-name} saves snapshots to S3 in addition to local storage.
+
+The `s3` field accepts the following settings:
+
+* `cloudCredentialName`: The cloud credential that contains the S3 access key and secret key, in the format `<namespace>:<name>`.
+* `bucket`: The name of the S3 bucket.
+* `endpoint`: The S3 endpoint.
+* `endpointCA`: The CA certificate used to validate the S3 endpoint.
+* `skipSSLVerify`: Disables TLS certificate verification for the S3 endpoint when set to `true`.
+* `region`: The S3 region.
+* `folder`: The folder in the S3 bucket where Rancher stores snapshots.
+* `retention`: The number of snapshots to keep in S3. If this value isn't set, the `snapshotRetention` value is used.
+
+[NOTE]
+.Default values for unset S3 fields
+====
+If you don't set `bucket`, `endpoint`, `endpointCA`, `skipSSLVerify`, `region`, or `folder`, {rancher-product-name} uses the default values from the cloud credential.
+
+Any fields that you leave unset retain the default values of {rke2-product-name} or {k3s-product-name}.
+====
+
 [#_taking_an_etcd_snapshot]
 ==== Taking an `etcd` Snapshot
 
@@ -374,7 +460,7 @@ To view the snapshots discovered for the cluster:
 . Click *☰ > Cluster Management*.
 . Click the name of the cluster.
 . Click the *Snapshots* tab.
-. Snapshots are grouped by storage location. The table displays local snapshots associated with the cluster, including the following details when available:
+. Snapshots are grouped by storage location. The table displays snapshots associated with the cluster, including the following details when available:
 
 * *State:* The snapshot creation state.
 * *Name:* The snapshot identifier or filename.
@@ -396,10 +482,37 @@ You can restore only successful snapshots created after the cluster was imported
 
 . Click *☰ > Cluster Management* and select the cluster.
 . Click the *Snapshots* tab.
-. Locate the local snapshot to restore, then click *⋮ > Restore*.
+. Locate the local or S3 snapshot to restore, then click *⋮ > Restore*.
+. Select an available *Restore Type*. For more information, see <<_restore_types_for_imported_clusters,Restore Types for Imported Clusters>>.
 . Review the confirmation prompt, then click *Restore*.
 . Click the *Operations* tab and wait for the snapshot restore operation to reach the *Succeeded* state.
 . Verify that the cluster is in the *Active* state and that the expected workloads are available.
+
+After the server nodes restart, {rancher-product-name} verifies that every `etcd` node is a healthy member of a single `etcd` cluster. If this check fails, the restore operation fails.
+
+If you selected a version-restoring option, verify the Kubernetes version on the cluster and its nodes.
+
+[#_restore_types_for_imported_clusters]
+===== Restore Types for Imported Clusters
+
+The restore type determines which parts of the cluster configuration {rancher-product-name} restores with the `etcd` database:
+
+* *Only etcd* (`none`): Restores only the `etcd` database.
+* *etcd and Kubernetes version* (`kubernetesVersion`): Restores the `etcd` database and the Kubernetes version recorded in the snapshot. Use this option if a failed Kubernetes upgrade caused the issue.
+* *etcd, Kubernetes version, and cluster configuration* (`all`): Restores the `etcd` database, the Kubernetes version, and the cluster agent, Fleet agent, and webhook deployment customizations recorded in the snapshot.
+
+[NOTE]
+====
+* {rancher-product-name} records the cluster configuration in the snapshot metadata when it creates the snapshot. Snapshots created before Rancher v2.16 don't contain this metadata and support only the *Only etcd* restore type.
+* For clusters imported using the *Generic* option, every restore stops the RKE2 or K3s systemd services and reinstalls the distribution at the configured Kubernetes version. This happens even if the restore type doesn't change the Kubernetes version.
+====
+
+[#_how_server_nodes_rejoin_during_a_restore]
+===== How Server Nodes Rejoin During a Restore
+
+During a restore, the remaining server nodes rejoin the cluster through the address of the restored node instead of through a load balancer. Rancher uses the first internal IP address of the node. If the node has no internal IP address, Rancher uses its first external IP address. Rancher adds this setting temporarily and removes it after the restore.
+
+Ensure that your server nodes can reach each other on these addresses. Rancher uses the `localhost` address for readiness probes during Day 2 operations, so the probes work on IPv4, IPv6, and dual-stack nodes.
 
 [#_configuring_version_management_for_rke2_and_k3s_clusters]
 == Configuring Version Management for {rke2-product-name} and {k3s-product-name} Clusters
